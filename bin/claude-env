@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""claude-env :: top-level CLI dispatcher.
+
+Runs every platform script through the venv Python ($CLAUDE_ENV_HOME/venv/bin/python)
+so the correct, isolated set of dependencies is always used — even when the CLI
+itself was invoked with a different Python.  Falls back to the current interpreter
+only if the venv does not exist (e.g. before bootstrap has been run).
+"""
+import os, sys, subprocess
+from pathlib import Path
+
+H = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
+ROOT = Path(__file__).resolve().parents[1]
+
+# Always dispatch via the venv Python so all platform deps are available.
+_venv_py = H / "venv" / "bin" / "python"
+PYTHON = str(_venv_py) if _venv_py.exists() else sys.executable
+
+CMDS = {
+    "bootstrap":   ROOT / "bootstrap.py",
+    "scan":        ROOT / "rag" / "repository_scan.py",
+    "index":       ROOT / "rag" / "bootstrap_rag.py",
+    "reindex":     ROOT / "rag" / "incremental_index.py",
+    "dashboard":   ROOT / "observability" / "dashboard.py",
+    "approvals":   ROOT / "agents" / "orchestration" / "approval_gate.py",
+    "route":       ROOT / "agents" / "orchestration" / "task_router.py",
+    "register":    ROOT / "scripts" / "register_repo.py",
+}
+VALIDATORS = ["installation", "security", "rag", "memory", "agents", "mcp"]
+
+
+def usage():
+    print("usage: claude-env <command> [args]\n")
+    print(f"  venv: {PYTHON}")
+    print("commands:", ", ".join(CMDS), ", validate")
+    print("validate: claude-env validate [all|" + "|".join(VALIDATORS) + "]")
+
+
+def main():
+    if len(sys.argv) < 2:
+        usage(); return 2
+    cmd, rest = sys.argv[1], sys.argv[2:]
+    if cmd == "validate":
+        which = rest[0] if rest else "all"
+        targets = VALIDATORS if which == "all" else [which]
+        rc = 0
+        for v in targets:
+            script = (ROOT / "rag" / "validate_rag.py") if v == "rag" \
+                     else (ROOT / "validation" / f"validate_{v}.py")
+            args = rest[1:] if v == "rag" else []
+            rc |= subprocess.run([PYTHON, str(script), *args]).returncode
+        return rc
+    if cmd in CMDS:
+        return subprocess.run([PYTHON, str(CMDS[cmd]), *rest]).returncode
+    usage(); return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

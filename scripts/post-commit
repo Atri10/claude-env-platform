@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# claude-env :: git post-commit hook -> incremental RAG re-index of changed files.
+#
+# Install per repo:
+#   ln -sf ~/.claude-env/scripts/post-commit .git/hooks/post-commit
+#   chmod +x .git/hooks/post-commit
+#
+# Uses the platform venv Python ($CLAUDE_ENV_HOME/venv/bin/python) so all RAG
+# dependencies are available without requiring manual venv activation.
+# Runs in the background so commits stay fast; output appended to logs/incremental_index.log.
+
+set -euo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CLAUDE_ENV_HOME="${CLAUDE_ENV_HOME:-$HOME/.claude-env}"
+VENV_PY="${CLAUDE_ENV_HOME}/venv/bin/python"
+
+if [[ ! -x "$VENV_PY" ]]; then
+  echo "[claude-env] venv not found at $VENV_PY — run bootstrap.py first" >&2
+  exit 0   # non-fatal: don't block the commit
+fi
+
+# Files changed in HEAD
+CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD || true)
+[[ -z "$CHANGED" ]] && exit 0
+
+mkdir -p "${CLAUDE_ENV_HOME}/logs"
+
+# shellcheck disable=SC2086
+nohup "$VENV_PY" "${CLAUDE_ENV_HOME}/rag/incremental_index.py" "$REPO_ROOT" $CHANGED \
+  >> "${CLAUDE_ENV_HOME}/logs/incremental_index.log" 2>&1 &
+exit 0

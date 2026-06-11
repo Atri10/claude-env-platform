@@ -1,0 +1,120 @@
+# =============================================================================
+# agent_registry.yaml :: canonical definition of every agent.
+# Consumed by: agents/orchestration/task_router.py, approval_gate.py
+# Per-repo overrides live in <repo>/.claude/repo-policy.yaml :: agent_permissions
+# tool ids map to MCP server.tool (see config/mcp-servers.json)
+# =============================================================================
+version: 1
+
+defaults: &defaults
+  memory_access: ["read"]            # read | write | none
+  rag_access: "read"                 # read | none
+  requires_approval: false
+  denied_tools:
+    - "terminal.exec_unrestricted"
+    - "filesystem.write_outside_scope"
+
+agents:
+
+  orchestrator:
+    <<: *defaults
+    prompt: agents/prompts/orchestrator.md
+    role: "Decompose tasks, route to specialists, enforce approval gates, synthesize."
+    allowed_tools: ["memory.*", "lancedb.search", "git.log", "git.diff"]
+    memory_access: ["read", "write"]
+    can_spawn: ["architect","backend","frontend","database","devops","security","performance","testing","documentation","research"]
+
+  architect:
+    <<: *defaults
+    prompt: agents/prompts/architect.md
+    role: "System design, ADRs, dependency analysis, technology selection."
+    allowed_tools: ["lancedb.search","git.log","git.blame","filesystem.read","memory.read","memory.write"]
+    denied_tools: ["filesystem.write","terminal.exec","terminal.exec_unrestricted"]
+    memory_access: ["read","write"]
+    rag_access: "read"
+
+  backend:
+    <<: *defaults
+    prompt: agents/prompts/backend.md
+    role: "API design, business logic, data modeling, service integration."
+    allowed_tools: ["lancedb.search","git.*","filesystem.read","filesystem.write","terminal.run_tests","memory.read"]
+    write_paths: ["src/**","tests/**"]
+    denied_tools: ["filesystem.write_outside_scope","terminal.exec_unrestricted"]
+
+  frontend:
+    <<: *defaults
+    prompt: agents/prompts/frontend.md
+    role: "UI components, state management, accessibility, styling systems."
+    allowed_tools: ["lancedb.search","git.*","filesystem.read","filesystem.write","terminal.run_tests","memory.read"]
+    write_paths: ["src/**","ui/**","pages/**","components/**","tests/**"]
+    denied_tools: ["filesystem.write_outside_scope"]
+
+  database:
+    <<: *defaults
+    prompt: agents/prompts/database.md
+    role: "Schema design, migration authoring, query optimization, indexing."
+    allowed_tools: ["lancedb.search","git.*","filesystem.read","filesystem.write","memory.read"]
+    write_paths: ["migrations/**","schema/**","db/**"]
+    denied_tools: ["terminal.exec","terminal.exec_unrestricted","filesystem.read_secrets"]
+    notes: "No live DB connections; no connection strings; no seed data access."
+
+  devops:
+    <<: *defaults
+    prompt: agents/prompts/devops.md
+    role: "CI/CD, container configs, IaC, monitoring setup."
+    allowed_tools: ["lancedb.search","git.*","filesystem.read","filesystem.write","terminal.run","memory.read"]
+    write_paths: [".github/**","infra/**","deploy/**","Dockerfile","docker-compose*.yml","*.tf"]
+    requires_approval: true          # every action gated
+    denied_tools: ["terminal.exec_unrestricted"]
+
+  security:
+    <<: *defaults
+    prompt: agents/prompts/security.md
+    role: "Threat modeling, SAST review, dependency auditing, secret scanning."
+    allowed_tools: ["lancedb.search","git.*","filesystem.read","terminal.run_audit","memory.read","memory.write"]
+    denied_tools: ["filesystem.write","terminal.exec","terminal.exec_unrestricted"]
+    memory_access: ["read","write"]
+    notes: "Read-only on source. Output goes to security log + memory only."
+
+  performance:
+    <<: *defaults
+    prompt: agents/prompts/performance.md
+    role: "Profiling guidance, complexity analysis, hot-path review, benchmarks."
+    allowed_tools: ["lancedb.search","git.*","filesystem.read","terminal.run_benchmarks","memory.read"]
+    denied_tools: ["filesystem.write","terminal.exec_unrestricted"]
+
+  testing:
+    <<: *defaults
+    prompt: agents/prompts/testing.md
+    role: "Unit/integration/E2E test authoring, coverage + mutation analysis."
+    allowed_tools: ["lancedb.search","git.*","filesystem.read","filesystem.write","terminal.run_tests","memory.read"]
+    write_paths: ["tests/**","src/**"]
+    denied_tools: ["filesystem.write_outside_scope","terminal.exec_unrestricted"]
+    notes: "Mock data only; no production fixtures; no network calls in tests."
+
+  documentation:
+    <<: *defaults
+    prompt: agents/prompts/documentation.md
+    role: "API docs, ADR authoring, README maintenance, changelog generation."
+    allowed_tools: ["lancedb.search","git.log","filesystem.read","filesystem.write","memory.read"]
+    write_paths: ["docs/**","ADRs/**","RFCs/**","README.md","CHANGELOG.md"]
+    denied_tools: ["filesystem.write_source","terminal.exec","terminal.exec_unrestricted"]
+
+  research:
+    <<: *defaults
+    prompt: agents/prompts/research.md
+    role: "Library evaluation, pattern research, RFC analysis, dependency research."
+    allowed_tools: ["lancedb.search","filesystem.read","documentation.fetch","memory.read","memory.write"]
+    denied_tools: ["filesystem.write","terminal.exec","terminal.exec_unrestricted"]
+    memory_access: ["read","write"]
+    rag_access: "read"
+    tier_limits:
+      web_search_allowed_tiers: [0, 1]   # no external fetch for tier 2/3
+
+# Actions that ALWAYS require human approval regardless of agent
+global_approval_gates:
+  - "filesystem.write outside agent write_paths"
+  - "terminal.run any state-mutating command"
+  - "any action in a tier-2 or tier-3 repository"
+  - "git push / git commit --amend / git rebase"
+  - "memory.delete or memory.prune --apply"

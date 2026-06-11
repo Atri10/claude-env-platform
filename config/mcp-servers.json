@@ -1,0 +1,184 @@
+{
+  "$schema": "internal://claude-env/mcp-servers.schema.json",
+  "_comment": "Claude Code MCP topology for the local AI dev platform. Startup order is encoded by 'startup_order' (lower starts first). Every server runs locally over stdio; none binds a network port. The 'command' uses the platform venv Python (${CLAUDE_ENV_HOME}/venv/bin/python) so all server deps are isolated \u2014 no global site-packages are required. Register with: claude mcp add <name> -- ${CLAUDE_ENV_HOME}/venv/bin/python <server.py>",
+  "version": 1,
+  "defaults": {
+    "transport": "stdio",
+    "network": "disabled",
+    "audit": true,
+    "env": {
+      "CLAUDE_ENV_HOME": "${HOME}/.claude-env",
+      "CLAUDE_ENV_DSN": "sqlite:///${HOME}/.claude-env/state/claude-env.db"
+    }
+  },
+  "mcpServers": {
+    "filesystem-policy": {
+      "startup_order": 1,
+      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "args": [
+        "${CLAUDE_ENV_HOME}/mcp-servers/filesystem-policy/server.py"
+      ],
+      "description": "Policy-enforcing filesystem access. Wraps every read/write with the repo policy engine + content scanner. The ONLY sanctioned path to the filesystem for agents.",
+      "scopes": [
+        "filesystem.read",
+        "filesystem.write",
+        "filesystem.list"
+      ],
+      "security": {
+        "enforces_policy_engine": true,
+        "content_scan": true,
+        "tier_aware": true,
+        "denies": [
+          "filesystem.write_outside_scope",
+          "filesystem.read_secrets"
+        ]
+      },
+      "env": {
+        "CLAUDE_ENV_REPO_ROOT": "${workspaceFolder}",
+        "CLAUDE_ENV_GLOBAL_POLICY": "${CLAUDE_ENV_HOME}/config/global-policy.yaml"
+      }
+    },
+    "git": {
+      "startup_order": 2,
+      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "args": [
+        "${CLAUDE_ENV_HOME}/mcp-servers/git/server.py"
+      ],
+      "description": "Read-mostly git access (log, diff, blame, status, show). State-mutating operations (push, amend, rebase, reset --hard) are denied here and must go through the approval gate.",
+      "scopes": [
+        "git.log",
+        "git.diff",
+        "git.blame",
+        "git.status",
+        "git.show"
+      ],
+      "security": {
+        "denies": [
+          "git.push",
+          "git.amend",
+          "git.rebase",
+          "git.reset_hard"
+        ],
+        "requires_approval": [
+          "git.commit"
+        ]
+      },
+      "env": {
+        "CLAUDE_ENV_REPO_ROOT": "${workspaceFolder}"
+      }
+    },
+    "lancedb-rag": {
+      "startup_order": 3,
+      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "args": [
+        "${CLAUDE_ENV_HOME}/mcp-servers/lancedb-rag/server.py"
+      ],
+      "description": "Local RAG retrieval over the LanceDB index. Exposes hybrid search + rerank. Read-only; indexing happens out-of-band via the rag/ scripts.",
+      "scopes": [
+        "lancedb.search"
+      ],
+      "security": {
+        "read_only": true,
+        "wraps_results_as_data": true,
+        "rag_poison_scan": true
+      },
+      "env": {
+        "CLAUDE_ENV_REPO_ROOT":  "${workspaceFolder}",
+        "CLAUDE_ENV_REPO_NAME":  "${CLAUDE_ENV_REPO_NAME}",
+        "CLAUDE_ENV_BRANCH":     "${CLAUDE_ENV_BRANCH}",
+        "LANCEDB_PATH":          "${CLAUDE_ENV_HOME}/knowledge/lancedb"
+      }
+    },
+    "memory-graph": {
+      "startup_order": 4,
+      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "args": [
+        "${CLAUDE_ENV_HOME}/mcp-servers/memory-graph/server.py"
+      ],
+      "description": "Local memory graph (SQLite). Namespaced; isolation enforced per repo policy. Reads are open to permitted agents; writes/deletes are audited and deletes are approval-gated.",
+      "scopes": [
+        "memory.read",
+        "memory.write",
+        "memory.recall",
+        "memory.expand"
+      ],
+      "security": {
+        "namespace_isolation": true,
+        "requires_approval": [
+          "memory.delete",
+          "memory.prune"
+        ]
+      },
+      "env": {
+        "CLAUDE_ENV_REPO_ROOT":       "${workspaceFolder}",
+        "CLAUDE_ENV_MEMORY_NS":       "proj-${CLAUDE_ENV_REPO_NAME}",
+        "CLAUDE_ENV_MEMORY_ISOLATED": "false"
+      }
+    },
+    "terminal": {
+      "startup_order": 5,
+      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "args": [
+        "${CLAUDE_ENV_HOME}/mcp-servers/terminal/server.py"
+      ],
+      "description": "Constrained command execution. Only an allow-listed set of read/test/benchmark/audit commands run automatically; anything state-mutating is denied and routed to the approval gate. No unrestricted shell.",
+      "scopes": [
+        "terminal.run_tests",
+        "terminal.run_benchmarks",
+        "terminal.run_audit"
+      ],
+      "security": {
+        "allowlist_only": true,
+        "denies": [
+          "terminal.exec_unrestricted"
+        ],
+        "requires_approval": [
+          "terminal.run"
+        ]
+      },
+      "env": {
+        "CLAUDE_ENV_REPO_ROOT": "${workspaceFolder}"
+      }
+    },
+    "documentation": {
+      "startup_order": 6,
+      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "args": [
+        "${CLAUDE_ENV_HOME}/mcp-servers/documentation/server.py"
+      ],
+      "description": "Local documentation index + controlled fetch. External fetch is permitted only for tier-0/tier-1 repos; tier-2/tier-3 are restricted to the local docs corpus.",
+      "scopes": [
+        "documentation.search",
+        "documentation.fetch"
+      ],
+      "security": {
+        "external_fetch_tiers": [
+          0,
+          1
+        ],
+        "rag_poison_scan": true
+      },
+      "env": {
+        "CLAUDE_ENV_REPO_ROOT": "${workspaceFolder}",
+        "CLAUDE_ENV_DOCS_DIR":  "${CLAUDE_ENV_HOME}/knowledge/docs"
+      }
+    },
+    "jetbrains": {
+      "startup_order": 7,
+      "command": "${JETBRAINS_MCP_COMMAND}",
+      "args": [],
+      "description": "JetBrains IDE bridge (provided by the JetBrains MCP plugin). Exposes editor context, inspections, refactor actions, and run configurations to Claude Code. Starts last; depends on a running IDE instance.",
+      "scopes": [
+        "jetbrains.context",
+        "jetbrains.inspect",
+        "jetbrains.refactor",
+        "jetbrains.run_config"
+      ],
+      "security": {
+        "ide_provided": true,
+        "respects_filesystem_policy": true
+      },
+      "optional": true
+    }
+  }
+}

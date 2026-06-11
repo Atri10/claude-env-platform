@@ -1,0 +1,75 @@
+# =============================================================================
+# global-policy.yaml :: applied to EVERY repo before repo-local policy.
+# These deny rules can never be overridden by a repo policy.
+# Location: ~/.claude-env/config/global-policy.yaml
+# =============================================================================
+version: 1
+tier: 1                           # default tier when a repo declares none
+
+deny:
+  paths:
+    - "**/secrets/**"
+    - "**/credentials/**"
+    - "**/.ssh/**"
+    - "**/.gnupg/**"
+    - "**/customer_data/**"
+    - "**/pii/**"
+    - "**/backups/**"
+    - "**/production.*"
+    - "**/prod.*"
+    - "**/config/production.*"
+    - "**/config/prod.*"
+    - "**/*.production.*"
+  extensions:
+    - ".env"
+    - ".pem"
+    - ".p12"
+    - ".pfx"
+    - ".key"
+    - ".crt"
+    - ".cer"
+    - ".gpg"
+    - ".asc"
+    - ".keystore"
+    - ".jks"
+  regex:
+    - pattern: '(^|/)\.env($|\.)'
+      reason: "dotenv files (global)"
+    - pattern: '(^|/)id_(rsa|ed25519|dsa|ecdsa)$'
+      reason: "private SSH keys (global)"
+    - pattern: 'AKIA[0-9A-Z]{16}'
+      reason: "AWS access key id in path (global)"
+    - pattern: '(^|/)(settings|config)[._/](prod|production|staging)\.'
+      reason: "non-dev configs (global)"
+
+content_scan:
+  enabled: true
+  on_match: "redact"
+  patterns:
+    - name: "aws_access_key"
+      pattern: 'AKIA[0-9A-Z]{16}'
+    - name: "private_key_block"
+      pattern: '-----BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----'
+    - name: "generic_api_key"
+      pattern: '(?i)(api[_-]?key|secret|token)["'']?\s*[:=]\s*["''][A-Za-z0-9_\-]{16,}'
+
+# Tier behaviour matrix consumed by policy_engine.apply_tier_rules()
+tiers:
+  0:
+    rag_default: true
+    memory_isolated: false
+    extra_deny_ext: []
+  1:
+    rag_default: true
+    memory_isolated: false
+    extra_deny_ext: []
+  2:
+    rag_default: true
+    memory_isolated: true
+    extra_deny_ext: [".sql", ".csv", ".parquet", ".db", ".dump"]
+    extra_deny_paths: ["**/migrations/**", "**/fixtures/**", "**/seeds/**"]
+  3:
+    rag_default: false
+    memory_isolated: true
+    default_deny: true            # only explicit allow-listed paths are readable
+    extra_deny_ext: [".sql", ".csv", ".parquet", ".db", ".dump", ".yaml", ".yml", ".json"]
