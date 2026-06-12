@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lib.db import get_db                                    # noqa: E402
 from security.policy_engine import PolicyEngine, _pmatch     # noqa: E402
 from rag.chunkers.chunkers import chunk_file                 # noqa: E402
-from rag.embeddings.llama_embedder import LlamaEmbedder      # noqa: E402
+from rag.config import get_embedder                           # noqa: E402
 from rag.retrievers.lance_store import LanceStore, table_name  # noqa: E402
 from audit.audit_logger import AuditLogger                   # noqa: E402
 import hashlib                                                # noqa: E402
@@ -76,7 +76,7 @@ class Indexer:
 
     def _lazy(self):
         if self.embedder is None:
-            self.embedder = LlamaEmbedder()
+            self.embedder = get_embedder()
             self.store = LanceStore(dim=self.embedder.dim)
 
     def _candidate_files(self) -> list[str]:
@@ -221,4 +221,4 @@ class Indexer:
             "ON CONFLICT(repo,branch) DO UPDATE SET last_commit=excluded.last_commit, "
             "chunk_count=excluded.chunk_count, updated_at=excluded.updated_at",
             (self.repo, branch, table_name(self.repo, branch), commit, total,
-             "nomic-embed-text-v1.5.Q8_0", _now()))
+             self.embedder.model_name, _now()))

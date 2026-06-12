@@ -1,0 +1,8 @@
+{
+  "name": "claude-env",
+  "description": "Local-first governance for Claude Code: policy-enforced file access, tamper-evident audit, local RAG + memory MCP servers, approvals, and incident mode. Requires the claude-env platform bootstrapped at ~/.claude-env (run bootstrap.py first).",
+  "version": "0.1.0",
+  "author": {
+    "name": "claude-env"
+  }
+}

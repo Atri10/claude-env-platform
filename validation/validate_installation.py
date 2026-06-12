@@ -117,6 +117,39 @@ def main() -> int:
     except Exception:
         check("import llama_cpp (install via bootstrap)", False, soft=True)
 
+    # --- RAG model configuration (resolved from config/rag.yaml + env) ---
+    try:
+        from rag.config import get_config
+        cfg = get_config(reload=True)
+
+        # Embedding model is chosen at setup; report cleanly if not yet configured.
+        if not cfg.embedding.model_path:
+            print(f"{YELLOW}WARN{RESET} embedding model not configured "
+                  "(set embedding.model_path in config/rag.yaml — see RUNBOOK §2)")
+            _warnings += 1
+        else:
+            emb_path = Path(cfg.embedding.model_path)
+            check(f"embedding model file present ({emb_path.name})",
+                  emb_path.is_file(), soft=True)
+            print(f"     embed model: {cfg.embedding.model_name} "
+                  f"(dim={cfg.embedding.embedding_dim}) -> {emb_path}")
+
+        # Reranker: is it configured, and does it actually load?
+        rer_dir = cfg.reranker.model_dir
+        if not rer_dir:
+            print(f"{YELLOW}WARN{RESET} reranker not configured / disabled "
+                  "(set reranker.model_dir in config/rag.yaml to enable)")
+            _warnings += 1
+        else:
+            from rag.rerankers.cross_encoder import CrossEncoderReranker
+            rr = CrossEncoderReranker.from_config(cfg.reranker)
+            check(f"reranker loads + runs ({rr.model_name})", rr.ok, soft=True)
+            if not rr.ok:
+                print(f"     reranker inactive: {rr.status()['error']}")
+                print(f"     (RAG still works — falls back to fusion order)")
+    except Exception as e:
+        check(f"RAG model config check ({e})", False, soft=True)
+
     # audit chain
     try:
         from audit.audit_logger import AuditLogger

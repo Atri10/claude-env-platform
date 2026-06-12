@@ -18,11 +18,12 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from rag.embeddings.llama_embedder import LlamaEmbedder      # noqa: E402
+from rag.config import get_embedder, get_reranker           # noqa: E402
 from rag.retrievers.lance_store import LanceStore            # noqa: E402
-from rag.rerankers.cross_encoder import CrossEncoderReranker  # noqa: E402
 from audit.audit_logger import AuditLogger                   # noqa: E402
 from observability.collectors import record_latency, record_retrieval_quality  # noqa: E402
+from observability.feedback import (record_retrieved, usage_boosts,  # noqa: E402
+                                    boost_enabled)
 
 CHUNK_OPEN = "<retrieved_context source=\"{path}\" lines=\"{a}-{b}\">"
 CHUNK_CLOSE = "</retrieved_context>"
@@ -32,9 +33,10 @@ class Retriever:
     def __init__(self, repo: str, branch: str = "main",
                  session_id: str = "adhoc", actor: str = "research-agent"):
         self.repo, self.branch = repo, branch
-        self.embedder = LlamaEmbedder()
+        self.session_id = session_id
+        self.embedder = get_embedder()
         self.store = LanceStore(dim=self.embedder.dim)
-        self.reranker = CrossEncoderReranker()
+        self.reranker = get_reranker()
         self.audit = AuditLogger(session_id, actor=actor, repo=repo)
 
     def query(self, text: str, top_k: int = 40, top_n: int = 8) -> list[dict]:
@@ -48,6 +50,18 @@ class Retriever:
         ranked = self.reranker.rerank(text, candidates, top_n=top_n)
         t_rerank = (time.perf_counter() - t1) * 1000
         record_latency("rag.rerank", "cross_encoder", int(t_rerank), self.repo)
+
+        # feedback loop: boost chunks with a history of actual use, then record
+        # this retrieval so future sessions can add to that history
+        if boost_enabled() and ranked:
+            boosts = usage_boosts(self.repo, self.branch)
+            if boosts:
+                for c in ranked:
+                    c["feedback_boost"] = boosts.get(c.get("chunk_id", ""), 0.0)
+                ranked.sort(key=lambda c: (c.get("rerank_score")
+                                           or c.get("_distance") or 0.0)
+                            + c.get("feedback_boost", 0.0), reverse=True)
+        record_retrieved(self.repo, self.branch, text, ranked, self.session_id)
 
         scores = [c.get("_distance") or c.get("rerank_score") or 0.0 for c in ranked]
         self.audit.retrieval(

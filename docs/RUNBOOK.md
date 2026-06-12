@@ -1,9 +1,9 @@
 # claude-env — Operational Runbook
 
-> **Read `README.md` before this document.** This runbook covers day-2 ops,
-> initial model setup, MCP registration, and per-repo onboarding in enough
-> detail that a new operator can go from zero to all-green without prior
-> knowledge of the platform.
+> **Read `README.md` before this document.** This runbook covers bootstrap,
+> model setup, MCP registration, per-repo onboarding, and ongoing maintenance
+> in enough detail to go from zero to all-green without prior knowledge of the
+> platform.
 
 ---
 
@@ -74,30 +74,46 @@ claude-env validate installation          # all checks green (model warnings OK 
 All inference runs locally. Models are downloaded once and never re-fetched
 at request time.
 
-### 2a. Embedding model — nomic-embed-text-v1.5 Q8_0 GGUF
+**The code ships with no model baked in.** You must (1) download a local model and
+(2) point `config/rag.yaml` at it — there is no default; an unconfigured embedding
+model makes RAG fail fast with a clear "configure config/rag.yaml" message. The
+models named below are **suggestions**, not requirements — any GGUF embedding model
+and any ONNX cross-encoder work. **No symlinks are used** — point the config straight
+at wherever you put the file.
+
+### 2a. Embedding model (suggested: nomic-embed-text-v1.5 Q8_0 GGUF)
+
+Step 1 — download a GGUF embedding model into `~/.claude-env/models/` (or anywhere):
 
 ```bash
-mkdir -p ~/.claude-env/models/embedding
+mkdir -p ~/.claude-env/models
 
-# Option A — via huggingface-cli (recommended)
+# Option A — via huggingface-cli (recommended). Suggested model shown; substitute
+# any GGUF embedding model you prefer.
 ~/.claude-env/venv/bin/pip install huggingface-hub   # if not already installed
 huggingface-cli download nomic-ai/nomic-embed-text-v1.5-GGUF \
   nomic-embed-text-v1.5.Q8_0.gguf \
-  --local-dir ~/.claude-env/models/embedding
+  --local-dir ~/.claude-env/models
 
-# Option B — manual
-# 1. Open https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF in a browser
-# 2. Download nomic-embed-text-v1.5.Q8_0.gguf
-# 3. Move it: mv ~/Downloads/nomic-embed-text-v1.5.Q8_0.gguf ~/.claude-env/models/embedding/
-
-# Create the symlink that llama_embedder.py expects by default
-ln -sf ~/.claude-env/models/embedding/nomic-embed-text-v1.5.Q8_0.gguf \
-       ~/.claude-env/models/nomic-embed-text-v1.5.Q8_0.gguf
-
-# Verify
-ls -lh ~/.claude-env/models/nomic-embed-text-v1.5.Q8_0.gguf
-# expected: ~140 MB file or symlink
+# Option B — manual: download the .gguf in a browser and move it into
+#   ~/.claude-env/models/   (a real file, never a symlink)
 ```
+
+Step 2 — **configure the model in `config/rag.yaml`** (this is required):
+
+```yaml
+embedding:
+  model_path: "~/.claude-env/models/nomic-embed-text-v1.5.Q8_0.gguf"
+  embedding_dim: 768            # MUST match your model (nomic = 768)
+  # nomic-embed-text needs task prefixes — set them here. Other models may not;
+  # leave empty if yours doesn't require them.
+  document_prefix: "search_document: "
+  query_prefix: "search_query: "
+```
+
+> Prefer not to edit yaml? Set env vars instead (they override the file):
+> `EMBED_MODEL_PATH`, `EMBED_DIM`, `EMBED_DOC_PREFIX`, `EMBED_QUERY_PREFIX` (§2c).
+> Wherever the model lives, point the path straight at it — do **not** symlink.
 
 Install the Python binding with Metal GPU acceleration into the venv:
 
@@ -109,24 +125,113 @@ CMAKE_ARGS="-DLLAMA_METAL=on" \
 > `bootstrap.py` runs this automatically on Apple Silicon. Re-run the pip
 > install after any Python version upgrade or llama.cpp update.
 
-### 2b. Reranker — ms-marco-MiniLM-L-6-v2 ONNX
+### 2b. Reranker — optional (suggested: ms-marco-MiniLM-L-6-v2 ONNX)
+
+Reranking is optional. Leave `reranker.model_dir` empty to skip it (RAG falls back
+to fusion order). To enable it, download an ONNX cross-encoder, then point the config
+at the directory (it must contain `model.onnx` plus the tokenizer files):
 
 ```bash
+# Suggested model; substitute any ONNX cross-encoder. Export your own with:
+#   optimum-cli export onnx --model cross-encoder/<model> <target-dir>/
 huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
   --include "*.onnx" "*.json" "*.txt" \
   --local-dir ~/.claude-env/models/reranker-onnx/
 ```
 
-> The reranker degrades gracefully to identity ordering if absent
-> (`CrossEncoderReranker.ok == False`), so RAG still works while the model
-> is downloading.
+```yaml
+# config/rag.yaml
+reranker:
+  model_dir: "~/.claude-env/models/reranker-onnx"   # or "" to disable
+```
+
+> The reranker degrades gracefully to identity ordering if absent or disabled
+> (`CrossEncoderReranker.ok == False`), so RAG still works while the model is
+> downloading. To disable it on purpose, set `model_dir: ""` (or `RERANKER_DIR=""`).
 
 Verify both models load:
 
 ```bash
 claude-env validate installation
-# llama_cpp and onnxruntime lines should now show PASS
+# Look for these lines (the model name shown is whatever YOU configured):
+#   PASS embedding model file present (<your-model>.gguf)
+#   PASS reranker loads + runs (<your-reranker-dir>)
+# A WARN means the model is unconfigured, missing, or failed to load — the line
+# below it explains why. RAG still functions (reranker falls back to fusion order).
 ```
+
+### 2c. Choosing / swapping models (no code changes)
+
+Model selection lives entirely in config — the code never names a model. Resolution
+order:
+
+| Priority | Source | Notes |
+| --- | --- | --- |
+| 1 (highest) | Environment variable | e.g. `EMBED_MODEL_PATH=/models/your-model.gguf` |
+| 2 | `config/rag.yaml` | the canonical place to set it at setup |
+| 3 (lowest) | Built-in fallbacks in `rag/config.py` | numeric only (ctx/dim/gpu); **no model path** — unset = error |
+
+**Available environment variables** (each overrides the matching `rag.yaml` field):
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `EMBED_MODEL_PATH` | Path to the `.gguf` embedding model | none — **required** (unset ⇒ clear error) |
+| `EMBED_MODEL_NAME` | Provenance label in `rag_index_state` | filename of `EMBED_MODEL_PATH` (`.gguf` stripped) |
+| `EMBED_DOC_PREFIX` | Prefix prepended to documents before embedding | `""` (none) |
+| `EMBED_QUERY_PREFIX` | Prefix prepended to queries before embedding | `""` (none) |
+| `EMBED_CTX` | Context window (tokens) | `2048` |
+| `EMBED_GPU_LAYERS` | Layers offloaded to GPU (`-1` = all, `0` = CPU) | `-1` |
+| `EMBED_DIM` | Output vector dimension (must match the model) | `768` |
+| `RERANKER_DIR` | ONNX cross-encoder dir (`model.onnx` + tokenizer); `""` disables rerank | `""` (disabled) |
+
+**Example — use a 1024-dim embedding model that needs no task prefix:**
+
+```bash
+# 1. Download the model (directly, no symlink)
+huggingface-cli download <repo>/<model>-GGUF <model>.Q8_0.gguf \
+  --local-dir ~/.claude-env/models
+
+# 2a. Persist the choice in config/rag.yaml:
+#     embedding:
+#       model_path: "~/.claude-env/models/<model>.Q8_0.gguf"
+#       embedding_dim: 1024
+#       document_prefix: ""      # set only if your model requires one
+#       query_prefix: ""
+#
+# 2b. ...or set it per-process via env (overrides the yaml):
+export EMBED_MODEL_PATH=~/.claude-env/models/<model>.Q8_0.gguf
+export EMBED_DIM=1024
+
+# 3. IMPORTANT: vectors from different models / dimensions are not comparable.
+#    Drop and re-index every affected repo+branch (see §10, "Removing a repo's RAG index").
+```
+
+**Example — swap the reranker, or turn it off:**
+
+```bash
+# Use a different exported cross-encoder
+optimum-cli export onnx --model cross-encoder/<your-model> \
+  ~/.claude-env/models/<your-reranker-dir>/
+export RERANKER_DIR=~/.claude-env/models/<your-reranker-dir>
+
+# Disable reranking entirely (pipeline falls back to fusion order)
+export RERANKER_DIR=""
+```
+
+> **Is the reranker actually working?** Run `claude-env validate installation`
+> and read the `reranker loads + runs` line, or in Python:
+> ```python
+> from rag.config import get_reranker
+> print(get_reranker().status())
+> # {'ok': True, 'model_dir': '.../reranker-onnx', 'model_name': 'reranker-onnx', 'error': None}
+> ```
+> `ok: True` confirms the ONNX model loaded and reranking is live. `ok: False` with
+> an `error` string means it fell back to fusion order — RAG still returns results.
+
+> **Deploying config changes.** `config/rag.yaml` and `rag/config.py` live in the
+> repo and are copied to `~/.claude-env/` by `bootstrap.py`. After editing them in
+> the repo, re-run the bootstrap/sync step so the installed copy under
+> `~/.claude-env/rag/` picks up the change before validating.
 
 ---
 
@@ -425,10 +530,10 @@ import sys, struct
 sys.path.insert(0, '/Users/YOUR_NAME/.claude-env')
 import json
 from lib.db import get_db
-from rag.embeddings.llama_embedder import LlamaEmbedder
+from rag.config import get_embedder   # uses config/rag.yaml + env, same model as RAG
 
 db = get_db()
-emb = LlamaEmbedder()
+emb = get_embedder()
 rows = db.query("SELECT node_id, name, body_json FROM memory_nodes WHERE embedding IS NULL", [])
 print(f"Back-filling {len(rows)} nodes...")
 for r in rows:
@@ -452,10 +557,13 @@ Replace `YOUR_NAME` with your macOS username.
   --resolve <request_id> --approve --by you
 ~/.claude-env/venv/bin/python agents/orchestration/approval_gate.py \
   --resolve <request_id> --deny    --by you
+
+# one-click web UI (localhost only; decisions audited under --by)
+~/.claude-env/bin/claude-env approvals-ui --port 8002 --by you
 ```
 
 Open approvals are also visible via the dashboard and the `v_open_approvals`
-SQL view.
+SQL view. On macOS, a notification fires whenever a new gate opens.
 
 ---
 
@@ -587,10 +695,139 @@ restore the snapshot.
 | `memory.recall` always returns `[]` | Embeddings not generated (nodes have `embedding=NULL`) | Apply the memory-graph server fix and re-write nodes, or run the back-fill script in section 6 |
 | RAG returns nothing after indexing | Repo not indexed / wrong branch | `claude-env scan` then `claude-env index`; check `v_rag_health` |
 | Agent "BLOCKED" on a normal file | Over-broad deny rule | Inspect `policy_violations`; adjust repo `deny`/`allow` (never global deny) |
-| Reranker not improving results | ONNX model absent | Download per section 2b; `CrossEncoderReranker.ok` should be `True` |
+| Reranker not improving results | ONNX model absent, failed to load, or disabled | Run `python -c "from rag.config import get_reranker; print(get_reranker().status())"` — `ok` should be `True`. If `False`, the `error` field explains why; download per §2b or check `RERANKER_DIR` (§2c) |
+| RAG quality dropped / dim mismatch errors after swapping models | New embedding model has a different dimension than the indexed vectors | Vectors across models are not comparable — drop the LanceDB tables and re-index after changing `EMBED_MODEL_PATH`/`EMBED_DIM` (§10, "Removing a repo's RAG index") |
 | Audit chain reports broken | Manual edit or partial restore | Restore from a known-good backup; never edit `audit_events` directly |
 | Memory recall leaks across repos | `CLAUDE_ENV_MEMORY_ISOLATED` not set for tier ≥ 2 | Set `CLAUDE_ENV_MEMORY_ISOLATED=true` in `~/.claude.json`; re-check repo policy |
 | Terminal command "GATED" | State-mutating command | Route via `approval_gate.py`; only test/bench/audit run unattended |
 | Progress bar not showing during index | Stderr redirected | Progress goes to stderr intentionally; JSON summary goes to stdout |
+| Every native tool call denied | Incident mode active | `claude-env incident status`; lift with `claude-env incident off --by you` |
+| Hooks not firing in Claude Code | Settings not installed / stale session | `claude-env hooks` then restart Claude Code; verify with `claude-env hooks --dry-run` |
 
-Logs: `~/.claude-env/logs/` — e.g. `incremental_index.log`, `memory.log`.
+Logs: `~/.claude-env/logs/` — e.g. `incremental_index.log`, `memory.log`,
+`digests/` (nightly analyst output).
+
+---
+
+## 14. Extended operations
+
+### 14a. Claude Code native-tool enforcement (hooks)
+
+The MCP filesystem server only governs MCP traffic. To make the policy engine
+cover Claude Code's **native** tools (Read/Write/Edit/Glob/Grep/Bash):
+
+```bash
+~/.claude-env/bin/claude-env hooks            # installs into ~/.claude/settings.json
+~/.claude-env/bin/claude-env hooks --dry-run  # preview the resulting settings
+~/.claude-env/bin/claude-env hooks --uninstall
+```
+
+Behavior: policy-blocked paths are **denied** with the matched rule;
+secret-bearing writes raise an **ask** (operator confirms); mutating calls land
+in the audit ledger as `native.<Tool>` rows. Internal hook errors fail open by
+default — set `CLAUDE_ENV_HOOK_FAIL_CLOSED=true` for tier-2+ machines.
+Restart Claude Code after install.
+
+### 14b. Incident mode (kill switch)
+
+```bash
+~/.claude-env/bin/claude-env incident on --reason "suspected token leak" --by you
+~/.claude-env/bin/claude-env incident status
+~/.claude-env/bin/claude-env incident off --by you
+```
+
+`on` writes the `state/INCIDENT` marker (every policy evaluation fails closed —
+MCP, indexer, hooks), denies all pending approvals, snapshots the SQLite DB to
+`archive/incident-<ts>.db`, and logs a critical `security_event`. `off` lifts it
+(audited).
+
+### 14c. Compliance reports & session forensics
+
+```bash
+~/.claude-env/bin/claude-env report --window 30d                  # markdown evidence
+~/.claude-env/bin/claude-env report --window 7d --repo payments --format csv --out evidence.csv
+~/.claude-env/bin/claude-env replay --list                        # recent sessions
+~/.claude-env/bin/claude-env replay <session_id>                  # step-by-step timeline
+```
+
+Reports always include a fresh hash-chain verification; a non-`VERIFIED`
+integrity line is the first thing to investigate (exit code 1).
+
+### 14d. Self-populating memory & feedback loop
+
+```bash
+~/.claude-env/bin/claude-env ingest-sessions            # parse new Claude Code transcripts
+~/.claude-env/bin/claude-env ingest-sessions --dry-run
+```
+
+Runs nightly via `scripts/nightly_memory.sh`. Each session becomes an episodic
+memory node (task, files touched, outcome — secret-redacted). Files that were
+RAG-retrieved and then edited within 24h earn `used` signals that boost their
+chunks in future retrievals (disable with `CLAUDE_ENV_FEEDBACK_BOOST=false`).
+
+### 14e. Team knowledge sync
+
+```bash
+~/.claude-env/bin/claude-env memory-sync export --namespace proj-payments --out team.jsonl
+# review the JSONL, share it, then on the teammate's machine:
+~/.claude-env/bin/claude-env memory-sync import --in team.jsonl
+```
+
+Exports are secret-redacted and additive on import (existing node ids skipped);
+`--namespace` on import remaps. Review before sharing regardless.
+
+### 14f. Policy simulation & drift
+
+```bash
+~/.claude-env/bin/claude-env policy-sim simulate /repo --candidate new-policy.yaml
+~/.claude-env/bin/claude-env policy-sim diff /repo/.claude/repo-policy.yaml \
+  ~/.claude-env/config/repo-policy.template.yaml
+```
+
+`simulate` lists exactly which files become newly blocked/allowed before you
+apply a policy change; `diff` reports structural drift from a baseline.
+
+### 14g. Cost budgets
+
+Set per-repo monthly USD limits in `~/.claude-env/config/budgets.yaml`, then:
+
+```bash
+~/.claude-env/bin/claude-env budget            # table; exit 1 if any budget exceeded
+~/.claude-env/bin/claude-env budget --format json
+```
+
+### 14h. Knowledge & quality tools
+
+```bash
+~/.claude-env/bin/claude-env know "jwt validation" --repo payments --repo-root /work/payments
+~/.claude-env/bin/claude-env context-pack /work/payments --write   # CLAUDE.generated.md
+~/.claude-env/bin/claude-env rag-bench /work/payments --create-template  # then edit + run
+~/.claude-env/bin/claude-env test-impact /work/payments --since HEAD~1
+~/.claude-env/bin/claude-env doc-drift  /work/payments
+~/.claude-env/bin/claude-env digest     /work/payments              # analyst digest now
+```
+
+For nightly per-repo digests, list repo paths (one per line) in
+`~/.claude-env/config/analyst-repos.txt`; digests land in
+`~/.claude-env/logs/digests/` and as memory nodes.
+
+`rag-bench` is the recommended gate for embedding-model swaps (§2c): run it
+before and after, compare `recall@k` / `MRR`.
+
+### 14i. Linux scheduling (systemd)
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ~/.claude-env/scripts/systemd/claude-env-nightly.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now claude-env-nightly.timer
+```
+
+Equivalent of the launchd job in §6 (macOS).
+
+### 14j. Claude Code plugin distribution
+
+`claude-plugin/` packages hooks + MCP servers + slash commands
+(`/claude-env:know`, `/claude-env:report`, `/claude-env:replay`) for
+marketplace or `--plugin-dir` installation — see `claude-plugin/README.md`.
+The platform must still be bootstrapped on each machine first.

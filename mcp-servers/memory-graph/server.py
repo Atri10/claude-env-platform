@@ -36,8 +36,10 @@ from memory.memory_retriever import MemoryRetriever  # noqa: E402
 
 try:
     sys.path.insert(0, str(_HOME))
-    from rag.embeddings.llama_embedder import LlamaEmbedder
-    _embedder: LlamaEmbedder | None = LlamaEmbedder()
+    # Use the shared RAG factory so memory nodes embed with the SAME model the
+    # rest of the stack uses (driven by config/rag.yaml + env, no hardcoding).
+    from rag.config import get_embedder
+    _embedder = get_embedder()
 except Exception as _emb_err:
     sys.stderr.write(f"memory-graph: embedding model unavailable ({_emb_err}); "
                      "nodes will be stored without embeddings\n")

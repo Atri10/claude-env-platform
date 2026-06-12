@@ -2,41 +2,20 @@
 claude-env :: embedding layer (llama.cpp)
 File: rag/embeddings/llama_embedder.py
 
-MODEL / PARAMETER RECOMMENDATIONS (with reasoning)
---------------------------------------------------
-1. Embedding model:   nomic-embed-text-v1.5 (GGUF, Q8_0)
-   Reasoning: 768-dim, strong retrieval quality, fully local, Apple-Silicon
-   friendly via llama.cpp Metal backend. Outperforms all-MiniLM on code-ish text
-   while staying small (~140MB at Q8_0). Avoids any network egress (privacy).
-   Alternative for code-heavy repos: nomic-embed-code or bge-code; heavier.
+This module knows HOW to run a GGUF embedding model with llama.cpp. It does NOT
+decide WHICH model to use, nor does it know any model's name — that is configured
+manually at setup in config/rag.yaml (resolved by rag/config.py). Construct via
+the factory so the model choice stays in config, not code:
 
-2. Context size (n_ctx): 2048
-   Reasoning: our max chunk is ~512 tokens; 2048 gives headroom for the model's
-   instruction prefix ("search_document:" / "search_query:") plus batching,
-   without wasting KV cache memory.
-
-3. Quantization: Q8_0 for the embedding model.
-   Reasoning: embeddings are sensitive to quantization noise; Q8_0 keeps recall
-   near-fp16 while halving memory. Do NOT use Q4 for embeddings -- retrieval
-   quality degrades measurably. (Q4/Q5 are fine for *generation* LLMs.)
-
-4. Chunk sizing: 512 tokens target (code), 384 (markdown), 256 (ADR/RFC sections).
-   Reasoning: matches function-sized units; large enough for semantic coherence,
-   small enough that one chunk is one idea -> sharper embeddings + better recall.
-
-5. Chunk overlap: 64 tokens (code), 48 (markdown), 32 (sections).
-   Reasoning: ~12% overlap preserves cross-boundary context (a call that spans a
-   chunk edge) without inflating the index or double-counting in scoring.
-
-Nomic requires task prefixes:
-    documents -> "search_document: <text>"
-    queries   -> "search_query: <text>"
-This module applies them automatically.
-
-Usage:
-    emb = LlamaEmbedder()                  # reads config/rag.yaml
+    from rag.config import get_embedder
+    emb = get_embedder()
     vecs = emb.embed_documents(["def f(): ..."])
     qv   = emb.embed_query("how is jwt validated")
+
+Task-prefix handling: some models require a per-task prefix on the input text
+(for example a document-vs-query prefix). Those prefixes are NOT hardcoded — set
+`embedding.document_prefix` / `embedding.query_prefix` in config/rag.yaml (empty
+by default = no prefix). The configured strings are prepended verbatim.
 """
 from __future__ import annotations
 
@@ -50,20 +29,17 @@ except ImportError:  # pragma: no cover - allow import without binary installed
     Llama = None
 
 
-DEFAULTS = {
-    "model_path": str(Path.home() / ".claude-env/models/nomic-embed-text-v1.5.Q8_0.gguf"),
-    "n_ctx": 2048,
-    "n_threads": os.cpu_count() or 8,
-    "n_gpu_layers": -1,           # offload all to Metal on Apple Silicon
-    "embedding_dim": 768,
-}
-
-
 class LlamaEmbedder:
-    def __init__(self, model_path: str | None = None, n_ctx: int | None = None,
-                 n_gpu_layers: int | None = None):
-        self.dim = DEFAULTS["embedding_dim"]
-        self._model_path = model_path or DEFAULTS["model_path"]
+    def __init__(self, model_path: str, model_name: str, embedding_dim: int,
+                 n_ctx: int = 2048, n_gpu_layers: int = -1,
+                 n_threads: int | None = None,
+                 document_prefix: str = "", query_prefix: str = ""):
+        self.dim = embedding_dim
+        self._model_path = model_path
+        self.model_name = model_name or Path(model_path).stem
+        # Task prefixes come from config (empty = none). No model name is inspected.
+        self._doc_prefix = document_prefix
+        self._query_prefix = query_prefix
         if Llama is None:
             raise RuntimeError(
                 "llama-cpp-python not installed. "
@@ -71,20 +47,30 @@ class LlamaEmbedder:
         self.llm = Llama(
             model_path=self._model_path,
             embedding=True,
-            n_ctx=n_ctx or DEFAULTS["n_ctx"],
-            n_threads=DEFAULTS["n_threads"],
-            n_gpu_layers=n_gpu_layers if n_gpu_layers is not None
-            else DEFAULTS["n_gpu_layers"],
+            n_ctx=n_ctx,
+            n_threads=n_threads or os.cpu_count() or 8,
+            n_gpu_layers=n_gpu_layers,
             verbose=False,
         )
 
-    @staticmethod
-    def _doc(t: str) -> str:
-        return f"search_document: {t}"
+    @classmethod
+    def from_config(cls, cfg) -> "LlamaEmbedder":
+        """Build from a rag.config.EmbeddingConfig (the only sanctioned path)."""
+        return cls(
+            model_path=cfg.model_path,
+            model_name=cfg.model_name,
+            embedding_dim=cfg.embedding_dim,
+            n_ctx=cfg.n_ctx,
+            n_gpu_layers=cfg.n_gpu_layers,
+            document_prefix=cfg.document_prefix,
+            query_prefix=cfg.query_prefix,
+        )
 
-    @staticmethod
-    def _query(t: str) -> str:
-        return f"search_query: {t}"
+    def _doc(self, t: str) -> str:
+        return f"{self._doc_prefix}{t}"
+
+    def _query(self, t: str) -> str:
+        return f"{self._query_prefix}{t}"
 
     def _embed(self, text: str) -> list[float]:
         out = self.llm.create_embedding(text)

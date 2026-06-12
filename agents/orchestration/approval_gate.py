@@ -141,7 +141,25 @@ class ApprovalGate:
                           f"{'; '.join(verdict.reasons)}"
         req_id = self.audit.human_approval_request(
             agent=verdict.agent, action=action_desc, tier=verdict.tier)
+        self._notify(req_id, verdict)
         return req_id
+
+    @staticmethod
+    def _notify(req_id: str, verdict: GateVerdict) -> None:
+        """Best-effort local notification so gates don't sit unseen (macOS).
+        Resolve via `claude-env approvals --list-open` or `claude-env approvals-ui`."""
+        if sys.platform != "darwin":
+            return
+        try:
+            import subprocess
+            msg = f"{verdict.agent}: {verdict.action}"[:120].replace('"', "'")
+            subprocess.run(
+                ["osascript", "-e",
+                 f'display notification "{msg}" with title '
+                 f'"claude-env approval needed ({req_id})"'],
+                capture_output=True, timeout=5)
+        except Exception:
+            pass
 
     def resolve(self, request_id: str, approved: bool, decided_by: str) -> None:
         self.audit.human_approval_resolve(

@@ -96,7 +96,10 @@ class AuditLogger:
                 event_id = cur.lastrowid
                 if projection:
                     table, cols = projection
-                    cols = {**cols, "event_id": event_id, "ts": ts}
+                    cols = {**cols, "event_id": event_id}
+                    # human_approvals tracks requested_at/decided_at, not ts
+                    if table != "human_approvals":
+                        cols["ts"] = ts
                     names = ",".join(cols.keys())
                     qs = ",".join(["?"] * len(cols))
                     cur.execute(f"INSERT INTO {table} ({names}) VALUES ({qs})",

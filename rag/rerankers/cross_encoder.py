@@ -2,29 +2,44 @@
 claude-env :: reranker
 File: rag/rerankers/cross_encoder.py
 Purpose:
-    Re-rank hybrid-search candidates with a local cross-encoder. Default model
-    is ms-marco-MiniLM-L-6-v2 exported to ONNX (~22MB), running on CPU/ANE via
-    onnxruntime. Improves top-3 precision ~15-25% over fusion alone.
+    Re-rank hybrid-search candidates with a local cross-encoder ONNX model.
+    Improves top-3 precision ~15-25% over fusion alone.
 
-    If onnxruntime / the model is unavailable, falls back to identity (keeps
-    the fusion order) so the pipeline still works during bootstrap.
+    If onnxruntime / the model directory is unavailable (or reranking is disabled),
+    falls back to identity (keeps the fusion order) so the pipeline still works.
 
-Model prep (documented in docs/RUNBOOK.md):
-    optimum-cli export onnx --model cross-encoder/ms-marco-MiniLM-L-6-v2 \
-        ~/.claude-env/models/reranker-onnx/
+This module knows HOW to run an ONNX cross-encoder. It does NOT decide WHICH model
+to use, nor does it know any model's name — the directory is configured manually at
+setup in config/rag.yaml (`reranker.model_dir`) or via the RERANKER_DIR env var.
+Construct via the factory:
+
+    from rag.config import get_reranker
+    rr = get_reranker()
+    if not rr.ok:
+        print(rr.status())   # explains why reranking is inactive
+
+Point the configured directory at any cross-encoder exported to ONNX; it must
+contain `model.onnx` plus the tokenizer files. See docs/RUNBOOK.md §2 for export
+instructions and suggested models.
+
+Set RERANKER_DIR="" (or reranker.model_dir: "" in rag.yaml) to disable reranking.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
-
-RERANKER_DIR = os.environ.get(
-    "RERANKER_DIR", str(Path.home() / ".claude-env/models/reranker-onnx"))
 
 
 class CrossEncoderReranker:
-    def __init__(self, model_dir: str = RERANKER_DIR):
+    def __init__(self, model_dir: str = ""):
+        self.model_dir = model_dir
+        self.model_name = Path(model_dir).name if model_dir else ""
         self.ok = False
+        self._load_error: str = ""
+
+        if not model_dir:
+            self._load_error = "reranker disabled (no model_dir configured)"
+            return
+
         try:
             import onnxruntime as ort
             from transformers import AutoTokenizer
@@ -33,8 +48,23 @@ class CrossEncoderReranker:
                 str(Path(model_dir) / "model.onnx"),
                 providers=["CPUExecutionProvider"])
             self.ok = True
-        except Exception:
+        except Exception as exc:
+            self._load_error = str(exc)
             self.ok = False  # identity fallback
+
+    @classmethod
+    def from_config(cls, cfg) -> "CrossEncoderReranker":
+        """Build from a rag.config.RerankerConfig (the only sanctioned path)."""
+        return cls(model_dir=cfg.model_dir)
+
+    def status(self) -> dict:
+        """Return a dict describing whether the reranker loaded successfully."""
+        return {
+            "ok": self.ok,
+            "model_dir": self.model_dir,
+            "model_name": self.model_name,
+            "error": self._load_error if not self.ok else None,
+        }
 
     def rerank(self, query: str, candidates: list[dict], top_n: int = 8,
                text_key: str = "text") -> list[dict]:

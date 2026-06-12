@@ -27,6 +27,7 @@ Usage:
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,14 @@ except ImportError:  # pragma: no cover
     yaml = None
 
 Action = Literal["allow", "block", "redact"]
+
+# Incident mode: when this marker exists, EVERY path evaluation fails closed.
+# Managed by security/incident.py (claude-env incident on|off). Checking it here
+# covers all enforcement surfaces at once: the filesystem-policy MCP server,
+# the RAG indexer, and the Claude Code policy hook.
+def _incident_marker() -> Path:
+    return Path(os.environ.get("CLAUDE_ENV_HOME",
+                               str(Path.home() / ".claude-env"))) / "state" / "INCIDENT"
 
 
 def _glob_to_regex(pat: str) -> re.Pattern:
@@ -185,6 +194,11 @@ class PolicyEngine:
         return None
 
     def evaluate_path(self, path: str) -> Decision:
+        # 0. incident mode: fail closed on everything until lifted
+        if _incident_marker().exists():
+            return Decision("block", "incident mode active (claude-env incident off to lift)",
+                            "incident")
+
         path = path.replace("\\", "/")
         while path.startswith("./"):
             path = path[2:]

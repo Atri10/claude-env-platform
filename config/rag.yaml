@@ -1,0 +1,47 @@
+# RAG model configuration — THIS is where you choose your models.
+#
+# The code ships with NO model baked in. You must point the settings below at a
+# locally-downloaded model AT SETUP (see docs/RUNBOOK.md §2 for download steps and
+# suggested models). Every value can also be overridden by an environment variable
+# (noted per field). Changing anything here requires no code changes.
+#
+# Resolution order (highest priority first):
+#   1. environment variable   2. this file   3. built-in numeric fallbacks
+#
+# No symlinks: point each path straight at the file/directory wherever it lives.
+
+embedding:
+  # REQUIRED. Absolute (or ~-prefixed) path to a local GGUF embedding model file,
+  # compatible with llama-cpp-python. There is no default — leaving this empty
+  # makes the RAG stack raise a clear "configure config/rag.yaml" error.
+  # Override with the EMBED_MODEL_PATH env var.
+  #   e.g. "~/.claude-env/models/<your-embedding-model>.gguf"
+  model_path: ""
+
+  # Optional human-readable label stored in rag_index_state.embed_model. Defaults
+  # to the model filename (extension stripped). Override with EMBED_MODEL_NAME.
+  # model_name: ""
+
+  # Some embedding models require a task prefix prepended to the text. These are
+  # NOT assumed — set them to match YOUR model if it needs them, else leave empty.
+  #   e.g. for nomic-embed-text:  document_prefix: "search_document: "
+  #                               query_prefix:    "search_query: "
+  # Override with EMBED_DOC_PREFIX / EMBED_QUERY_PREFIX env vars.
+  document_prefix: ""
+  query_prefix: ""
+
+  # Context window (tokens). Override with EMBED_CTX.
+  n_ctx: 2048
+  # -1 = offload all layers to Metal on Apple Silicon; 0 = CPU only.
+  # Override with EMBED_GPU_LAYERS.
+  n_gpu_layers: -1
+  # Output vector dimension. MUST match your model (it varies by model family).
+  # Override with EMBED_DIM. Changing this requires a full re-index.
+  embedding_dim: 768
+
+reranker:
+  # OPTIONAL. Directory containing an ONNX cross-encoder: model.onnx + the
+  # tokenizer side-files. Leave empty ("") to disable reranking — the pipeline
+  # then falls back to fusion order. Override with the RERANKER_DIR env var.
+  #   e.g. "~/.claude-env/models/<your-reranker-onnx-dir>"
+  model_dir: ""

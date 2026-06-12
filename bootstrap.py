@@ -50,7 +50,7 @@ VENV_PIP = VENV / "bin" / "pip"
 DIRS = [
     "state", "venv",
     "knowledge", "knowledge/lancedb", "knowledge/docs",
-    "models", "models/embedding", "models/reranker-onnx",
+    "models",
     "archive", "archive/memory", "archive/audit", "archive/security",
     "logs", "config", "bin",
 ]
@@ -94,10 +94,13 @@ def check_environment() -> bool:
     sysname = platform.system()
     arch = platform.machine()
     if sysname == "Darwin" and arch == "arm64":
-        ok(f"platform: macOS {arch}")
+        ok(f"platform: macOS {arch} (Metal acceleration available)")
+    elif sysname == "Linux":
+        ok(f"platform: Linux {arch} (CPU inference; schedule jobs via "
+           f"scripts/systemd/ instead of launchd)")
     else:
-        warn(f"platform is {sysname}/{arch}; target is macOS arm64 "
-             f"(continuing, but local-model paths assume Apple Silicon)")
+        warn(f"platform is {sysname}/{arch}; primary targets are macOS arm64 "
+             f"and Linux (continuing)")
 
     if sys.version_info >= (3, 13):
         ok(f"python {platform.python_version()} (bootstrap interpreter)")
@@ -154,13 +157,18 @@ def install_deps(with_brew: bool) -> None:
     else:
         ok("python dependencies installed into venv")
 
-    if with_brew and shutil.which("brew"):
-        print("installing brew formulae …")
-        subprocess.run(["brew", "install", *BREW_FORMULAE])
-        ok("brew formulae processed")
+    if with_brew:
+        if shutil.which("brew"):
+            print("installing brew formulae …")
+            subprocess.run(["brew", "install", *BREW_FORMULAE])
+            ok("brew formulae processed")
+        elif platform.system() == "Linux":
+            warn("--with-brew: no Homebrew on this host — install equivalents "
+                 "via your package manager (e.g. apt install git sqlite3; "
+                 "llama.cpp builds from source or via the pip wheel)")
 
-    # llama.cpp Python binding needs Metal flag on Apple Silicon
-    if platform.machine() == "arm64":
+    # llama.cpp Python binding: Metal flag on Apple Silicon, plain build elsewhere
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
         print("installing llama-cpp-python with Metal acceleration …")
         env = {**os.environ, "CMAKE_ARGS": "-DLLAMA_METAL=on"}
         subprocess.run(
@@ -180,7 +188,8 @@ def init_database(dsn: str | None) -> None:
     from lib.db import get_db
     db = get_db()
     db.apply_schema(str(REPO_DIR / "sql" / "001_schema.sql"),
-                    str(REPO_DIR / "sql" / "002_retention.sql"))
+                    str(REPO_DIR / "sql" / "002_retention.sql"),
+                    str(REPO_DIR / "sql" / "003_extensions.sql"))
     ok(f"database schema applied ({db.backend})")
 
 
@@ -219,9 +228,19 @@ def init_policies() -> None:
         shutil.copy2(tmpl, dst_tmpl)
         ok(f"repo-policy template -> {dst_tmpl}")
 
+    # RAG model config — rag/config.py resolves config/rag.yaml relative to the
+    # deployed tree, so it must live at $CLAUDE_ENV_HOME/config/rag.yaml.
+    src_rag = REPO_DIR / "config" / "rag.yaml"
+    dst_rag = HOME / "config" / "rag.yaml"
+    if src_rag.exists():
+        shutil.copy2(src_rag, dst_rag)
+        ok(f"rag model config -> {dst_rag}")
+    else:
+        warn("config/rag.yaml missing in repo (RAG will use built-in defaults)")
+
     # mirror the platform code under $CLAUDE_ENV_HOME so MCP servers can import it
     for sub in ("security", "audit", "lib", "rag", "memory", "observability",
-                "agents", "mcp-servers", "sql", "validation", "scripts"):
+                "agents", "mcp-servers", "sql", "validation", "scripts", "hooks"):
         s = REPO_DIR / sub
         d = HOME / sub
         if s.exists():

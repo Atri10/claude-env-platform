@@ -1,0 +1,11 @@
+# claude-env :: nightly maintenance schedule (03:15 local, like the launchd job)
+
+[Unit]
+Description=Run claude-env nightly maintenance
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

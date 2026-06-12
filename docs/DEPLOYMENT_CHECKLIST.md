@@ -50,29 +50,38 @@ full command details behind each step.
 
 ## Local models
 
-- [ ] Download embedding model (RUNBOOK §2a):
+> No model ships with the code — these are **required setup steps**. Model names
+> below are suggestions; substitute any GGUF embedding model / ONNX cross-encoder.
+> No symlinks anywhere — point `config/rag.yaml` straight at the downloaded files.
+
+- [ ] Download a GGUF embedding model into `~/.claude-env/models/` (RUNBOOK §2a):
       ```bash
       huggingface-cli download nomic-ai/nomic-embed-text-v1.5-GGUF \
         nomic-embed-text-v1.5.Q8_0.gguf \
-        --local-dir ~/.claude-env/models/embedding
-      ln -sf ~/.claude-env/models/embedding/nomic-embed-text-v1.5.Q8_0.gguf \
-             ~/.claude-env/models/nomic-embed-text-v1.5.Q8_0.gguf
+        --local-dir ~/.claude-env/models
       ```
+- [ ] **Configure it in `config/rag.yaml`** (required — no default):
+      `embedding.model_path`, matching `embedding_dim`, and `document_prefix` /
+      `query_prefix` if the model needs them (e.g. nomic). Or set `EMBED_MODEL_PATH`
+      / `EMBED_DIM` / `EMBED_DOC_PREFIX` / `EMBED_QUERY_PREFIX` (RUNBOOK §2c).
 - [ ] Install llama-cpp-python with Metal into the venv:
       ```bash
       CMAKE_ARGS="-DLLAMA_METAL=on" \
         ~/.claude-env/venv/bin/pip install --upgrade --force-reinstall llama-cpp-python
       ```
-- [ ] Download reranker ONNX model (RUNBOOK §2b):
+- [ ] (Optional) Download a reranker ONNX model + set `reranker.model_dir` (RUNBOOK §2b):
       ```bash
       huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
         --include "*.onnx" "*.json" "*.txt" \
         --local-dir ~/.claude-env/models/reranker-onnx/
+      # then in config/rag.yaml: reranker.model_dir: "~/.claude-env/models/reranker-onnx"
       ```
 - [ ] Validate models load:
       ```bash
       claude-env validate installation
-      # llama_cpp and onnxruntime lines must now show PASS
+      # "embedding model file present" must show PASS once configured.
+      # "reranker loads + runs" shows PASS if enabled, WARN if disabled/absent.
+      # A WARN's next line explains why; RAG still works without the reranker.
       ```
 
 ---
@@ -119,6 +128,21 @@ full command details behind each step.
       every server. Use `--dry-run` to preview first.
 - [ ] **Restart Claude Code** so servers pick up the new environment
 - [ ] `claude-env validate mcp` — exits 0
+
+---
+
+## Native-tool enforcement (hooks)
+
+- [ ] Install the Claude Code hooks so policy + audit cover native tools
+      (Read/Write/Edit/Bash), not just MCP traffic (RUNBOOK §14a):
+      ```bash
+      claude-env hooks
+      ```
+- [ ] Restart Claude Code, then confirm enforcement: ask Claude to read a
+      blocked file (e.g. `.env`) — the tool call must be denied with the
+      matched policy rule
+- [ ] Tier-2+ machines: set `CLAUDE_ENV_HOOK_FAIL_CLOSED=true` in the
+      environment Claude Code runs under
 
 ---
 
@@ -172,13 +196,13 @@ full command details behind each step.
 
 ---
 
-## Hardening sign-off
+## Hardening
 
 - [ ] Full suite green:
       ```bash
       claude-env validate all
       ```
-- [ ] Threat → control table in `docs/IMPLEMENTATION.md` (Phase 9) reviewed
+- [ ] Threat → control mapping in `docs/IMPLEMENTATION.md` reviewed
 - [ ] Backup job scheduled (RUNBOOK §11); restore drill performed at least once
 - [ ] Audit chain verifies clean after restore:
       ```bash
@@ -196,6 +220,12 @@ full command details behind each step.
 
 - [ ] RUNBOOK distributed to all operators
 - [ ] Upgrade procedure rehearsed on a DB snapshot (RUNBOOK §12)
+- [ ] Incident drill performed once: `claude-env incident on --reason drill`,
+      confirm everything is denied, `claude-env incident off` (RUNBOOK §14b)
+- [ ] Nightly job scheduled — launchd (macOS, RUNBOOK §6) or systemd timer
+      (Linux, RUNBOOK §14i); repos listed in `~/.claude-env/config/analyst-repos.txt`
+- [ ] Cost budgets set per repo in `~/.claude-env/config/budgets.yaml` (RUNBOOK §14g)
+- [ ] `claude-env validate features` — exits 0 (extended feature smoke suite)
 - [ ] PostgreSQL migration plan reviewed if multi-machine deployment is planned
       (`docs/POSTGRES_MIGRATION.md`)
 

@@ -86,7 +86,8 @@
         "CLAUDE_ENV_REPO_ROOT":  "${workspaceFolder}",
         "CLAUDE_ENV_REPO_NAME":  "${CLAUDE_ENV_REPO_NAME}",
         "CLAUDE_ENV_BRANCH":     "${CLAUDE_ENV_BRANCH}",
-        "LANCEDB_PATH":          "${CLAUDE_ENV_HOME}/knowledge/lancedb"
+        "LANCEDB_PATH":          "${CLAUDE_ENV_HOME}/knowledge/lancedb",
+        "_comment_models": "Embedding + reranker model selection lives in config/rag.yaml (configured at setup), NOT here. To override per-server, you may set EMBED_MODEL_PATH / EMBED_DIM / EMBED_DOC_PREFIX / EMBED_QUERY_PREFIX / RERANKER_DIR here, but no model is hardcoded by default."
       }
     },
     "memory-graph": {

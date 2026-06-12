@@ -17,16 +17,34 @@ _venv_py = H / "venv" / "bin" / "python"
 PYTHON = str(_venv_py) if _venv_py.exists() else sys.executable
 
 CMDS = {
-    "bootstrap":   ROOT / "bootstrap.py",
-    "scan":        ROOT / "rag" / "repository_scan.py",
-    "index":       ROOT / "rag" / "bootstrap_rag.py",
-    "reindex":     ROOT / "rag" / "incremental_index.py",
-    "dashboard":   ROOT / "observability" / "dashboard.py",
-    "approvals":   ROOT / "agents" / "orchestration" / "approval_gate.py",
-    "route":       ROOT / "agents" / "orchestration" / "task_router.py",
-    "register":    ROOT / "scripts" / "register_repo.py",
+    "bootstrap":    ROOT / "bootstrap.py",
+    "scan":         ROOT / "rag" / "repository_scan.py",
+    "index":        ROOT / "rag" / "bootstrap_rag.py",
+    "reindex":      ROOT / "rag" / "incremental_index.py",
+    "dashboard":    ROOT / "observability" / "dashboard.py",
+    "approvals":    ROOT / "agents" / "orchestration" / "approval_gate.py",
+    "approvals-ui": ROOT / "agents" / "orchestration" / "approvals_ui.py",
+    "route":        ROOT / "agents" / "orchestration" / "task_router.py",
+    "register":     ROOT / "scripts" / "register_repo.py",
+    # governance & forensics
+    "report":       ROOT / "audit" / "compliance_report.py",
+    "replay":       ROOT / "audit" / "session_replay.py",
+    "incident":     ROOT / "security" / "incident.py",
+    "policy-sim":   ROOT / "security" / "policy_sim.py",
+    "hooks":        ROOT / "hooks" / "install_hooks.py",
+    # knowledge & quality
+    "know":         ROOT / "rag" / "pipelines" / "know.py",
+    "context-pack": ROOT / "rag" / "context_pack.py",
+    "rag-bench":    ROOT / "rag" / "rag_bench.py",
+    "test-impact":  ROOT / "rag" / "test_impact.py",
+    "doc-drift":    ROOT / "rag" / "doc_drift.py",
+    "digest":       ROOT / "agents" / "analysts" / "nightly_analyst.py",
+    # memory & cost
+    "ingest-sessions": ROOT / "memory" / "session_ingestor.py",
+    "memory-sync":  ROOT / "memory" / "memory_sync.py",
+    "budget":       ROOT / "observability" / "budgets.py",
 }
-VALIDATORS = ["installation", "security", "rag", "memory", "agents", "mcp"]
+VALIDATORS = ["installation", "security", "rag", "memory", "agents", "mcp", "features"]
 
 
 def usage():
