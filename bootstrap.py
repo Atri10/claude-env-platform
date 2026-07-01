@@ -314,7 +314,8 @@ def init_policies() -> None:
         if s.exists():
             if d.exists():
                 shutil.rmtree(d)
-            shutil.copytree(s, d, ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(s, d,
+                            ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
 
     # install the CLI into $CLAUDE_ENV_HOME/bin/claude-env
     src_cli = REPO_DIR / "bin" / "claude-env"

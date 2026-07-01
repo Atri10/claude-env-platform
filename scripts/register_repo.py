@@ -244,6 +244,10 @@ def _install_dot_claude(repo_root: str, force: bool, dry_run: bool) -> list[str]
     for src in src_root.rglob("*"):
         if not src.is_file():
             continue
+        # never leak OS/tooling junk into an onboarded repo
+        if src.name == ".DS_Store" or "__pycache__" in src.parts \
+                or src.suffix == ".pyc":
+            continue
         rel = src.relative_to(_TEMPLATE_DIR)          # e.g. .claude/skills/.../SKILL.md
         dst = Path(repo_root) / rel
         if dst.exists() and not force:
