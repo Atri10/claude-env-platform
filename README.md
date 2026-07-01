@@ -131,7 +131,7 @@ These hold everywhere; the rest of the system is built to preserve them.
 
 Everything is local. The six MCP servers speak **stdio** — none binds a network port.
 
-```
+```text
                          ┌─────────────────────────────┐
      Claude Code ───────►│  PreToolUse / PostToolUse    │  native tools
      (native tools)      │  hooks  (policy + audit)     │  (Read/Write/Edit/Bash)
@@ -331,7 +331,7 @@ All offline, stateless over the working tree + git.
 
 `$CLAUDE_ENV_HOME` (default `~/.claude-env/`) after bootstrap:
 
-```
+```text
 state/          claude-env.db (audit + memory + metrics + RAG bookkeeping) · INCIDENT marker
 venv/           the ONLY Python environment used to run platform code
 knowledge/      lancedb/<slug>__<branch>.lance   docs/ (local doc corpus)
@@ -344,7 +344,7 @@ bin/            claude-env CLI · <mirrored platform code: security/ audit/ rag/
 
 Source-tree layout of this repository:
 
-```
+```text
 claude-env/
 ├── bootstrap.py              # one-command setup (uv-preferred venv + deps)
 ├── requirements.txt          # locked runtime deps
@@ -418,18 +418,25 @@ any ONNX cross-encoder work. **No symlinks** — point the config straight at th
 
 ```bash
 mkdir -p ~/.claude-env/models
-~/.claude-env/venv/bin/pip install huggingface-hub
-huggingface-cli download nomic-ai/nomic-embed-text-v1.5-GGUF \
+~/.claude-env/venv/bin/pip install huggingface-hub    # provides the `hf` CLI
+hf download nomic-ai/nomic-embed-text-v1.5-GGUF \
   nomic-embed-text-v1.5.Q8_0.gguf --local-dir ~/.claude-env/models
 ```
 
+Point the **deployed** config at it — `~/.claude-env/config/rag.yaml` is the copy the servers
+actually read:
+
 ```yaml
-# config/rag.yaml
+# ~/.claude-env/config/rag.yaml
 embedding:
   model_path: "~/.claude-env/models/nomic-embed-text-v1.5.Q8_0.gguf"
-  embedding_dim: 768              # MUST match your model (nomic = 768)
+  embedding_dim: 768                     # MUST match your model (nomic = 768)
   document_prefix: "search_document: "   # nomic needs task prefixes; leave empty if yours doesn't
   query_prefix:    "search_query: "
+```
+
+```bash
+claude-env validate installation        # "embedding model file present" must PASS
 ```
 
 Suggested settings (not requirements): 768-dim GGUF at Q8_0 (Q4/Q5 degrade recall); context
@@ -438,9 +445,28 @@ Suggested settings (not requirements): 768-dim GGUF at Q8_0 (Q4/Q5 degrade recal
 ### 10b. Reranker (optional)
 
 ```bash
-huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
-  --include "*.onnx" "*.json" "*.txt" --local-dir ~/.claude-env/models/reranker-onnx/
-# config/rag.yaml → reranker.model_dir: "~/.claude-env/models/reranker-onnx"   (or "" to disable)
+# download an ONNX cross-encoder (the arm64-quantized variant is fastest on Apple Silicon)
+hf download cross-encoder/ms-marco-MiniLM-L6-v2 \
+  --include "onnx/model.onnx" "onnx/model_qint8_arm64.onnx" \
+            "tokenizer.json" "config.json" "vocab.txt" \
+            "tokenizer_config.json" "special_tokens_map.json" \
+  --local-dir ~/.claude-env/models/reranker-onnx/
+
+# the loader expects model.onnx in the directory root — move the quantized file into place
+mv ~/.claude-env/models/reranker-onnx/onnx/model_qint8_arm64.onnx \
+   ~/.claude-env/models/reranker-onnx/model.onnx
+```
+
+Point the deployed config at the directory, then verify:
+
+```yaml
+# ~/.claude-env/config/rag.yaml
+reranker:
+  model_dir: "~/.claude-env/models/reranker-onnx"   # or "" to disable
+```
+
+```bash
+claude-env validate installation        # "reranker loads + runs" PASS (WARN = disabled/absent)
 ```
 
 The reranker degrades gracefully to fusion order if absent or disabled — RAG still works.
@@ -467,29 +493,42 @@ means reranking is live.
 > embedding model, drop the affected LanceDB tables and re-index ([§28](#28-troubleshooting),
 > "Removing a repo's RAG index"). Gate swaps with `claude-env rag-bench` (recall@k + MRR).
 
-> **Deploying config edits:** `config/rag.yaml` is copied to `~/.claude-env/` by `bootstrap.py`.
-> After editing it in the repo, re-run `python3 bootstrap.py --no-deps` so the installed copy
-> updates before you validate.
+> **Editing config:** the servers and tools read the **deployed** copy at
+> `~/.claude-env/config/rag.yaml` — edit that directly and it takes effect immediately. If you
+> instead edit the repo's `config/rag.yaml`, re-run `python3 bootstrap.py --no-deps` to sync
+> the deployed copy.
 
 ## 11. Register MCP servers
 
-Once per machine. Use `$H/venv/bin/python` explicitly — Claude Code launches servers outside
-any shell, so bare `python` would not resolve to the venv.
+You normally **run nothing here.** `claude-env onboard <repo>` ([§13](#13-one-step-onboarding))
+writes each project's full MCP server configuration — command, args, **and** the per-repo env —
+straight into `~/.claude.json`. Registration is therefore *per repository*, performed by
+onboarding; skip to [§12](#12-native-tool-hooks) unless you want the servers defined machine-wide.
+
+**To make the servers available in every project** (including repos you haven't onboarded yet),
+register them once at **user scope**. This matters because `claude mcp add` defaults to `local`
+scope — the *current project only* — which is exactly why running it inside a directory registers
+the server to just that project. `--scope user` stores the definitions in `~/.claude.json` for all
+projects, and the working directory is irrelevant, so you can run this from anywhere:
 
 ```bash
+# --scope user = machine-wide; run from any directory. Use the venv Python explicitly —
+# Claude Code launches servers outside any shell, so bare `python` would not resolve to the venv.
 H=~/.claude-env; PY="$H/venv/bin/python"
-claude mcp add filesystem-policy -- "$PY" "$H/mcp-servers/filesystem-policy/server.py"
-claude mcp add git               -- "$PY" "$H/mcp-servers/git/server.py"
-claude mcp add lancedb-rag       -- "$PY" "$H/mcp-servers/lancedb-rag/server.py"
-claude mcp add memory-graph      -- "$PY" "$H/mcp-servers/memory-graph/server.py"
-claude mcp add terminal          -- "$PY" "$H/mcp-servers/terminal/server.py"
-claude mcp add documentation     -- "$PY" "$H/mcp-servers/documentation/server.py"
-claude mcp list                                     # all six appear
+claude mcp add filesystem-policy --scope user -- "$PY" "$H/mcp-servers/filesystem-policy/server.py"
+claude mcp add git               --scope user -- "$PY" "$H/mcp-servers/git/server.py"
+claude mcp add lancedb-rag       --scope user -- "$PY" "$H/mcp-servers/lancedb-rag/server.py"
+claude mcp add memory-graph      --scope user -- "$PY" "$H/mcp-servers/memory-graph/server.py"
+claude mcp add terminal          --scope user -- "$PY" "$H/mcp-servers/terminal/server.py"
+claude mcp add documentation     --scope user -- "$PY" "$H/mcp-servers/documentation/server.py"
+claude mcp list                                   # all six appear
 ```
 
-These register with an **empty `env`**, so each server would inherit Claude Code's working
-directory as its repo root — which is wrong. The per-repo env vars are filled in automatically
-by onboarding ([§13](#13-one-step-onboarding)); you do not edit `~/.claude.json` by hand.
+These user-scope entries start with an empty `env`, so they don't yet know which repo they serve —
+`claude-env onboard <repo>` supplies each project's `CLAUDE_ENV_REPO_ROOT`, slug, branch, and
+namespaces. Note the scope precedence: **local (project) > user**, and Claude Code uses one whole
+entry rather than merging them — so an onboarded repo always uses its own project-scoped entry
+(with the correct env), and the user-scope entry is only the fallback for not-yet-onboarded projects.
 
 ## 12. Native-tool hooks
 
@@ -520,7 +559,7 @@ claude-env onboard /absolute/path/to/repo --yes  # non-interactive; accept detec
 
 Interactively it asks a few questions with detected defaults (Enter accepts each):
 
-```
+```text
   Repo slug (used for RAG + memory namespaces) [my-repo]:
   Privacy tier — 0 public / 1 internal / 2 sensitive / 3 restricted [1]: 2
   Default branch [main]:
@@ -914,7 +953,7 @@ and metrics tolerate concurrent writers as-is.
 (`hooks/hooks.json`), the core MCP servers (`.mcp.json`), and slash commands
 (`/claude-env:know`, `/claude-env:report`, `/claude-env:replay`).
 
-```
+```text
 /plugin marketplace add <org>/claude-env
 /plugin install claude-env
 # or, for local testing:
