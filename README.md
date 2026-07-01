@@ -28,14 +28,14 @@ table of contents as a reference.
 8. [Prerequisites](#8-prerequisites)
 9. [Bootstrap](#9-bootstrap)
 10. [Local models](#10-local-models)
-11. [Register MCP servers](#11-register-mcp-servers)
-12. [Native-tool hooks](#12-native-tool-hooks)
+11. [Native-tool hooks](#11-native-tool-hooks)
 
 **Part IV — Onboarding a repository**
-13. [One-step onboarding](#13-one-step-onboarding)
-14. [What lands in the repo](#14-what-lands-in-the-repo)
-15. [Index, verify, auto-reindex](#15-index-verify-auto-reindex)
-16. [repo-policy.yaml reference](#16-repo-policyyaml-reference)
+12. [One-step onboarding](#12-one-step-onboarding)
+13. [What lands in the repo](#13-what-lands-in-the-repo)
+14. [Index, verify, auto-reindex](#14-index-verify-auto-reindex)
+15. [repo-policy.yaml reference](#15-repo-policyyaml-reference)
+16. [Register MCP servers (optional)](#16-register-mcp-servers-optional)
 
 **Part V — Operations**
 17. [Everyday verification](#17-everyday-verification)
@@ -194,7 +194,7 @@ gitignore-style `**` globbing), `config/global-policy.yaml` (never-overridable g
 (tier-3 = default-deny). **Deny always wins.** Allowed by default: source, docs, ADRs,
 RFCs, tests. Blocked by default: `.env .pem .p12 .key .crt`, `.ssh`, `.gnupg`, secrets,
 credentials, production configs, customer data, exports, backups. The engine is stateless —
-edit the YAML and it recompiles on load. Full schema is in [§16](#16-repo-policyyaml-reference).
+edit the YAML and it recompiles on load. Full schema is in [§15](#15-repo-policyyaml-reference).
 
 ### 5.4 Local RAG
 **Components:** `rag/config.py`, `rag/chunkers/chunkers.py`, `rag/embeddings/llama_embedder.py`,
@@ -498,39 +498,7 @@ means reranking is live.
 > instead edit the repo's `config/rag.yaml`, re-run `python3 bootstrap.py --no-deps` to sync
 > the deployed copy.
 
-## 11. Register MCP servers
-
-You normally **run nothing here.** `claude-env onboard <repo>` ([§13](#13-one-step-onboarding))
-writes each project's full MCP server configuration — command, args, **and** the per-repo env —
-straight into `~/.claude.json`. Registration is therefore *per repository*, performed by
-onboarding; skip to [§12](#12-native-tool-hooks) unless you want the servers defined machine-wide.
-
-**To make the servers available in every project** (including repos you haven't onboarded yet),
-register them once at **user scope**. This matters because `claude mcp add` defaults to `local`
-scope — the *current project only* — which is exactly why running it inside a directory registers
-the server to just that project. `--scope user` stores the definitions in `~/.claude.json` for all
-projects, and the working directory is irrelevant, so you can run this from anywhere:
-
-```bash
-# --scope user = machine-wide; run from any directory. Use the venv Python explicitly —
-# Claude Code launches servers outside any shell, so bare `python` would not resolve to the venv.
-H=~/.claude-env; PY="$H/venv/bin/python"
-claude mcp add filesystem-policy --scope user -- "$PY" "$H/mcp-servers/filesystem-policy/server.py"
-claude mcp add git               --scope user -- "$PY" "$H/mcp-servers/git/server.py"
-claude mcp add lancedb-rag       --scope user -- "$PY" "$H/mcp-servers/lancedb-rag/server.py"
-claude mcp add memory-graph      --scope user -- "$PY" "$H/mcp-servers/memory-graph/server.py"
-claude mcp add terminal          --scope user -- "$PY" "$H/mcp-servers/terminal/server.py"
-claude mcp add documentation     --scope user -- "$PY" "$H/mcp-servers/documentation/server.py"
-claude mcp list                                   # all six appear
-```
-
-These user-scope entries start with an empty `env`, so they don't yet know which repo they serve —
-`claude-env onboard <repo>` supplies each project's `CLAUDE_ENV_REPO_ROOT`, slug, branch, and
-namespaces. Note the scope precedence: **local (project) > user**, and Claude Code uses one whole
-entry rather than merging them — so an onboarded repo always uses its own project-scoped entry
-(with the correct env), and the user-scope entry is only the fallback for not-yet-onboarded projects.
-
-## 12. Native-tool hooks
+## 11. Native-tool hooks
 
 Extend the policy engine + audit to Claude Code's native tools (Read/Write/Edit/Glob/Grep/Bash):
 
@@ -548,7 +516,7 @@ in the environment Claude Code runs under. Behavior detail is in [§5.8](#58-cla
 
 # Part IV — Onboarding a repository
 
-## 13. One-step onboarding
+## 12. One-step onboarding
 
 Onboard each repository with a single interactive command:
 
@@ -575,7 +543,7 @@ It then provisions the repo's **isolated workspace** end to end:
 3. **MCP env** — patches `~/.claude.json` so every server for this project resolves to the
    correct repo root, slug, branch, and namespaces.
 4. **Template** — installs the governance `CLAUDE.md` and the `.claude/` skills + subagents
-   ([§14](#14-what-lands-in-the-repo)), with concrete namespace values substituted (no
+   ([§13](#13-what-lands-in-the-repo)), with concrete namespace values substituted (no
    placeholder text remains).
 5. **Index (opt-in)** — offers to build the first RAG index now.
 
@@ -589,7 +557,7 @@ Re-running is idempotent: an existing `repo-policy.yaml` is preserved (local edi
 
 > `claude-env register` is an alias for the same command.
 
-## 14. What lands in the repo
+## 13. What lands in the repo
 
 Onboarding installs a governance layer directly into the repo:
 
@@ -606,7 +574,7 @@ Onboarding installs a governance layer directly into the repo:
 The template source lives in `templates/repo-onboarding/`; edit it there (not the copies in a
 repo) — the managed `CLAUDE.md` block regenerates on the next onboard.
 
-## 15. Index, verify, auto-reindex
+## 14. Index, verify, auto-reindex
 
 ```bash
 claude-env scan  /path/to/repo                       # preview allowed vs blocked (no model load)
@@ -625,7 +593,7 @@ ln -sf ~/.claude-env/scripts/post-commit /path/to/repo/.git/hooks/post-commit
 chmod +x /path/to/repo/.git/hooks/post-commit
 ```
 
-## 16. repo-policy.yaml reference
+## 15. repo-policy.yaml reference
 
 Lives at `<repo>/.claude/repo-policy.yaml`; created by onboarding. Deny always wins over allow;
 for tier 3 the allow list is authoritative (anything not allowed is denied).
@@ -667,6 +635,37 @@ agent_permissions:            # per-agent override of registry defaults for THIS
 
 Preview a candidate policy before applying it: `claude-env policy-sim simulate /repo
 --candidate new-policy.yaml`.
+
+## 16. Register MCP servers (optional)
+
+You normally **don't need this.** `claude-env onboard <repo>` ([§12](#12-one-step-onboarding))
+already writes each project's full MCP server configuration — command, args, **and** the per-repo
+env — straight into `~/.claude.json`, so registration happens per repository as part of onboarding.
+
+Do this **only** to make the servers available in every project (including repos you haven't
+onboarded yet), by registering them once at **user scope**. It matters that `claude mcp add`
+defaults to `local` scope — the *current project only* — which is why running it inside a directory
+registers the server to just that project. `--scope user` stores the definitions in `~/.claude.json`
+for all projects, and the working directory is irrelevant, so run it from anywhere:
+
+```bash
+# --scope user = machine-wide; run from any directory. Use the venv Python explicitly —
+# Claude Code launches servers outside any shell, so bare `python` would not resolve to the venv.
+H=~/.claude-env; PY="$H/venv/bin/python"
+claude mcp add filesystem-policy --scope user -- "$PY" "$H/mcp-servers/filesystem-policy/server.py"
+claude mcp add git               --scope user -- "$PY" "$H/mcp-servers/git/server.py"
+claude mcp add lancedb-rag       --scope user -- "$PY" "$H/mcp-servers/lancedb-rag/server.py"
+claude mcp add memory-graph      --scope user -- "$PY" "$H/mcp-servers/memory-graph/server.py"
+claude mcp add terminal          --scope user -- "$PY" "$H/mcp-servers/terminal/server.py"
+claude mcp add documentation     --scope user -- "$PY" "$H/mcp-servers/documentation/server.py"
+claude mcp list                                   # all six appear
+```
+
+These user-scope entries start with an empty `env`, so they don't yet know which repo they serve —
+`claude-env onboard <repo>` still supplies each project's `CLAUDE_ENV_REPO_ROOT`, slug, branch, and
+namespaces. Scope precedence is **local (project) > user**, and Claude Code uses one whole entry
+rather than merging them, so an onboarded repo always uses its own project-scoped entry (correct
+env); the user-scope entry is only the fallback for not-yet-onboarded projects.
 
 ---
 
@@ -962,8 +961,8 @@ claude --plugin-dir /path/to/claude-env/claude-plugin
 
 The platform must still be bootstrapped ([§9](#9-bootstrap)) and models configured
 ([§10](#10-local-models)) on each machine — the plugin is only the wiring/distribution layer.
-See `claude-plugin/README.md`. Without the plugin system, `claude-env hooks` +
-[§11](#11-register-mcp-servers) achieve the same wiring.
+See `claude-plugin/README.md`. Without the plugin system, `claude-env hooks` ([§11](#11-native-tool-hooks)) +
+[§16](#16-register-mcp-servers-optional) achieve the same wiring.
 
 ## License & use
 
