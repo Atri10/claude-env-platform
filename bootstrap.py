@@ -47,6 +47,10 @@ VENV = HOME / "venv"
 VENV_PY = VENV / "bin" / "python"
 VENV_PIP = VENV / "bin" / "pip"
 
+# uv is preferred for venv creation and dependency install (faster, better
+# resolver). Falls back to stdlib venv + venv/bin/pip when uv is unavailable.
+UV = shutil.which("uv")
+
 DIRS = [
     "state", "venv",
     "knowledge", "knowledge/lancedb", "knowledge/docs",
@@ -55,19 +59,31 @@ DIRS = [
     "logs", "config", "bin",
 ]
 
+# Locked, resolved via `uv pip compile` against Python 3.13 (latest compatible
+# as of 2026-07). llama-cpp-python is (re)installed separately below so it can be
+# built with Metal on Apple Silicon. tree-sitter-language-pack is the maintained
+# successor to the abandoned tree-sitter-languages (no cp313+ wheels).
 PIP_DEPS_LOCKED = [
     "pyyaml==6.0.3",
     "lancedb==0.33.0",
     "pyarrow==24.0.0",
-    "llama-cpp-python==0.3.26",
-    "onnxruntime==1.26.0",
-    "transformers==4.41.0",
-    "tree-sitter==0.22.0",
-    "tree-sitter-languages==1.10.2",
-    "mcp==1.0.0",
-    "httpx==0.27.0",
-    "datasette==0.64.0",
+    "llama-cpp-python==0.3.32",
+    "onnxruntime==1.27.0",
+    "transformers==5.12.1",
+    "tree-sitter==0.26.0",
+    "tree-sitter-language-pack==1.12.0",
+    "mcp==1.28.1",
+    "httpx==0.28.1",
+    "datasette==0.65.2",
 ]
+
+def _pin_for(name: str) -> str:
+    """Return the locked 'name==version' spec for a package, or bare name."""
+    for spec in PIP_DEPS_LOCKED:
+        if spec.split("==", 1)[0] == name:
+            return spec
+    return name
+
 
 BREW_FORMULAE = ["llama.cpp", "git", "sqlite"]
 
@@ -138,22 +154,54 @@ def create_venv(recreate: bool = False) -> None:
         ok(f"venv already exists at {VENV}")
         return
     print(f"creating venv at {VENV} …")
-    _venv.create(str(VENV), with_pip=True, clear=recreate, symlinks=True)
+    if UV:
+        # uv builds the venv much faster and manages its own Python if needed.
+        r = subprocess.run([UV, "venv", str(VENV), "--python", "3.13"])
+        if r.returncode:
+            warn("uv venv failed; falling back to stdlib venv")
+            _venv.create(str(VENV), with_pip=True, clear=recreate, symlinks=True)
+    else:
+        _venv.create(str(VENV), with_pip=True, clear=recreate, symlinks=True)
     ok(f"venv created: {VENV_PY}")
 
 
 # ---------------------------------------------------------------------------
 # 4. dependency install (into the venv — no global site-packages modified)
 # ---------------------------------------------------------------------------
+def _pip_install(pkgs: list[str], *, force_reinstall: bool = False,
+                 prefer_pip: bool = False, env: dict | None = None) -> int:
+    """Install packages into the platform venv, preferring uv over pip.
+
+    prefer_pip forces venv/bin/pip even when uv is available — needed for
+    source builds (e.g. llama-cpp-python), whose git-submodule sdist layout
+    uv's build backend rejects but pip handles correctly.
+    """
+    if UV and not (prefer_pip and VENV_PIP.exists()):
+        cmd = [UV, "pip", "install", "--python", str(VENV_PY), "--upgrade"]
+    else:
+        cmd = [str(VENV_PIP), "install", "--upgrade"]
+    if force_reinstall:
+        cmd.append("--force-reinstall")
+    cmd.extend(pkgs)
+    return subprocess.run(cmd, env=env).returncode
+
+
 def install_deps(with_brew: bool) -> None:
-    if not VENV_PIP.exists():
-        fail("venv pip not found — run without --no-venv-create first")
+    if not VENV_PY.exists():
+        fail("venv not found — run without --no-venv-create first")
+        return
+    if not UV and not VENV_PIP.exists():
+        fail("venv pip not found and uv unavailable — recreate the venv")
         return
 
-    print("installing python dependencies into venv …")
-    r = subprocess.run([str(VENV_PIP), "install", "--upgrade", *PIP_DEPS])
-    if r.returncode:
-        warn("pip install reported errors; review output above")
+    # llama-cpp-python is built from source separately below (its sdist layout
+    # needs pip, and Apple Silicon wants the Metal cmake flag), so hold it back
+    # from the bulk resolver install here.
+    bulk = [d for d in PIP_DEPS_LOCKED
+            if not d.startswith("llama-cpp-python")]
+    print(f"installing python dependencies into venv (via {'uv' if UV else 'pip'}) …")
+    if _pip_install(bulk):
+        warn("dependency install reported errors; review output above")
     else:
         ok("python dependencies installed into venv")
 
@@ -167,15 +215,21 @@ def install_deps(with_brew: bool) -> None:
                  "via your package manager (e.g. apt install git sqlite3; "
                  "llama.cpp builds from source or via the pip wheel)")
 
-    # llama.cpp Python binding: Metal flag on Apple Silicon, plain build elsewhere
-    if platform.system() == "Darwin" and platform.machine() == "arm64":
+    # llama.cpp Python binding: Metal flag on Apple Silicon, plain build elsewhere.
+    # Built via pip (prefer_pip) since uv's build backend rejects its sdist layout.
+    is_metal = platform.system() == "Darwin" and platform.machine() == "arm64"
+    if is_metal:
         print("installing llama-cpp-python with Metal acceleration …")
         env = {**os.environ, "CMAKE_ARGS": "-DLLAMA_METAL=on"}
-        subprocess.run(
-            [str(VENV_PIP), "install", "--upgrade", "--force-reinstall",
-             "llama-cpp-python"],
-            env=env)
-        ok("llama-cpp-python (Metal) installed")
+    else:
+        print("installing llama-cpp-python (CPU build) …")
+        env = None
+    rc = _pip_install([_pin_for("llama-cpp-python")],
+                      force_reinstall=True, prefer_pip=True, env=env)
+    if rc:
+        warn("llama-cpp-python install reported errors")
+    else:
+        ok(f"llama-cpp-python {'(Metal) ' if is_metal else ''}installed")
 
 
 # ---------------------------------------------------------------------------

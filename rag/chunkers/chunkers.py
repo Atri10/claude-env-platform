@@ -15,8 +15,9 @@ Responsibilities:
     Chunk: dataclass carrying text + metadata used by the indexer.
     chunk_file(path, text, repo, branch, commit) -> list[Chunk]
 
-tree-sitter grammars (install via pip): tree_sitter_languages bundles
+tree-sitter grammars (install via pip): tree_sitter_language_pack bundles
 python, javascript, typescript, go, java, kotlin, c_sharp, rust, c, cpp.
+(Successor to the abandoned tree_sitter_languages; same get_parser() API.)
 """
 from __future__ import annotations
 
@@ -25,9 +26,12 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 try:
-    from tree_sitter_languages import get_parser
+    from tree_sitter_language_pack import get_parser
 except ImportError:  # pragma: no cover
-    get_parser = None
+    try:  # fall back to the legacy package if it happens to be installed
+        from tree_sitter_languages import get_parser
+    except ImportError:
+        get_parser = None
 
 TARGETS = {  # (target_tokens, overlap_tokens)
     "code": (512, 64),
