@@ -292,6 +292,19 @@ def init_policies() -> None:
     else:
         warn("config/rag.yaml missing in repo (RAG will use built-in defaults)")
 
+    # Config files that deployed scripts resolve relative to $CLAUDE_ENV_HOME:
+    #   mcp-servers.json -> scripts/register_repo.py (repo onboarding)
+    #   budgets.yaml     -> observability/budgets.py (claude-env budget)
+    for name, needed_by in (("mcp-servers.json", "repo onboarding"),
+                            ("budgets.yaml", "claude-env budget")):
+        src = REPO_DIR / "config" / name
+        dst = HOME / "config" / name
+        if src.exists():
+            shutil.copy2(src, dst)
+            ok(f"{name} -> {dst}")
+        else:
+            warn(f"config/{name} missing in repo ({needed_by} will fail until present)")
+
     # mirror the platform code under $CLAUDE_ENV_HOME so MCP servers can import it
     for sub in ("security", "audit", "lib", "rag", "memory", "observability",
                 "agents", "mcp-servers", "sql", "validation", "scripts", "hooks",
