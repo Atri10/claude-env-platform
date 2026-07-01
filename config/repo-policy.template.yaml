@@ -82,6 +82,20 @@ deny:
     - pattern: 'migrations/.*seed.*'
       reason: "seeds may contain sample customer data"
 
+# ---------------------------------------------------------------------------
+# OVERRIDE_DENY  -- explicit per-path escape hatch (use sparingly)
+# Paths listed here are READ/INDEXABLE even when a global or repo deny rule
+# would otherwise block them — WITHOUT editing the global policy. Intended for
+# safe, deny-shaped files such as example/template env files that hold only
+# placeholders. Evaluated before deny (deny otherwise wins); incident mode still
+# blocks everything, and content_scan below STILL runs, so a real secret placed
+# in an overridden file is still redacted/blocked. Prefer exact paths over globs.
+# ---------------------------------------------------------------------------
+override_deny:
+  # - "sample-services/trip_analyzer/example.env"
+  # - "sample-clients/data-web-client/.env.local.example"
+  # - "**/*.env.example"
+
 # Content-level secret scanning applied to ALLOWED files before bytes are
 # returned to an agent. A match redacts the span or blocks the file.
 content_scan:

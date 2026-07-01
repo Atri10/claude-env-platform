@@ -100,6 +100,7 @@ class CompiledPolicy:
     deny_regex: list[tuple[re.Pattern, str]] = field(default_factory=list)
     allow_paths: list[str] = field(default_factory=list)
     allow_ext: list[str] = field(default_factory=list)
+    override_paths: list[str] = field(default_factory=list)
     default_deny: bool = False
     content_scan_on: bool = True
     content_on_match: str = "redact"
@@ -138,11 +139,17 @@ class PolicyEngine:
         deny_paths += list(trow.get("extra_deny_paths", []))
         default_deny = bool(trow.get("default_deny", False))
 
+        # Explicit per-path escape hatch: paths a repo may read even when a
+        # global/repo deny rule would block them (content scanning still runs).
+        # Only honored from the repo policy; global policy has none.
+        override_paths = list(doc.get("override_deny", []) or [])
+
         return CompiledPolicy(
             tier=tier, repo=repo_slug,
             deny_paths=deny_paths, deny_ext=deny_ext, deny_regex=deny_regex,
             allow_paths=list(allow.get("paths", [])),
             allow_ext=list(allow.get("extensions", [])),
+            override_paths=override_paths,
             default_deny=default_deny,
             content_scan_on=bool(cs.get("enabled", True)),
             content_on_match=cs.get("on_match", "redact"),
@@ -203,6 +210,13 @@ class PolicyEngine:
         while path.startswith("./"):
             path = path[2:]
         path = path.lstrip("/")
+
+        # 0. repo override_deny: explicit per-path allow that beats global + repo
+        #    deny (incident mode above still wins; content scanning still runs on
+        #    the bytes, so real secrets in an overridden file are still caught).
+        m = self._match_paths(path, self.repo.override_paths)
+        if m:
+            return Decision("allow", "repo override_deny", m)
 
         # 1. global deny
         d = self._check_deny(path, self.glob, "global")
