@@ -10,14 +10,15 @@ This document is the complete guide — read it top to bottom the first time, th
 table of contents as a reference.
 
 ---
-
 ## Table of contents
 
 **Part I — Overview**
+
 1. [What it is](#1-what-it-is)
 2. [Feature map](#2-feature-map)
 
 **Part II — Architecture**
+
 3. [Invariants (the ground rules)](#3-invariants-the-ground-rules)
 4. [System topology](#4-system-topology)
 5. [Subsystems](#5-subsystems)
@@ -25,12 +26,14 @@ table of contents as a reference.
 7. [On-disk layout](#7-on-disk-layout)
 
 **Part III — Installation**
+
 8. [Prerequisites](#8-prerequisites)
 9. [Bootstrap](#9-bootstrap)
 10. [Local models](#10-local-models)
 11. [Native-tool hooks](#11-native-tool-hooks)
 
 **Part IV — Onboarding a repository**
+
 12. [One-step onboarding](#12-one-step-onboarding)
 13. [What lands in the repo](#13-what-lands-in-the-repo)
 14. [Index, verify, auto-reindex](#14-index-verify-auto-reindex)
@@ -38,6 +41,7 @@ table of contents as a reference.
 16. [Register MCP servers (optional)](#16-register-mcp-servers-optional)
 
 **Part V — Operations**
+
 17. [Everyday verification](#17-everyday-verification)
 18. [Memory maintenance](#18-memory-maintenance)
 19. [Approvals](#19-approvals)
@@ -50,6 +54,7 @@ table of contents as a reference.
 26. [Nightly automation](#26-nightly-automation)
 
 **Part VI — Reference**
+
 27. [CLI command reference](#27-cli-command-reference)
 28. [Troubleshooting](#28-troubleshooting)
 29. [Appendix A — JetBrains integration](#appendix-a--jetbrains-integration)
