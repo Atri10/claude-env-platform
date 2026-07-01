@@ -26,12 +26,32 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 try:
-    from tree_sitter_language_pack import get_parser
+    from tree_sitter import Parser as _TSParser
+    from tree_sitter_language_pack import get_language as _get_language
 except ImportError:  # pragma: no cover
-    try:  # fall back to the legacy package if it happens to be installed
-        from tree_sitter_languages import get_parser
-    except ImportError:
-        get_parser = None
+    _TSParser = _get_language = None
+
+_PARSER_CACHE: dict = {}
+
+
+def get_parser(lang: str):
+    """Return a cached tree_sitter.Parser for `lang`, or None if unavailable.
+
+    Built from the stable core `tree_sitter.Parser` + a grammar from
+    tree_sitter_language_pack. We deliberately do NOT use the pack's own
+    `get_parser()`: its bundled parser has a divergent API (parse() expects a
+    str and raises on bytes; root_node is a method, not a property) that breaks
+    the byte-offset AST walk below. Unknown/unsupported langs cache as None and
+    fall back to window chunking.
+    """
+    if _TSParser is None or _get_language is None:
+        return None
+    if lang not in _PARSER_CACHE:
+        try:
+            _PARSER_CACHE[lang] = _TSParser(_get_language(lang))
+        except Exception:
+            _PARSER_CACHE[lang] = None
+    return _PARSER_CACHE[lang]
 
 TARGETS = {  # (target_tokens, overlap_tokens)
     "code": (512, 64),
@@ -120,16 +140,16 @@ def _split_window(text: str, target: int, overlap: int) -> list[tuple[int, int, 
 
 def _chunk_code(text: str, lang: str) -> list[tuple[str, str, int, int, str]]:
     """Return [(symbol_type, symbol_name, start, end, text)]."""
-    if get_parser is None:
-        # fall back to window split, no AST available
+    parser = get_parser(lang)
+    if parser is None:
+        # no AST available (deps missing or unsupported language) -> window split
         return [("window", "window", s, e, t)
                 for s, e, t in _split_window(text, *TARGETS["code"])]
     try:
-        parser = get_parser(lang)
+        tree = parser.parse(text.encode())
     except Exception:
         return [("window", "window", s, e, t)
                 for s, e, t in _split_window(text, *TARGETS["code"])]
-    tree = parser.parse(text.encode())
     units = UNIT_NODES.get(lang, set())
     src = text.encode()
     out: list[tuple[str, str, int, int, str]] = []
