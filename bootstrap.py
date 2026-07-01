@@ -294,7 +294,8 @@ def init_policies() -> None:
 
     # mirror the platform code under $CLAUDE_ENV_HOME so MCP servers can import it
     for sub in ("security", "audit", "lib", "rag", "memory", "observability",
-                "agents", "mcp-servers", "sql", "validation", "scripts", "hooks"):
+                "agents", "mcp-servers", "sql", "validation", "scripts", "hooks",
+                "templates"):
         s = REPO_DIR / sub
         d = HOME / sub
         if s.exists():
