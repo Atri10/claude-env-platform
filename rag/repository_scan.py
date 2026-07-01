@@ -12,5 +12,5 @@ if __name__ == "__main__":
     r = Indexer(sys.argv[1]).scan()
     print(f"repo={r['repo']} tier={r['tier']} rag_enabled={r['rag_enabled']}")
     print(f"candidates={r['candidates']} allowed={len(r['allowed'])} blocked={len(r['blocked'])}")
-    print("\nBLOCKED (sample):")
-    for f in r['blocked'][:25]: print("  ", f)
+    print("\nBLOCKED files:")
+    for f in r['blocked']: print("  ", f)
