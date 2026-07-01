@@ -133,11 +133,11 @@ Everything is local. The six MCP servers speak **stdio** — none binds a networ
 
 ```text
                          ┌─────────────────────────────┐
-     Claude Code ───────►│  PreToolUse / PostToolUse    │  native tools
-     (native tools)      │  hooks  (policy + audit)     │  (Read/Write/Edit/Bash)
+     Claude Code ───────►│  PreToolUse / PostToolUse   │  native tools
+     (native tools)      │  hooks  (policy + audit)    │  (Read/Write/Edit/Bash)
                          └──────────────┬──────────────┘
                                         │
-     Claude Code ──► MCP (stdio) ──►  ┌─┴──────────────────────────────────┐
+     Claude Code ──► MCP (stdio) ──►  ┌─┴────────────────────────────────────┐
                                       │ 1 filesystem-policy  (the chokepoint)│
                                       │ 2 git          (read-mostly)         │
                                       │ 3 lancedb-rag  (read-only search)    │
