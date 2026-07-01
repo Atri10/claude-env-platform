@@ -13,7 +13,7 @@ the machine first:
 python3 bootstrap.py          # creates ~/.claude-env (venv, DB, policies, code mirror)
 ```
 
-See `docs/RUNBOOK.md` §2 for the (required) embedding-model setup.
+See the main `README.md` §10 "Local models" for the (required) embedding-model setup.
 
 ## Install
 

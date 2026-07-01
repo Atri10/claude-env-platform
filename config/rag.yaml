@@ -1,8 +1,8 @@
 # RAG model configuration — THIS is where you choose your models.
 #
 # The code ships with NO model baked in. You must point the settings below at a
-# locally-downloaded model AT SETUP (see docs/RUNBOOK.md §2 for download steps and
-# suggested models). Every value can also be overridden by an environment variable
+# locally-downloaded model AT SETUP (see README §10 "Local models" for download
+# steps and suggested models). Every value can also be overridden by an environment variable
 # (noted per field). Changing anything here requires no code changes.
 #
 # Resolution order (highest priority first):
