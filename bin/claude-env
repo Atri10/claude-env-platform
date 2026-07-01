@@ -26,6 +26,7 @@ CMDS = {
     "approvals-ui": ROOT / "agents" / "orchestration" / "approvals_ui.py",
     "route":        ROOT / "agents" / "orchestration" / "task_router.py",
     "register":     ROOT / "scripts" / "register_repo.py",
+    "onboard":      ROOT / "scripts" / "register_repo.py",
     # governance & forensics
     "report":       ROOT / "audit" / "compliance_report.py",
     "replay":       ROOT / "audit" / "session_replay.py",
