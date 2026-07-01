@@ -1,31 +1,39 @@
 #!/usr/bin/env python3
 """
-register_repo.py — onboard a repo to claude-env: MCP env vars + governance template.
+register_repo.py — onboard a repo to claude-env in one smooth, interactive step.
 
-Two things happen when you register a repo:
-  1. Reads config/mcp-servers.json, resolves all ${...} placeholders for the given
-     repo path, then patches the project entry in ~/.claude.json so every MCP
-     server gets the correct CLAUDE_ENV_REPO_ROOT (and related vars).
-  2. Installs the onboarding template from templates/repo-onboarding/ into the repo:
-       - CLAUDE.md   -> the MCP-first governance operating contract (managed block;
-                        local edits outside the block are preserved and re-runs
-                        only refresh the block).
-       - .claude/skills/  -> principled-engineering, solid-design, design-patterns,
-                             code-review, architecture-review
-       - .claude/agents/  -> code-reviewer, architecture-reviewer subagents
+Run it once per repo. Interactively (a TTY, no --yes) it asks for a few details
+with sensible detected defaults, then provisions the repo's ISOLATED workspace:
+
+  1. Repo policy   -> writes <repo>/.claude/repo-policy.yaml from the template with
+                      the real slug, tier, and memory namespace filled in (memory is
+                      isolated automatically for tier>=2). This file IS the isolation
+                      boundary the policy engine + hooks enforce.
+  2. Namespaces    -> RAG index table  <slug>__<branch>  (under ~/.claude-env/knowledge/
+                      lancedb) and memory namespace  proj-<slug>.
+  3. MCP env       -> patches ~/.claude.json so every MCP server for this project
+                      resolves to the correct repo root, slug, branch, and namespaces.
+  4. Template      -> installs CLAUDE.md (governance contract, with the concrete
+                      namespace values — no placeholders left) plus .claude/skills/
+                      (principled-engineering, solid-design, design-patterns,
+                      code-review, architecture-review) and .claude/agents/
+                      (code-reviewer, architecture-reviewer).
+  5. Index (opt-in)-> offers to build the first RAG index now.
 
 Usage:
-    python scripts/register_repo.py /abs/path/to/repo [--repo-name SLUG] [--branch BRANCH]
-                                    [--no-template] [--force-template] [--dry-run]
+    claude-env onboard /abs/path/to/repo            # interactive (recommended)
+    claude-env register /abs/path/to/repo --yes     # non-interactive, accept defaults
+    python scripts/register_repo.py /abs/path/to/repo [flags]
 
-    --repo-name       Short identifier for the repo (used for CLAUDE_ENV_REPO_NAME and
-                      CLAUDE_ENV_MEMORY_NS). Defaults to the directory basename.
-    --branch          Default branch to use for lancedb-rag (CLAUDE_ENV_BRANCH).
-                      Defaults to the repo's current HEAD branch, falling back to 'main'.
-    --no-template     Only patch ~/.claude.json; skip the CLAUDE.md + .claude/ install.
-    --force-template  Overwrite existing .claude/ skill & agent files (CLAUDE.md's
-                      managed block is always refreshed regardless).
-    --dry-run         Print what would change without writing anything.
+    --repo-name SLUG   Repo slug for RAG + memory namespaces (default: dir name).
+    --tier {0,1,2,3}   Privacy tier (prompted if omitted; existing policy is the default).
+    --description STR  Short human-readable purpose.
+    --branch BRANCH    Default branch for lancedb-rag (auto-detected if omitted).
+    --yes, -y          Non-interactive: accept detected defaults, no prompts.
+    --no-template      Skip CLAUDE.md + .claude/ install (namespaces/env only).
+    --force-template   Overwrite existing .claude/ skill & agent files.
+    --force-policy     Regenerate an existing .claude/repo-policy.yaml.
+    --dry-run          Print what would change without writing anything.
 
 Or via the CLI dispatcher:
     claude-env register /abs/path/to/repo [--repo-name SLUG] [--branch BRANCH]
@@ -79,8 +87,10 @@ def _resolve_env(env: dict, subs: dict[str, str]) -> dict:
     return {k: _resolve(v, subs) for k, v in env.items()}
 
 
-def _build_server_blocks(repo_root: str, repo_name: str, branch: str) -> dict:
-    """Return a dict of server_name -> full MCP server block with resolved env."""
+def _build_server_blocks(repo_root: str, repo_name: str, branch: str,
+                         tier: int = 1) -> dict:
+    """Return a dict of server_name -> full MCP server block with resolved env.
+    Memory is isolated (no cross-project reads) for tier>=2."""
     cfg = json.loads(_MCP_CONFIG.read_text())
     defaults_env: dict = cfg.get("defaults", {}).get("env", {})
 
@@ -111,8 +121,8 @@ def _build_server_blocks(repo_root: str, repo_name: str, branch: str) -> dict:
             resolved_env.setdefault("CLAUDE_ENV_REPO_NAME", repo_name)
             resolved_env.setdefault("CLAUDE_ENV_BRANCH",    branch)
         if name == "memory-graph":
-            resolved_env.setdefault("CLAUDE_ENV_MEMORY_NS",       f"proj-{repo_name}")
-            resolved_env.setdefault("CLAUDE_ENV_MEMORY_ISOLATED",  "false")
+            resolved_env["CLAUDE_ENV_MEMORY_NS"]       = f"proj-{repo_name}"
+            resolved_env["CLAUDE_ENV_MEMORY_ISOLATED"] = "true" if tier >= 2 else "false"
         if name == "documentation":
             resolved_env.setdefault("CLAUDE_ENV_DOCS_DIR",
                                     str(_HOME / "knowledge" / "docs"))
@@ -176,12 +186,13 @@ def _detect_tier(repo_root: str) -> str:
     return "1"
 
 
-def _fill(text: str, repo_name: str, tier: str) -> str:
-    return text.replace("{{REPO_NAME}}", repo_name).replace("{{TIER}}", tier)
+def _fill(text: str, subs: dict[str, str]) -> str:
+    for key, val in subs.items():
+        text = text.replace("{{" + key + "}}", val)
+    return text
 
 
-def _install_claude_md(repo_root: str, repo_name: str, tier: str,
-                       dry_run: bool) -> str:
+def _install_claude_md(repo_root: str, subs: dict[str, str], dry_run: bool) -> str:
     """Install/refresh the managed CLAUDE.md block, preserving any local text.
 
     Returns a short status word for logging.
@@ -189,7 +200,7 @@ def _install_claude_md(repo_root: str, repo_name: str, tier: str,
     src = _TEMPLATE_DIR / "CLAUDE.md"
     if not src.exists():
         return "template-missing"
-    managed = _fill(src.read_text(), repo_name, tier)
+    managed = _fill(src.read_text(), subs)
 
     dst = Path(repo_root) / "CLAUDE.md"
     if not dst.exists():
@@ -244,18 +255,17 @@ def _install_dot_claude(repo_root: str, force: bool, dry_run: bool) -> list[str]
     return written
 
 
-def _install_template(repo_root: str, repo_name: str, force: bool,
+def _install_template(repo_root: str, subs: dict[str, str], force: bool,
                       dry_run: bool) -> None:
     if not _TEMPLATE_DIR.exists():
         print(f"{YELLOW}WARN{RESET} onboarding template not found at "
               f"{_TEMPLATE_DIR} — skipping CLAUDE.md / skills install.")
         return
 
-    tier = _detect_tier(repo_root)
     tag = f"{YELLOW}DRY RUN{RESET} " if dry_run else ""
 
-    md_status = _install_claude_md(repo_root, repo_name, tier, dry_run)
-    print(f"{tag}CLAUDE.md (tier {tier}): {md_status}")
+    md_status = _install_claude_md(repo_root, subs, dry_run)
+    print(f"{tag}CLAUDE.md: {md_status}")
 
     files = _install_dot_claude(repo_root, force, dry_run)
     if files:
@@ -268,20 +278,126 @@ def _install_template(repo_root: str, repo_name: str, force: bool,
               f"(use --force-template to overwrite)")
 
 
+# ---------------------------------------------------------------------------
+# interactive onboarding: gather details, provision the repo's isolated space
+# ---------------------------------------------------------------------------
+def _slugify(name: str) -> str:
+    """A stable, filesystem/namespace-safe repo slug (lowercase [a-z0-9._-])."""
+    s = re.sub(r"[^a-z0-9._-]+", "-", name.strip().lower())
+    return re.sub(r"-{2,}", "-", s).strip("-.") or "repo"
+
+
+def _table_name(slug: str, branch: str) -> str:
+    """Mirror rag/retrievers/lance_store.table_name so we can report/pre-create."""
+    safe = lambda s: s.replace("/", "-").replace(" ", "_")
+    return f"{safe(slug)}__{safe(branch)}"
+
+
+def _interactive(no_prompt: bool) -> bool:
+    return (not no_prompt) and sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _prompt(label: str, default: str) -> str:
+    try:
+        resp = input(f"  {label} [{default}]: ").strip()
+    except EOFError:
+        return default
+    return resp or default
+
+
+def _prompt_tier(default: str) -> str:
+    while True:
+        v = _prompt("Privacy tier — 0 public / 1 internal / 2 sensitive / 3 restricted",
+                    default)
+        if v in ("0", "1", "2", "3"):
+            return v
+        print(f"    {YELLOW}enter 0, 1, 2, or 3{RESET}")
+
+
+def _write_repo_policy(repo_root: str, slug: str, tier: str, description: str,
+                       force: bool, dry_run: bool) -> str:
+    """Create <repo>/.claude/repo-policy.yaml — the repo's isolation boundary —
+    from the template with all placeholders filled. Returns a status word.
+    Never clobbers an existing policy unless force=True."""
+    dst = Path(repo_root) / ".claude" / "repo-policy.yaml"
+    tmpl = _HERE / "config" / "repo-policy.template.yaml"
+    if not tmpl.exists():
+        return "template-missing"
+    existed = dst.exists()
+    if existed and not force:
+        return "kept-existing (use --force-policy to regenerate)"
+
+    text = tmpl.read_text()
+    text = text.replace("EXAMPLE-REPO-SLUG", slug)            # repo: + proj- namespace
+    text = re.sub(r"(?m)^tier:\s*\d+", f"tier: {tier}", text, count=1)
+    if description:
+        safe_desc = description.replace('"', "'")
+        text = re.sub(r'(?m)^description:\s*".*"',
+                      f'description: "{safe_desc}"', text, count=1)
+    if tier in ("2", "3"):                                    # sensitive+ -> isolate memory
+        text = re.sub(r"(?m)^(\s*isolated:\s*)false", r"\g<1>true", text, count=1)
+
+    if not dry_run:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(text)
+    return "overwritten" if existed else "created"
+
+
+def _provision_storage(slug: str, branch: str, dry_run: bool) -> str:
+    """Ensure the isolated RAG store exists and return this repo's table name.
+    The memory namespace is created lazily on first write, so nothing to do
+    there beyond reporting it."""
+    lancedb_dir = _HOME / "knowledge" / "lancedb"
+    if not dry_run:
+        lancedb_dir.mkdir(parents=True, exist_ok=True)
+    return _table_name(slug, branch)
+
+
+def _maybe_index(repo_root: str, slug: str, branch: str, interactive: bool,
+                 dry_run: bool) -> None:
+    """Offer to build the initial RAG index now (opt-in; it needs the embedding
+    model and can be slow on large repos)."""
+    if dry_run or not interactive:
+        if not interactive:
+            print(f"\nNext: build the RAG index when ready -> "
+                  f"{GREEN}claude-env index {repo_root}{RESET}")
+        return
+    ans = _prompt("Build the RAG index for this repo now? (y/N)", "N")
+    if ans.lower() not in ("y", "yes"):
+        print(f"  skipped — run {GREEN}claude-env index {repo_root}{RESET} later")
+        return
+    script = _HERE / "rag" / "bootstrap_rag.py"
+    env = {**os.environ,
+           "CLAUDE_ENV_REPO_NAME": slug, "CLAUDE_ENV_BRANCH": branch}
+    print(f"  indexing {repo_root} …")
+    rc = subprocess.run([sys.executable, str(script), repo_root], env=env).returncode
+    print(f"  {'indexed' if rc == 0 else 'indexing reported errors (see above)'}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Auto-configure MCP server env vars for a repo in ~/.claude.json")
+        description="Onboard a repo to claude-env: provision its isolated RAG/memory "
+                    "namespace + policy, patch MCP env, and install the CLAUDE.md "
+                    "governance template + engineering skills.")
     parser.add_argument("repo_root", help="Absolute path to the repository root")
     parser.add_argument("--repo-name", default=None,
-                        help="Short repo identifier (defaults to directory basename)")
+                        help="Short repo slug (RAG/memory namespace); defaults to dir name")
+    parser.add_argument("--tier", default=None, choices=["0", "1", "2", "3"],
+                        help="Privacy tier (0 public..3 restricted); prompted if omitted")
+    parser.add_argument("--description", default=None,
+                        help="Short human-readable purpose of the repo")
     parser.add_argument("--branch", default=None,
                         help="Default branch for lancedb-rag (auto-detected if omitted)")
+    parser.add_argument("--yes", "-y", action="store_true",
+                        help="Non-interactive: accept detected defaults, no prompts")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Print resolved config without writing")
+                        help="Print what would change without writing anything")
     parser.add_argument("--no-template", action="store_true",
                         help="Skip installing CLAUDE.md + .claude/ skills & agents")
     parser.add_argument("--force-template", action="store_true",
                         help="Overwrite existing .claude/ skill & agent files")
+    parser.add_argument("--force-policy", action="store_true",
+                        help="Overwrite an existing .claude/repo-policy.yaml")
     args = parser.parse_args()
 
     repo_root = str(Path(args.repo_root).resolve())
@@ -289,20 +405,58 @@ def main() -> int:
         print(f"{RED}ERROR{RESET} repo path does not exist: {repo_root}")
         return 1
 
-    repo_name = args.repo_name or Path(repo_root).name
-    branch    = args.branch    or _detect_branch(repo_root)
+    interactive = _interactive(args.yes)
 
-    print(f"Repo root : {repo_root}")
-    print(f"Repo name : {repo_name}")
-    print(f"Branch    : {branch}")
-    print(f"HOME      : {_HOME}")
+    # --- gather details (detected defaults, refined interactively) -----------
+    slug    = _slugify(args.repo_name or Path(repo_root).name)
+    branch  = args.branch or _detect_branch(repo_root)
+    tier    = args.tier or _detect_tier(repo_root)   # existing policy wins as default
+    desc    = args.description or ""
 
-    blocks = _build_server_blocks(repo_root, repo_name, branch)
+    print(f"\n{GREEN}== claude-env onboarding =={RESET}  {repo_root}")
+    if interactive:
+        print("Answer a few questions (Enter accepts the default):\n")
+        slug   = _slugify(_prompt("Repo slug (used for RAG + memory namespaces)", slug))
+        tier   = _prompt_tier(tier)
+        branch = _prompt("Default branch", branch)
+        desc   = _prompt("Short description (optional)", desc)
+        print()
+
+    tier_i     = int(tier)
+    table      = _provision_storage(slug, branch, args.dry_run)
+    memory_ns  = f"proj-{slug}"
+    isolated   = tier_i >= 2
+    tag        = f"{YELLOW}DRY RUN{RESET} " if args.dry_run else ""
+
+    # 1. isolation boundary: the repo policy (creates .claude/repo-policy.yaml)
+    pol = _write_repo_policy(repo_root, slug, tier, desc, args.force_policy, args.dry_run)
+    print(f"{tag}repo-policy.yaml (tier {tier}): {pol}")
+
+    # 2. MCP env + namespaces in ~/.claude.json
+    blocks = _build_server_blocks(repo_root, slug, branch, tier_i)
     _patch_claude_json(repo_root, blocks, args.dry_run)
 
+    # 3. governance template with CONCRETE namespace values (no placeholders left)
     if not args.no_template:
         print()
-        _install_template(repo_root, repo_name, args.force_template, args.dry_run)
+        subs = {
+            "REPO_NAME": slug, "TIER": tier, "BRANCH": branch,
+            "RAG_TABLE": table, "MEMORY_NS": memory_ns,
+            "MEMORY_ISOLATED": "disabled (isolated)" if isolated else "allowed",
+        }
+        _install_template(repo_root, subs, args.force_template, args.dry_run)
+
+    # 4. summary of the isolated space
+    print(f"\n{GREEN}Isolated workspace provisioned:{RESET}")
+    print(f"  slug        : {slug}")
+    print(f"  tier        : {tier}")
+    print(f"  branch      : {branch}")
+    print(f"  RAG table   : {table}")
+    print(f"  memory ns   : {memory_ns}  (cross-project reads: "
+          f"{'disabled' if isolated else 'allowed'})")
+
+    # 5. optional first index
+    _maybe_index(repo_root, slug, branch, interactive, args.dry_run)
     return 0
 
 

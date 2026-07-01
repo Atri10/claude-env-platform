@@ -68,6 +68,19 @@ The authoritative rules live in `.claude/repo-policy.yaml` (deny always wins ove
 allow). Read it before assuming a path is accessible. Do not weaken it to unblock
 yourself — request a policy change through the owner.
 
+### This repo's isolated workspace
+
+Onboarding provisioned a dedicated, isolated space for this repo. Everything you
+store or retrieve stays scoped to it:
+
+| Resource        | This repo's namespace            |
+|-----------------|----------------------------------|
+| RAG index table | `{{RAG_TABLE}}` (branch `{{BRANCH}}`) |
+| Memory graph    | `{{MEMORY_NS}}` (cross-project reads: `{{MEMORY_ISOLATED}}`) |
+
+`lancedb.search` and the memory tools resolve to these automatically — you do not
+pass namespaces by hand. Do not read or write another repo's namespace.
+
 ## 3. How to work here (the standard loop)
 
 1. **Recall first.** `memory.recall` + `lancedb.search` for prior decisions and
