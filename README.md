@@ -505,7 +505,9 @@ Extend the policy engine + audit to Claude Code's native tools (Read/Write/Edit/
 ```bash
 claude-env hooks              # install into ~/.claude/settings.json
 claude-env hooks --dry-run    # preview
-claude-env hooks --uninstall
+
+# To uninstall
+claude-env hooks --uninstall  # uninstall hooks from  ~/.claude/settings.json
 ```
 
 Restart Claude Code, then confirm: ask Claude to read a blocked file (e.g. `.env`) — the call
