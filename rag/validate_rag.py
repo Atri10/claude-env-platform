@@ -26,4 +26,8 @@ def main(repo_root, query):
     print("RAG:", "OK" if ok else "DEGRADED"); sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2] if len(sys.argv)>2 else "test")
+    if len(sys.argv) < 2:
+        print("SKIP: RAG validation needs a repo path — "
+              "run: claude-env validate rag <repo> [query]")
+        sys.exit(0)
+    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "test")

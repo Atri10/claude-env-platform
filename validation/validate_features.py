@@ -48,6 +48,32 @@ def check(label: str, cond: bool, detail: str = "") -> None:
         print(f"{RED}FAIL{RESET} {label}" + (f" — {detail}" if detail else ""))
 
 
+def _make_fixture() -> Path:
+    """A tiny committed git repo so the repo-quality tools (policy-sim, test-impact,
+    doc-drift, nightly analyst) run hermetically — independent of where this
+    validator lives (source checkout vs the mirrored $CLAUDE_ENV_HOME, which has no
+    tests/docs/.git). Contains a doc that references code, a source file, and a
+    name-matching test."""
+    fix = Path(_TMP) / "fixture"
+    (fix / "src").mkdir(parents=True, exist_ok=True)
+    (fix / "tests").mkdir(parents=True, exist_ok=True)
+    (fix / "docs").mkdir(parents=True, exist_ok=True)
+    (fix / "src" / "engine.py").write_text("def run():  # TODO: optimize later\n    return 42\n")
+    (fix / "tests" / "test_engine.py").write_text(
+        "from src.engine import run\n\n\ndef test_run():\n    assert run() == 42\n")
+    (fix / "docs" / "guide.md").write_text(
+        "# Guide\n\nThe entry point is `src/engine.py`.\n"
+        "It also mentions `src/missing.py`, which does not exist.\n")
+    (fix / "README.md").write_text("# Fixture\n\nSee `src/engine.py` for the core.\n")
+    for args in (["init", "-q", str(fix)],
+                 ["-C", str(fix), "config", "user.email", "v@example.com"],
+                 ["-C", str(fix), "config", "user.name", "validator"],
+                 ["-C", str(fix), "add", "-A"],
+                 ["-C", str(fix), "commit", "-q", "-m", "fixture"]):
+        subprocess.run(["git", *args], check=True, capture_output=True)
+    return fix
+
+
 def main() -> int:  # noqa: C901 - linear smoke checklist
     from lib.db import get_db
     db = get_db()
@@ -171,12 +197,16 @@ def main() -> int:  # noqa: C901 - linear smoke checklist
           "imported nodes=1" in imp2.stdout and ok_ns
           and ok_ns["namespace"] == "proj-sync2")
 
+    # --- repo-quality tools run against a hermetic fixture repo (not REPO, which
+    #     when deployed is the $CLAUDE_ENV_HOME mirror with no tests/docs/.git) ---
+    FIX = _make_fixture()
+
     # --- policy sim ------------------------------------------------------------
     cand = Path(_TMP) / "cand.yaml"
-    cand.write_text("version: 1\ntier: 1\nrepo: claude-env\n"
+    cand.write_text("version: 1\ntier: 1\nrepo: fixture\n"
                     "deny:\n  paths: ['docs/**']\nallow:\n  paths: ['**']\n")
     sim = subprocess.run([sys.executable, str(REPO / "security" / "policy_sim.py"),
-                          "simulate", str(REPO), "--candidate", str(cand),
+                          "simulate", str(FIX), "--candidate", str(cand),
                           "--format", "json"],
                          capture_output=True, text=True, env=env)
     try:
@@ -206,18 +236,18 @@ def main() -> int:  # noqa: C901 - linear smoke checklist
 
     # --- repo quality tools -----------------------------------------------------
     ti = subprocess.run([sys.executable, str(REPO / "rag" / "test_impact.py"),
-                         str(REPO), "--files", "security/policy_engine.py",
+                         str(FIX), "--files", "src/engine.py",
                          "--format", "json"],
                         capture_output=True, text=True, env=env)
     try:
         tid = json.loads(ti.stdout)
         check("test-impact maps engine -> its test",
-              any("test_policy_engine" in t["file"] for t in tid["tests"]))
+              any("test_engine" in t["file"] for t in tid["tests"]))
     except Exception as exc:
         check("test-impact maps engine -> its test", False, str(exc))
 
     dd = subprocess.run([sys.executable, str(REPO / "rag" / "doc_drift.py"),
-                         str(REPO), "--format", "json"],
+                         str(FIX), "--format", "json"],
                         capture_output=True, text=True, env=env)
     try:
         ddd = json.loads(dd.stdout)
@@ -233,7 +263,7 @@ def main() -> int:  # noqa: C901 - linear smoke checklist
 
     dg = subprocess.run([sys.executable,
                          str(REPO / "agents" / "analysts" / "nightly_analyst.py"),
-                         str(REPO), "--no-memory"],
+                         str(FIX), "--no-memory"],
                         capture_output=True, text=True, env=env)
     check("nightly analyst writes a digest",
           dg.returncode == 0 and list((Path(_TMP) / "logs" / "digests").glob("*.md")))
@@ -242,9 +272,9 @@ def main() -> int:  # noqa: C901 - linear smoke checklist
     from audit.audit_logger import AuditLogger
     AuditLogger("ui-v", actor="devops").human_approval_request("devops", "apply", 1)
     from agents.orchestration import approvals_ui
-    html_out = approvals_ui._rows_html()
+    html_out = approvals_ui._pending_html()
     check("approvals UI renders pending rows",
-          "appr-" in html_out and "approve" in html_out)
+          "appr-" in html_out and 'value="approve"' in html_out)
 
     kn = subprocess.run([sys.executable, str(REPO / "rag" / "pipelines" / "know.py"),
                          "parser", "--repo", "demo", "--format", "json"],
@@ -257,13 +287,20 @@ def main() -> int:  # noqa: C901 - linear smoke checklist
         check("know fuses memory (finds ingested session)", False, str(exc))
 
     # --- plugin manifests ----------------------------------------------------------
-    plugin_ok = True
-    for f in (".claude-plugin/plugin.json", "hooks/hooks.json", ".mcp.json"):
-        try:
-            json.loads((REPO / "claude-plugin" / f).read_text())
-        except Exception:
-            plugin_ok = False
-    check("plugin manifests are valid JSON", plugin_ok)
+    # The plugin is a distribution artifact, not part of the runtime mirror — so it
+    # is only present in a source checkout. Validate it there; skip when absent.
+    plugin_dir = REPO / "claude-plugin"
+    if plugin_dir.exists():
+        plugin_ok = True
+        for f in (".claude-plugin/plugin.json", "hooks/hooks.json", ".mcp.json"):
+            try:
+                json.loads((plugin_dir / f).read_text())
+            except Exception:
+                plugin_ok = False
+        check("plugin manifests are valid JSON", plugin_ok)
+    else:
+        print(f"{YELLOW}SKIP{RESET} plugin manifests — claude-plugin/ not in this "
+              f"tree (runtime mirror); validate from a source checkout")
 
     # --- CLI coverage -----------------------------------------------------------------
     cli = (REPO / "bin" / "claude-env").read_text()
