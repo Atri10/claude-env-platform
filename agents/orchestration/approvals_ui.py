@@ -242,19 +242,24 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> int:
     global DECIDED_BY
     ap = argparse.ArgumentParser(description="Local approvals web UI")
-    ap.add_argument("--port", type=int, default=8002)
+    ap.add_argument("--port", type=int, default=8002,
+                    help="preferred port; falls back to a free one if busy (0 = random)")
     ap.add_argument("--by", default=None,
                     help="override the recorded approver (default: OS user@host)")
     args = ap.parse_args()
     if args.by:
         DECIDED_BY = args.by
-    srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"approvals UI -> http://127.0.0.1:{args.port}  "
+    from lib.services import bind_http, register, unregister
+    srv, port = bind_http(Handler, args.port)          # preferred, else free port
+    register("approvals", port, extra={"decided_by": DECIDED_BY})
+    print(f"approvals UI -> http://127.0.0.1:{port}  "
           f"(decisions recorded as '{DECIDED_BY}')")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\nbye")
+    finally:
+        unregister("approvals")
     return 0
 
 

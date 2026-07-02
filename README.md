@@ -729,9 +729,15 @@ Governance has **two enforcement layers**, and it's worth knowing which one you'
 Open the queue with:
 
 ```bash
-claude-env approvals-ui           # pretty web UI at http://127.0.0.1:8002 (Approve/Deny)
+claude-env approvals-ui           # pretty web UI (Approve/Deny)
 claude-env approvals --list-open  # terminal list
+claude-env services               # which local UI is on which port (auto-assigned if 8002 was busy)
 ```
+
+> **Ports auto-fall-back.** The approvals UI (preferred 8002) and the dashboard (preferred 8001)
+> bind their preferred port if free, else a random free one — so they never collide with your app.
+> `claude-env services` shows the actual URL of each running UI (`--port N` pins one, `--port 0`
+> forces random).
 
 **A gate opens when ANY of these is true** (evaluated per agent action by the orchestrator):
 
@@ -880,6 +886,7 @@ Run any piece manually: `claude-env ingest-sessions` (parse new transcripts) ·
 | `rag-bench` / `test-impact` / `doc-drift` / `digest` | quality tools |
 | `route` | route a task to a specialist agent |
 | `approvals` / `approvals-ui` | list / resolve approval gates |
+| `services` | list the live local UI servers and their (possibly auto-assigned) ports |
 | `report` / `replay` | compliance evidence / session forensics |
 | `incident` | kill switch (on/off/status) |
 | `policy-sim` | candidate-policy dry run / drift diff |
