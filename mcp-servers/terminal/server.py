@@ -92,6 +92,35 @@ def _scrubbed_env() -> dict:
     return {k: v for k, v in os.environ.items() if k in _ENV_ALLOW}
 
 
+def _repo_tier() -> int | None:
+    """Best-effort read of this repo's privacy tier for the approval record."""
+    import re
+    pol = REPO_ROOT / ".claude" / "repo-policy.yaml"
+    try:
+        for line in pol.read_text().splitlines():
+            m = re.match(r"\s*tier\s*:\s*([0-3])\b", line)
+            if m:
+                return int(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def _notify_approval(req_id: str, command: str) -> None:
+    """Best-effort macOS notification so a gate doesn't sit unseen."""
+    if sys.platform != "darwin":
+        return
+    try:
+        msg = f"terminal.run: {command}"[:120].replace('"', "'")
+        subprocess.run(
+            ["osascript", "-e",
+             f'display notification "{msg}" with title '
+             f'"claude-env approval needed ({req_id})"'],
+            capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
 def _run(template: str, kind: str) -> str:
     argv = shlex.split(template)
     if not argv:
@@ -158,13 +187,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name == "terminal.run_audit":
         return [TextContent(type="text", text=_run_configured(cmds, configured, "run_audit"))]
     if name == "terminal.run":
+        command = str(arguments.get("command", "")).strip()
         _audit.security_event(category="terminal_gate", severity="low",
-                              detail=f"state-mutating command requested: "
-                                     f"{arguments.get('command')}",
+                              detail=f"state-mutating command requested: {command}",
                               source="terminal.run")
+        # Open a human approval (pending row + notification) so an operator can
+        # review it in `claude-env approvals-ui`. The command is NOT executed here.
+        req_id = _audit.human_approval_request(
+            agent="terminal", action=f"terminal.run: {command}", tier=_repo_tier())
+        _notify_approval(req_id, command)
         return [TextContent(type="text",
-                            text="GATED: state-mutating commands must be approved. "
-                                 "Route this through approval_gate.py before execution.")]
+                            text=f"GATED — approval requested ({req_id}). This command "
+                                 f"was NOT run. Review and approve/deny it in the "
+                                 f"approvals UI:\n  claude-env approvals-ui\n"
+                                 f"or:  claude-env approvals --list-open")]
     return [TextContent(type="text", text=f"ERROR: unknown or denied tool {name}")]
 
 

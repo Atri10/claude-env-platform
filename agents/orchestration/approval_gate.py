@@ -169,10 +169,28 @@ class ApprovalGate:
     # -- read helpers ------------------------------------------------------
     @staticmethod
     def list_open() -> list[dict]:
+        """Pending approvals, enriched with the session_id from the linked audit
+        event so the UI can show full provenance (project/session/command/tier)."""
         db = get_db()
         rows = db.query(
-            "SELECT request_id, agent, repo, tier, action, requested_at "
-            "FROM human_approvals WHERE decision='pending' ORDER BY requested_at")
+            "SELECT h.request_id, h.agent, h.repo, h.tier, h.action, h.requested_at, "
+            "       a.session_id "
+            "FROM human_approvals h "
+            "LEFT JOIN audit_events a ON a.event_id = h.event_id "
+            "WHERE h.decision='pending' ORDER BY h.requested_at")
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def list_recent(limit: int = 8) -> list[dict]:
+        """Recently resolved approvals (for context in the UI)."""
+        db = get_db()
+        rows = db.query(
+            "SELECT h.request_id, h.agent, h.repo, h.tier, h.action, h.decision, "
+            "       h.decided_by, h.decided_at, a.session_id "
+            "FROM human_approvals h "
+            "LEFT JOIN audit_events a ON a.event_id = h.event_id "
+            "WHERE h.decision IN ('approved','denied') "
+            "ORDER BY h.decided_at DESC LIMIT ?", [limit])
         return [dict(r) for r in rows]
 
 
