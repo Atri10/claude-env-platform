@@ -143,6 +143,60 @@ def test_ask_on_inline_secret():
     assert _action(f"export GH={tok}") == "ask"
 
 
+def _control_action(cmd_or_path, is_bash=False, tier=1, tool="Edit"):
+    """Drive the control-plane guard: native mutating tool OR a Bash command."""
+    eng, d = _engine(tier)
+    if is_bash:
+        v = _inspect_bash(cmd_or_path, eng, Path(d), d)
+        return v[0] if v else "allow"
+    # native mutating tool path: exercise _is_control_plane + override gate the
+    # same way main() does
+    from hooks.policy_hook import _is_control_plane, _rel_for_policy
+    import os as _os
+    p = cmd_or_path if _os.path.isabs(cmd_or_path) else _os.path.join(d, cmd_or_path)
+    rel = _rel_for_policy(p, Path(d))
+    absp = str(Path(_os.path.expanduser(p)).resolve())
+    blocked = _is_control_plane(rel, absp) and not eng._match_paths(
+        rel, eng.repo.override_paths)
+    return "deny" if blocked else "allow"
+
+
+def test_control_plane_native_edit_denied():
+    # the reported bypass: a model editing repo-policy.yaml / settings via Edit
+    for p in (".claude/repo-policy.yaml", ".claude/settings.json",
+              ".claude/settings.local.json"):
+        assert _control_action(p, tool="Edit") == "deny", p
+
+
+def test_control_plane_deployed_platform_denied():
+    home = os.path.expanduser("~/.claude-env")
+    for p in (f"{home}/config/global-policy.yaml",
+              f"{home}/hooks/policy_hook.py",
+              f"{home}/security/policy_engine.py"):
+        assert _control_action(p, tool="Write") == "deny", p
+
+
+def test_control_plane_bash_write_denied():
+    # redirect / copy / tee into the control plane -> hard deny
+    for cmd in ("echo 'tier: 0' > .claude/repo-policy.yaml",
+                "echo x >.claude/settings.json",
+                "cp /tmp/evil.yaml .claude/repo-policy.yaml",
+                "tee .claude/settings.json"):
+        assert _control_action(cmd, is_bash=True) == "deny", cmd
+
+
+def test_control_plane_read_is_allowed():
+    # reading the policy is harmless and must NOT be blocked
+    for cmd in ("cat .claude/repo-policy.yaml",
+                "grep tier .claude/repo-policy.yaml"):
+        assert _control_action(cmd, is_bash=True) == "allow", cmd
+
+
+def test_control_plane_ordinary_files_unaffected():
+    assert _control_action("src/app.py", tool="Edit") == "allow"
+    assert _control_action("echo x > src/out.py", is_bash=True) == "allow"
+
+
 def test_shlex_bypass_chained_destructive_still_denied():
     # regression: shlex.split glues ';rm' onto the previous token, so a chained
     # destructive command slipped past the mutating-command hard-deny. The
