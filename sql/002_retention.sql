@@ -52,3 +52,7 @@ CREATE VIEW IF NOT EXISTS v_open_approvals AS
   FROM human_approvals
   WHERE decision IS NULL OR decision = 'pending'
   ORDER BY requested_at ASC;
+
+-- Record this migration (mirrors the version bookkeeping in 001/003).
+INSERT OR IGNORE INTO schema_version (version, description)
+VALUES (2, 'retention/archival policy + prunable metrics views');

@@ -29,6 +29,23 @@ CHUNK_OPEN = "<retrieved_context source=\"{path}\" lines=\"{a}-{b}\">"
 CHUNK_CLOSE = "</retrieved_context>"
 
 
+def _relevance(c: dict) -> float:
+    """Relevance of a candidate as *higher = better*, normalizing across the
+    three possible backends so sorting/metrics never mix scales or directions:
+      - rerank_score      cross-encoder relevance (higher better)  -> as-is
+      - _relevance_score  LanceDB hybrid RRF score (higher better) -> as-is
+      - _distance         vector-only cosine distance (lower better) -> negated
+    Falls back to 0.0 when a candidate carries none of them.
+    """
+    if c.get("rerank_score") is not None:
+        return float(c["rerank_score"])
+    if c.get("_relevance_score") is not None:
+        return float(c["_relevance_score"])
+    if c.get("_distance") is not None:
+        return -float(c["_distance"])
+    return 0.0
+
+
 class Retriever:
     def __init__(self, repo: str, branch: str = "main",
                  session_id: str = "adhoc", actor: str = "research-agent"):
@@ -58,12 +75,11 @@ class Retriever:
             if boosts:
                 for c in ranked:
                     c["feedback_boost"] = boosts.get(c.get("chunk_id", ""), 0.0)
-                ranked.sort(key=lambda c: (c.get("rerank_score")
-                                           or c.get("_distance") or 0.0)
+                ranked.sort(key=lambda c: _relevance(c)
                             + c.get("feedback_boost", 0.0), reverse=True)
         record_retrieved(self.repo, self.branch, text, ranked, self.session_id)
 
-        scores = [c.get("_distance") or c.get("rerank_score") or 0.0 for c in ranked]
+        scores = [_relevance(c) for c in ranked]
         self.audit.retrieval(
             repo=self.repo, branch=self.branch, query=text, top_k=top_k,
             returned=len(ranked),
@@ -73,7 +89,7 @@ class Retriever:
             duration_ms=int(t_search + t_rerank))
         record_retrieval_quality(
             self.repo, text,
-            top1=ranked[0].get("rerank_score") if ranked else None,
+            top1=_relevance(ranked[0]) if ranked else None,
             mean_top_k=(sum(scores) / len(scores)) if scores else None)
 
         # wrap for injection safety

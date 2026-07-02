@@ -54,6 +54,17 @@ def test_override_deny_allows_specific_paths():
     # a non-overridden dotenv is still blocked by the global deny
     assert pe.evaluate_path(f"services/real/.{dot}").action == "block"
 
+def test_content_block_not_downgraded_by_repo_redact():
+    # regression: a global content_scan on_match=block must not be silently
+    # downgraded to the repo's default 'redact'. Force global to block, repo to
+    # redact, and assert a match blocks (full clear) rather than redacts.
+    pe = _engine()
+    pe.glob.content_on_match = "block"
+    pe.repo.content_on_match = "redact"
+    out, hits = pe.scan_content('key="AKIAABCDEFGHIJKLMNOP"')
+    assert out == "" and hits and hits[0][1] == -1   # -1 = block signal
+
+
 def test_override_deny_does_not_bypass_content_scan():
     dot = "." + "env"
     pe = _engine(f'override_deny:\n  - "sample/example.{dot}"\n')
