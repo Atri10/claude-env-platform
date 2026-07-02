@@ -77,6 +77,38 @@ _MCP_FIRST = [
 ]
 
 
+# Control plane: the files that DEFINE the guardrails. A model must never be
+# able to weaken its own enforcement by editing these, so any mutating tool
+# (native Write/Edit/NotebookEdit, or a Bash write/redirect/mutation) targeting
+# them is hard-denied — regardless of repo allow rules. A human operator still
+# edits them by hand or via the `claude-env` CLI (outside the hook path); a
+# session may only touch one if the repo policy explicitly lists it under
+# `override_deny`. Matched against BOTH the repo-relative path and the resolved
+# absolute path, so `~/.claude-env/config/global-policy.yaml` is caught too.
+_CONTROL_PLANE = [
+    # per-repo control plane (relative form, e.g. ".claude/repo-policy.yaml")
+    re.compile(r"(^|/)\.claude/repo-policy\.ya?ml$"),
+    re.compile(r"(^|/)\.claude/settings(\.local)?\.json$"),
+    # the deployed platform itself ($CLAUDE_ENV_HOME): config, hooks, policy code
+    re.compile(r"(^|/)\.claude-env/(config|hooks|security|agents|sql|lib)/"),
+    re.compile(r"(^|/)\.claude-env/config/.*\.(ya?ml|json)$"),
+]
+
+
+def _is_control_plane(*path_forms: str) -> bool:
+    """True if any given path form (repo-relative and/or absolute) names a
+    claude-env control-plane file. Checking multiple forms closes the gap where
+    a repo-relative path wouldn't reveal a $CLAUDE_ENV_HOME target."""
+    for p in path_forms:
+        if not p:
+            continue
+        norm = p.replace("\\", "/")
+        for rx in _CONTROL_PLANE:
+            if rx.search(norm):
+                return True
+    return False
+
+
 def _mcp_first_hint(rel_path: str) -> str | None:
     """If a native write to `rel_path` should instead go through an MCP, return the
     hint; else None. Off when CLAUDE_ENV_MCP_FIRST=false."""
@@ -198,6 +230,55 @@ def _bash_candidates(command: str, cwd: str) -> tuple[list[str], set[str]]:
     return paths, nets
 
 
+# commands whose non-flag arguments name files they WRITE (last arg is the dest
+# for cp/mv/install/ln; tee/dd write all their file args). Used by the
+# control-plane guard so reads (cat/grep/…) don't trip it.
+_WRITE_CMDS = {"cp", "mv", "tee", "dd", "install", "ln", "rsync"}
+
+
+def _bash_write_targets(command: str, cwd: str) -> list[str]:
+    """File paths a Bash command WRITES to: redirection destinations (`>`/`>>`,
+    glued or spaced) plus the target args of file-writing commands. Read-only
+    args (cat/grep/sed -n/…) are deliberately excluded."""
+    tokens = _shell_tokens(command)
+    segments: list[list[str]] = [[]]
+    for t in tokens:
+        (segments.append([]) if t in _CMD_SEP else segments[-1].append(t))
+
+    out: list[str] = []
+    for seg in segments:
+        if not seg:
+            continue
+        cmd = os.path.basename(seg[0])
+        expect_target = False
+        args_after: list[str] = []
+        for tok in seg[1:]:
+            if tok in _REDIR:                        # `> file`
+                expect_target = True
+                continue
+            if expect_target:
+                out.append(tok)
+                expect_target = False
+                continue
+            m = re.match(r"^(?:\d*>>?|>\|)(.+)$", tok)   # `>file` / `2>file` glued
+            if m:
+                out.append(m.group(1))
+                continue
+            if not tok.startswith("-"):
+                args_after.append(tok)
+        # dd uses of=<file>; handle explicitly
+        if cmd == "dd":
+            out += [a.split("=", 1)[1] for a in args_after if a.startswith("of=")]
+        elif cmd in _WRITE_CMDS:
+            # cp/mv/install/ln/rsync write their destination (last non-flag arg);
+            # tee writes ALL its file args.
+            if cmd == "tee":
+                out += args_after
+            elif args_after:
+                out.append(args_after[-1])
+    return out
+
+
 def _mutating_reason(command: str) -> str | None:
     """Return a reason if the command is a destructive/state-mutating native shell
     command that must be hard-denied, else None."""
@@ -240,6 +321,25 @@ def _inspect_bash(command: str, engine, root: Path, cwd: str
                 f"opens a human approval). Nothing was run.", "")
 
     paths, nets = _bash_candidates(command, cwd)
+
+    # 0b. control-plane guard: a Bash command that WRITES into a governance
+    #     control-plane file is a guardrail-self-modification attempt (e.g.
+    #     `echo 'tier: 0' > .claude/repo-policy.yaml`, `cp x .claude/settings.json`).
+    #     Reading these is harmless, so we only inspect write targets: redirect
+    #     destinations and the targets of file-writing commands (cp/mv/tee/dd/ln/
+    #     install). Hard-deny unless in override_deny. Mirrors the native guard.
+    for tok in _bash_write_targets(command, cwd):
+        abs_tok = str(Path(os.path.expanduser(tok)).resolve()) \
+            if os.path.isabs(os.path.expanduser(tok)) \
+            else str((Path(cwd or ".") / tok).resolve())
+        rel_tok = _rel_for_policy(abs_tok, root)
+        if _is_control_plane(rel_tok, abs_tok) \
+                and not engine._match_paths(rel_tok, engine.repo.override_paths):
+            return ("deny",
+                    f"blocked: command writes a claude-env control-plane file "
+                    f"({tok}). A model may not modify its own guardrails "
+                    f"(policy / settings / deployed platform). Nothing was run.",
+                    rel_tok)
 
     # 1. any file argument that the policy blocks -> deny (hard)
     for tok in paths:
@@ -370,6 +470,31 @@ def main() -> int:
                     _deny(reason)
                 else:
                     _ask(reason)
+                return 0
+
+        # 2b'. control-plane guard: a mutating native tool must not edit the files
+        #      that define the guardrails (repo policy, Claude settings, deployed
+        #      platform config/hooks/policy code). Hard-deny unless the repo policy
+        #      explicitly lists the path under override_deny. Fail-closed against a
+        #      model rewriting its own enforcement.
+        if tool in ("Write", "Edit", "NotebookEdit") and path_str:
+            rel_cp = _rel_for_policy(path_str, root)
+            abs_cp = str(Path(os.path.expanduser(path_str)).resolve())
+            if _is_control_plane(rel_cp, abs_cp) \
+                    and not engine._match_paths(rel_cp, engine.repo.override_paths):
+                try:
+                    from audit.audit_logger import AuditLogger
+                    AuditLogger(session, actor="claude-code", repo=root.name,
+                                tier=engine.repo.tier).policy_violation(
+                        rel_cp, "control-plane write (guardrail self-modification)",
+                        "block", tier=engine.repo.tier)
+                except Exception:
+                    pass
+                _deny("blocked by claude-env: this is a governance control-plane file "
+                      "(policy / settings / deployed platform config). A model may not "
+                      "modify its own guardrails. A human operator edits these via the "
+                      "`claude-env` CLI or directly; to permit a specific path, add it to "
+                      "override_deny in .claude/repo-policy.yaml.")
                 return 0
 
         if path_str:
