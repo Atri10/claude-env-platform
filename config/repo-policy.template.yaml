@@ -130,6 +130,21 @@ rag:
     - "**/vendor/**"
     - "**/dist/**"
     - "**/build/**"
+    # binary/asset files — the indexer also skips these via a binary sniff, but
+    # excluding them here avoids even reading them.
+    - "**/*.png"
+    - "**/*.jpg"
+    - "**/*.jpeg"
+    - "**/*.gif"
+    - "**/*.svg"
+    - "**/*.ico"
+    - "**/*.pdf"
+    - "**/*.zip"
+    - "**/*.gz"
+    - "**/*.tar"
+    - "**/*.lock"
+    - "**/*.min.js"
+    - "**/*.map"
   index_only_committed: true     # never index the working tree / untracked files
 
 # ---------------------------------------------------------------------------
