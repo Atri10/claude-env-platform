@@ -134,34 +134,18 @@ These hold everywhere; the rest of the system is built to preserve them.
 
 ## 4. System topology
 
-Everything is local. The six MCP servers speak **stdio** — none binds a network port.
+Everything is local. Claude Code reaches the machine through **two enforcement surfaces** — the
+**MCP servers** (stdio, no ports, per-project env) and the **native-tool hooks** (Read/Write/Edit/
+Bash). Both consult one **policy engine** and write one **append-only, hash-chained audit ledger**
+(the security spine), over local knowledge stores and local inference. The only network egress is
+the documentation server for tier-0/1 repos.
 
-```text
-                         ┌─────────────────────────────┐
-     Claude Code ───────►│  PreToolUse / PostToolUse   │  native tools
-     (native tools)      │  hooks  (policy + audit)    │  (Read/Write/Edit/Bash)
-                         └──────────────┬──────────────┘
-                                        │
-     Claude Code ──► MCP (stdio) ──►  ┌─┴────────────────────────────────────┐
-                                      │ 1 filesystem-policy  (the chokepoint)│
-                                      │ 2 git          (read-mostly)         │
-                                      │ 3 lancedb-rag  (read-only search)    │
-                                      │ 4 memory-graph (namespaced)          │
-                                      │ 5 terminal     (allow-listed only)   │
-                                      │ 6 documentation(local + tier-gated)  │
-                                      │ 7 jetbrains    (optional, IDE)       │
-                                      └──────────────┬───────────────────────┘
-                                                     │
-        ┌───────────────┬────────────────┬──────────┴───────┬──────────────────┐
-        ▼               ▼                ▼                   ▼                  ▼
-   policy_engine   audit ledger     LanceDB            SQLite memory      metrics
-   (+ detectors)   (hash-chained)   <slug>__<branch>   graph (proj-<slug>) tables
-                        │
-                   lib/db.py  (SQLite default · PostgreSQL-ready)
-```
+![claude-env overall architecture](docs/architecture.svg)
 
-Servers start in the numbered order (`startup_order` in `config/mcp-servers.json`) and
-import platform code from `$CLAUDE_ENV_HOME`, so a DB-backend swap is transparent to them.
+The six MCP servers are `filesystem-policy` (the chokepoint), `git` (read-mostly), `lancedb-rag`,
+`memory-graph`, `terminal` (allow-listed), and `documentation` (tier-gated fetch). They start in a
+fixed order (`startup_order` in `config/mcp-servers.json`) and import platform code from
+`$CLAUDE_ENV_HOME`, so a DB-backend swap is transparent to them.
 
 ## 5. Subsystems
 
