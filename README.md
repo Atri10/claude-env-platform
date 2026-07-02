@@ -855,7 +855,9 @@ Run any piece manually: `claude-env ingest-sessions` (parse new transcripts) ·
 
 ## 27. CLI command reference
 
-`claude-env <command>` dispatches through the venv Python automatically.
+`claude-env <command>` dispatches through the venv Python automatically. Run `claude-env`
+(or `claude-env help`) for a grouped overview, `claude-env help <command>` for a one-line
+summary, and `claude-env <command> --help` for a command's full options.
 
 | Command | Purpose |
 |---|---|
