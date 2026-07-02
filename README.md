@@ -711,16 +711,25 @@ Pruning archives to `~/.claude-env/archive/memory/<ns>.jsonl` and never prunes `
 
 Governance has **two enforcement layers**, and it's worth knowing which one you're hitting:
 
-- **MCP servers hard-deny** dangerous operations inline — they do *not* open an approval.
-  Asking Claude (via the MCP tools) to `git push`/`amend`/`rebase`/`reset --hard` or to run an
-  arbitrary shell command returns `DENIED: … route through approval gate`; state-mutating
-  work simply doesn't run. The native-tool **hooks** ([§11](#11-native-tool-hooks)) behave the
-  same way (deny / `ask`-to-confirm secret writes).
-- **The orchestration approval gate** (`agents/orchestration/approval_gate.py`) is what actually
-  *opens* a pending, human-resolvable approval in the `human_approvals` table. It runs when you
-  drive work through the agent orchestrator — `claude-env route "<task>"` — not on every ad-hoc
-  MCP call. (So on a fresh install `claude-env approvals --list-open` is empty until you use the
-  orchestrator or a tier-2+ action opens a gate.)
+- **`terminal.run` opens a human approval.** Asking Claude to run a free-form / state-mutating
+  command via the terminal server does **not** execute it — it opens a pending, human-resolvable
+  approval in the `human_approvals` table, fires a macOS notification, and returns the request id.
+  You review it (project, session, agent, tier, exact command) and Approve/Deny in the UI. The
+  decision is recorded with the **OS user@host** automatically (no name is asked). Approving
+  records the decision in the audit ledger; it does **not** auto-run the command.
+- **Hard-deny (no gate)**: `git push`/`amend`/`rebase`/`reset --hard` at the git server, and the
+  native-tool **hooks** ([§11](#11-native-tool-hooks)) — these simply refuse (deny / `ask`-to-
+  confirm secret writes) rather than opening an approval.
+- **The orchestration approval gate** (`agents/orchestration/approval_gate.py`) also *opens*
+  approvals when you drive work through the agent orchestrator — `claude-env route "<task>"` — or
+  on any tier-2+ action.
+
+Open the queue with:
+
+```bash
+claude-env approvals-ui           # pretty web UI at http://127.0.0.1:8002 (Approve/Deny)
+claude-env approvals --list-open  # terminal list
+```
 
 **A gate opens when ANY of these is true** (evaluated per agent action by the orchestrator):
 
