@@ -142,7 +142,10 @@ rag:
     - "**/*.zip"
     - "**/*.gz"
     - "**/*.tar"
-    - "**/*.lock"
+    - "**/*.lock"                # uv.lock, yarn.lock, Cargo.lock, poetry.lock, …
+    - "**/package-lock.json"     # generated dependency lockfiles (noise in RAG)
+    - "**/pnpm-lock.yaml"
+    - "**/go.sum"
     - "**/*.min.js"
     - "**/*.map"
   index_only_committed: true     # never index the working tree / untracked files
