@@ -100,3 +100,6 @@ Skills (`.claude/skills/`):
 Subagents (`.claude/agents/`):
 - **`code-reviewer`**, **`architecture-reviewer`**, **`governance-reviewer`** (the last checks the
   security invariants specifically). Use them before declaring non-trivial work done.
+- All three are **read-only by tool grant** (`tools: Read, Grep, Glob` — no shell/write). Subagents
+  are contained by their `tools:` allow-list + the MCP servers, *not* by their prompts, so never
+  grant a reviewer `Bash`/`Write`/`Edit`; `tests/test_subagent_tools.py` enforces this.
