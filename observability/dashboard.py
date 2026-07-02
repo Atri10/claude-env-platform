@@ -120,6 +120,15 @@ def serve(port: int) -> int:
     if not Path(db).exists():
         print(f"database not found at {db}; run bootstrap first", file=sys.stderr)
         return 1
+    unregister = None
+    try:
+        from lib.services import pick_port, register, unregister as _unreg
+        port = pick_port(port)                       # preferred, else a free port
+        register("dashboard", port)
+        unregister = _unreg
+    except Exception:
+        pass
+    print(f"dashboard (datasette) -> http://127.0.0.1:{port}")
     try:
         return subprocess.run(
             [sys.executable, "-m", "datasette", db, "--port", str(port),
@@ -127,6 +136,12 @@ def serve(port: int) -> int:
     except FileNotFoundError:
         print("datasette not installed: pip install datasette", file=sys.stderr)
         return 1
+    finally:
+        if unregister:
+            try:
+                unregister("dashboard")
+            except Exception:
+                pass
 
 
 def main() -> int:

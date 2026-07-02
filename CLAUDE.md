@@ -58,6 +58,8 @@ full product guide is [`README.md`](README.md) (read it once).
 bootstrap.py            one-command setup: builds the venv (uv-preferred), installs deps,
                         applies sql/, mirrors code + config into $CLAUDE_ENV_HOME
 lib/db.py               persistence abstraction (SQLite default, PostgreSQL-ready)
+lib/services.py         runtime service registry: UI servers pick a free port + record it
+                        ($CLAUDE_ENV_HOME/state/services.json); `claude-env services` lists them
 sql/                    001_schema · 002_retention · 003_extensions
 security/               policy_engine · detectors · incident · policy_sim
 audit/                  audit_logger (hash chain) · compliance_report · session_replay

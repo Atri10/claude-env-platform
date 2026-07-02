@@ -58,7 +58,8 @@ TIMEOUT_S = int(os.environ.get("CLAUDE_ENV_CMD_TIMEOUT", "600"))
 # often it polls, and the approvals-UI port to auto-open.
 _WAIT_S = int(os.environ.get("CLAUDE_ENV_APPROVAL_WAIT_S", "120"))
 _POLL_S = 2
-_UI_PORT = int(os.environ.get("CLAUDE_ENV_APPROVAL_PORT", "8002"))
+# CLAUDE_ENV_APPROVAL_PORT (if set) is a *preferred* port hint passed to the
+# approvals UI; the actual port is discovered from the service registry.
 
 # Suggested commands, surfaced in the "not configured" hint. NOT auto-run —
 # a command only executes when set explicitly in .claude/commands.json.
@@ -114,36 +115,32 @@ def _repo_tier() -> int | None:
 
 
 def _open_approvals_ui() -> None:
-    """Surface an ACTUAL UI: ensure the approvals web server is running (auto-start
-    it if nothing is on the port), then open the browser to it. Beats a contentless
-    OS notification. Disable with CLAUDE_ENV_APPROVAL_AUTO_UI=false."""
+    """Surface an ACTUAL UI: reuse the running approvals server (discovered from
+    the service registry) or auto-start one on a free port, then open the browser
+    to whatever port it actually got. Beats a contentless OS notification. Disable
+    with CLAUDE_ENV_APPROVAL_AUTO_UI=false."""
     if os.environ.get("CLAUDE_ENV_APPROVAL_AUTO_UI", "true").lower() != "true":
         return
-    import socket
     import time
-
-    def _listening() -> bool:
-        s = socket.socket()
-        s.settimeout(0.3)
-        try:
-            s.connect(("127.0.0.1", _UI_PORT))
-            return True
-        except Exception:
-            return False
-        finally:
-            s.close()
-
     try:
-        if not _listening():
+        from lib.services import get as _svc_get
+        svc = _svc_get("approvals")
+        if svc is None:                               # not running -> start it
             ui = _HOME / "agents" / "orchestration" / "approvals_ui.py"
-            subprocess.Popen([sys.executable, str(ui), "--port", str(_UI_PORT)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cmd = [sys.executable, str(ui)]
+            pref = os.environ.get("CLAUDE_ENV_APPROVAL_PORT")
+            if pref:                                  # optional preferred-port hint
+                cmd += ["--port", pref]
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              start_new_session=True)
-            for _ in range(20):                       # wait up to ~2s for it to bind
-                if _listening():
+            for _ in range(30):                       # wait for it to register (~3s)
+                svc = _svc_get("approvals")
+                if svc:
                     break
                 time.sleep(0.1)
-        url = f"http://127.0.0.1:{_UI_PORT}"
+        if not svc:
+            return
+        url = svc["url"]
         if sys.platform == "darwin":
             subprocess.run(["open", url], capture_output=True, timeout=5)
         elif sys.platform.startswith("linux"):

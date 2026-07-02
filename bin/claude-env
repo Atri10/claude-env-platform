@@ -24,6 +24,7 @@ CMDS = {
     "dashboard":    ROOT / "observability" / "dashboard.py",
     "approvals":    ROOT / "agents" / "orchestration" / "approval_gate.py",
     "approvals-ui": ROOT / "agents" / "orchestration" / "approvals_ui.py",
+    "services":     ROOT / "scripts" / "services_cli.py",
     "route":        ROOT / "agents" / "orchestration" / "task_router.py",
     "register":     ROOT / "scripts" / "register_repo.py",
     "onboard":      ROOT / "scripts" / "register_repo.py",
