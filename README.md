@@ -711,12 +711,14 @@ Pruning archives to `~/.claude-env/archive/memory/<ns>.jsonl` and never prunes `
 
 Governance has **two enforcement layers**, and it's worth knowing which one you're hitting:
 
-- **`terminal.run` opens a human approval.** Asking Claude to run a free-form / state-mutating
-  command via the terminal server does **not** execute it — it opens a pending, human-resolvable
-  approval in the `human_approvals` table, fires a macOS notification, and returns the request id.
-  You review it (project, session, agent, tier, exact command) and Approve/Deny in the UI. The
-  decision is recorded with the **OS user@host** automatically (no name is asked). Approving
-  records the decision in the audit ledger; it does **not** auto-run the command.
+- **`terminal.run` opens a human approval and blocks on it.** Asking Claude to run a free-form /
+  state-mutating command opens a pending approval in `human_approvals`, **auto-opens the approvals
+  web UI in your browser**, and then **waits** — the tool call blocks (Claude waits, up to
+  `CLAUDE_ENV_APPROVAL_WAIT_S`, default 120s) until you decide. You review it (project, session,
+  agent, tier, exact command) and Approve/Deny in the UI; the decision records the **OS user@host**
+  automatically (no name asked). **On approve the command then runs** (same sandbox: argv-only, no
+  shell/pipes, scrubbed env, repo-root cwd, timeout) and Claude gets the output; on deny/timeout it
+  doesn't run. Auto-UI is toggled with `CLAUDE_ENV_APPROVAL_AUTO_UI` (default on).
 - **Hard-deny (no gate)**: `git push`/`amend`/`rebase`/`reset --hard` at the git server, and the
   native-tool **hooks** ([§11](#11-native-tool-hooks)) — these simply refuse (deny / `ask`-to-
   confirm secret writes) rather than opening an approval.
