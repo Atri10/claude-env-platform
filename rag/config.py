@@ -172,12 +172,18 @@ def get_config(reload: bool = False) -> RagConfig:
     return _CONFIG
 
 
-def get_embedder(cfg: RagConfig | None = None):
-    """Factory: build the configured embedder. Decoupled from model identity.
+_EMBEDDER = None          # cached instance (loading the GGUF model is expensive)
+_EMBEDDER_KEY = None       # model_path the cached instance was built for
 
-    Raises a clear error if no embedding model has been configured — the model
-    must be set manually at setup (config/rag.yaml or EMBED_MODEL_PATH).
+
+def get_embedder(cfg: RagConfig | None = None):
+    """Factory: return the configured embedder. Decoupled from model identity.
+
+    The built instance is cached per model_path, so repeated callers (indexer,
+    retriever, memory writes) reuse one loaded model instead of reloading the
+    GGUF each call. Raises a clear error if no embedding model is configured.
     """
+    global _EMBEDDER, _EMBEDDER_KEY
     from rag.embeddings.llama_embedder import LlamaEmbedder
     cfg = cfg or get_config()
     if not cfg.embedding.model_path:
@@ -186,7 +192,10 @@ def get_embedder(cfg: RagConfig | None = None):
             "config/rag.yaml (or the EMBED_MODEL_PATH env var) to point at a local "
             "model file. See README §10 'Local models' for download instructions "
             "and suggested models.")
-    return LlamaEmbedder.from_config(cfg.embedding)
+    if _EMBEDDER is None or _EMBEDDER_KEY != cfg.embedding.model_path:
+        _EMBEDDER = LlamaEmbedder.from_config(cfg.embedding)
+        _EMBEDDER_KEY = cfg.embedding.model_path
+    return _EMBEDDER
 
 
 def get_reranker(cfg: RagConfig | None = None):
