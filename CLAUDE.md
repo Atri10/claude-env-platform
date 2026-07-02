@@ -87,6 +87,14 @@ tests/                  pytest suite
 
 ## Skills & subagents in this repo
 
-- Skill **`claude-env-development`** — the deploy/test/branch workflow + invariants above.
-- Subagents **`code-reviewer`**, **`architecture-reviewer`**, **`governance-reviewer`** (the last
-  checks the security invariants specifically). Use them before declaring non-trivial work done.
+Skills (`.claude/skills/`):
+- **`claude-env-development`** — the deploy/test/branch workflow + invariants above.
+- **`principled-engineering`** — decoupled architecture, SOLID, simplicity, testability; load it
+  for any non-trivial design/feature/refactor so the code stays easy to extend and maintain.
+- **`solid-design`** — SOLID applied, with the smell + refactoring for each.
+- **`design-patterns`** — pattern selection (and when *not* to), to decouple real axes of change
+  without over-engineering.
+
+Subagents (`.claude/agents/`):
+- **`code-reviewer`**, **`architecture-reviewer`**, **`governance-reviewer`** (the last checks the
+  security invariants specifically). Use them before declaring non-trivial work done.
