@@ -30,6 +30,14 @@ def test_allows_source():
     for p in ["src/app.py", "docs/x.md", "tests/test_app.py", "README.md"]:
         assert pe.evaluate_path(p).action == "allow", p
 
+def test_blocks_guardrail_config():
+    # the agent must not be able to rewrite the guardrails themselves
+    pe = _engine()
+    for p in [".claude/settings.json", ".claude/settings.local.json",
+              ".claude/repo-policy.yaml", ".claude/commands.json", ".mcp.json",
+              ".claude/hooks/pre.py", "Users/me/.claude-env/hooks/policy_hook.py"]:
+        assert pe.evaluate_path(p).action == "block", p
+
 def test_content_redaction():
     pe = _engine()
     out, hits = pe.scan_content('key="AKIAABCDEFGHIJKLMNOP"')
