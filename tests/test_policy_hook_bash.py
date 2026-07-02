@@ -13,7 +13,8 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
-from hooks.policy_hook import _bash_candidates, _inspect_bash, _looks_like_path
+from hooks.policy_hook import (_bash_candidates, _inspect_bash, _looks_like_path,
+                               _mutating_reason)
 from security.policy_engine import PolicyEngine
 
 
@@ -89,6 +90,33 @@ def test_deny_reading_denied_path():
 def test_deny_writing_denied_path():
     assert _action("echo x > secrets/new.key") == "deny"
     assert _action("echo x >config/prod.yaml") == "deny"
+
+
+def test_deny_destructive_native_commands():
+    # hard stop regardless of path — the model must not mutate state via raw shell
+    for cmd in ("rm src/app.py", "rm -rf build", "rmdir tmp", "shred x",
+                "chmod 777 src/app.py", "chown me x", "kill 1234",
+                "dd if=/dev/zero of=out", "git push origin main",
+                "git reset --hard HEAD~1", "git commit --amend -m x",
+                "git clean -fdx"):
+        assert _action(cmd) == "deny", cmd
+
+
+def test_allow_readonly_and_additive_commands():
+    # reads and non-destructive/additive commands still run
+    for cmd in ("git status", "git diff", "git log --oneline", "cat src/app.py",
+                "cp src/app.py src/copy.py", "mkdir -p build", "touch newfile.txt"):
+        assert _action(cmd) == "allow", cmd
+
+
+def test_mutating_reason_helper():
+    assert _mutating_reason("rm x")
+    assert _mutating_reason("git push")
+    assert _mutating_reason("git reset --hard")
+    assert _mutating_reason("git commit --amend")
+    assert _mutating_reason("cat x") is None
+    assert _mutating_reason("git status") is None
+    assert _mutating_reason("cp a b") is None
 
 
 def test_deny_exfiltration_net_plus_file():

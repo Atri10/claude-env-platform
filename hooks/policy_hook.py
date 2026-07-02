@@ -81,6 +81,18 @@ _NET_CMDS = {
     "curl", "wget", "scp", "sftp", "rsync", "nc", "ncat", "netcat", "ssh",
     "telnet", "ftp", "socat", "http", "https", "aws", "gcloud", "az",
 }
+# Destructive / state-mutating native shell commands. These are HARD-DENIED in the
+# hook regardless of path: an agent must not delete/overwrite/change perms/kill via
+# raw Bash. Route file edits through the Write/Edit tools and any real command
+# through `terminal.run` (which opens a human approval). Additive commands
+# (mkdir/touch/cp/ln) are intentionally not here to avoid over-blocking.
+_MUTATING_CMDS = {
+    "rm", "rmdir", "unlink", "shred", "dd", "mkfs", "truncate",
+    "chmod", "chown", "chgrp", "chflags",
+    "kill", "pkill", "killall",
+}
+# git subcommands that delete/rewrite history or mutate the remote.
+_GIT_MUTATING = {"push", "reset", "rebase", "clean", "filter-branch", "gc", "prune"}
 # Shell tokens that separate one simple command from the next.
 _CMD_SEP = {";", "|", "&", "&&", "||", "|&", "\n"}
 # Redirection operators; the following token is a path being written/read.
@@ -148,13 +160,50 @@ def _bash_candidates(command: str, cwd: str) -> tuple[list[str], set[str]]:
     return paths, nets
 
 
+def _mutating_reason(command: str) -> str | None:
+    """Return a reason if the command is a destructive/state-mutating native shell
+    command that must be hard-denied, else None."""
+    try:
+        tokens = shlex.split(command, comments=True)
+    except ValueError:
+        tokens = [t for t in re.split(r"\s+", command) if t]
+    seg: list[list[str]] = [[]]
+    for t in tokens:
+        if t in _CMD_SEP:
+            seg.append([])
+        else:
+            seg[-1].append(t)
+    for s in seg:
+        if not s:
+            continue
+        cmd = os.path.basename(s[0])
+        if cmd in _MUTATING_CMDS:
+            return f"state-mutating command '{cmd}'"
+        if cmd == "git":
+            subs = [t for t in s[1:] if not t.startswith("-")]
+            if subs and subs[0] in _GIT_MUTATING:
+                return f"state-mutating git subcommand '{subs[0]}'"
+            if subs and subs[0] == "commit" and "--amend" in s[1:]:
+                return "git commit --amend (history rewrite)"
+    return None
+
+
 def _inspect_bash(command: str, engine, root: Path, cwd: str
                   ) -> tuple[str, str, str] | None:
     """Return (action, reason, denied_path_or_'') for a Bash command, or None.
 
-    action is 'deny' or 'ask'. Precedence: denied path > exfiltration >
-    plain network egress > secret in the command string.
+    action is 'deny' or 'ask'. Precedence: destructive command > denied path >
+    exfiltration > plain network egress > secret in the command string.
     """
+    # 0. destructive / state-mutating native shell -> hard deny (route via Write/
+    #    Edit or terminal.run). A stop, not a nudge — the model can't `rm` here.
+    mut = _mutating_reason(command)
+    if mut:
+        return ("deny",
+                f"blocked: {mut}. Native shell must not mutate state — edit files with "
+                f"the Write/Edit tools, or run the command through `terminal.run` (which "
+                f"opens a human approval). Nothing was run.", "")
+
     paths, nets = _bash_candidates(command, cwd)
 
     # 1. any file argument that the policy blocks -> deny (hard)
