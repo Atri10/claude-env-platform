@@ -143,6 +143,10 @@ Onboarding installs these under `.claude/`. Reach for them by name:
 - **Subagent `code-reviewer`** — read-only reviewer for diffs.
 - **Subagent `architecture-reviewer`** — read-only design/ADR reviewer.
 
+Both subagents are **read-only by tool grant** (`Read`/`Grep`/`Glob` — no shell, no write): they
+review the diff/files the caller provides. That's a hard limit from their `tools:` allow-list, not
+a promise in their prompt.
+
 ## 6. Escalate, don't improvise
 
 If governance blocks you, the honest move is to surface it: name the exact
