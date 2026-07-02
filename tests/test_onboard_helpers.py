@@ -1,6 +1,7 @@
 """Coverage for onboarding helpers that don't need a model.
 Run: pytest tests/ -q"""
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -55,13 +56,25 @@ def test_detect_test_command(tmp_path):
     assert reg._detect_test_command(str(tmp_path / "nope")) is None
 
 
-def test_install_commands_writes_and_preserves(tmp_path):
+def test_install_commands_detected(tmp_path):
     (tmp_path / "go.mod").write_text("module x\n")
+    reg._install_commands(str(tmp_path), dry_run=False)
+    data = json.loads((tmp_path / ".claude" / "commands.json").read_text())
+    assert data["run_tests"] == "go test ./..."
+    assert data["run_benchmarks"] == "" and data["run_audit"] == ""   # left empty
+
+
+def test_install_commands_scaffold_when_undetected(tmp_path):
+    # monorepo / unknown toolchain: still writes a scaffold with all keys, empty
+    reg._install_commands(str(tmp_path), dry_run=False)
+    data = json.loads((tmp_path / ".claude" / "commands.json").read_text())
+    assert set(data) >= {"run_tests", "run_benchmarks", "run_audit"}
+    assert data["run_tests"] == "" == data["run_benchmarks"] == data["run_audit"]
+
+
+def test_install_commands_preserves_existing(tmp_path):
     (tmp_path / ".claude").mkdir()
-    status = reg._install_commands(str(tmp_path), dry_run=False)
     cj = tmp_path / ".claude" / "commands.json"
-    assert cj.exists() and "go test" in cj.read_text()
-    # does not clobber an existing commands.json
     cj.write_text('{"run_tests": "custom"}')
     assert "kept existing" in reg._install_commands(str(tmp_path), dry_run=False)
     assert cj.read_text() == '{"run_tests": "custom"}'

@@ -408,19 +408,32 @@ def _detect_test_command(repo_root: str) -> str | None:
 
 
 def _install_commands(repo_root: str, dry_run: bool) -> str:
-    """Write <repo>/.claude/commands.json with a detected test command so the
-    terminal MCP server's run_tests matches the repo's toolchain (its default is
-    `pytest -q`, wrong for Go/Rust/JS repos). Never clobbers an existing file."""
+    """Write a <repo>/.claude/commands.json scaffold for the terminal MCP server.
+
+    Always writes all three keys (run_tests / run_benchmarks / run_audit). The
+    test command is auto-filled when a single toolchain is detected; anything not
+    detected is left as "" — which the terminal server treats as 'not configured'
+    (it reports NOT CONFIGURED and runs nothing) for the user to fill in. Never
+    clobbers an existing file."""
     dst = Path(repo_root) / ".claude" / "commands.json"
     if dst.exists():
         return "kept existing commands.json"
-    cmd = _detect_test_command(repo_root)
-    if not cmd:
-        return "skipped (toolchain not detected — terminal keeps its pytest default)"
+    detected = _detect_test_command(repo_root)
+    scaffold = {
+        "_comment": ("Commands for terminal.run_tests / run_benchmarks / run_audit. "
+                     "Each runs as a plain argv list from the repo root — no cd, &&, "
+                     "pipes, or shell vars. Examples: 'go test ./...', 'npm test', "
+                     "'pytest -q', 'cargo test', 'make -C <subdir> test'. Leave a value "
+                     "empty to keep it unconfigured (the tool then runs nothing)."),
+        "run_tests": detected or "",
+        "run_benchmarks": "",
+        "run_audit": "",
+    }
     if not dry_run:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(json.dumps({"run_tests": cmd}, indent=2) + "\n")
-    return f"run_tests = {cmd}"
+        dst.write_text(json.dumps(scaffold, indent=2) + "\n")
+    return (f"scaffold written (run_tests={detected})" if detected
+            else "scaffold written (fill in run_tests/benchmarks/audit)")
 
 
 def _maybe_index(repo_root: str, slug: str, branch: str, interactive: bool,
