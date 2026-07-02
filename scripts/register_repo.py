@@ -387,6 +387,42 @@ def _install_post_commit(repo_root: str, dry_run: bool) -> str:
     return "installed"
 
 
+def _detect_test_command(repo_root: str) -> str | None:
+    """Guess the repo's test command from its toolchain markers."""
+    r = Path(repo_root)
+    if (r / "go.mod").exists():
+        return "go test ./..."
+    if (r / "Cargo.toml").exists():
+        return "cargo test"
+    if (r / "package.json").exists():
+        return "npm test"
+    if any((r / f).exists() for f in ("pyproject.toml", "setup.py", "pytest.ini", "tox.ini")):
+        return "pytest -q"
+    if (r / "Makefile").exists():
+        try:
+            if any(ln.startswith("test:") for ln in (r / "Makefile").read_text().splitlines()):
+                return "make test"
+        except Exception:
+            pass
+    return None
+
+
+def _install_commands(repo_root: str, dry_run: bool) -> str:
+    """Write <repo>/.claude/commands.json with a detected test command so the
+    terminal MCP server's run_tests matches the repo's toolchain (its default is
+    `pytest -q`, wrong for Go/Rust/JS repos). Never clobbers an existing file."""
+    dst = Path(repo_root) / ".claude" / "commands.json"
+    if dst.exists():
+        return "kept existing commands.json"
+    cmd = _detect_test_command(repo_root)
+    if not cmd:
+        return "skipped (toolchain not detected — terminal keeps its pytest default)"
+    if not dry_run:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(json.dumps({"run_tests": cmd}, indent=2) + "\n")
+    return f"run_tests = {cmd}"
+
+
 def _maybe_index(repo_root: str, slug: str, branch: str, interactive: bool,
                  dry_run: bool) -> None:
     """Offer to build the initial RAG index now (opt-in; it needs the embedding
@@ -486,6 +522,9 @@ def main() -> int:
     tag = f"{YELLOW}DRY RUN{RESET} " if args.dry_run else ""
     if not args.no_post_commit:
         print(f"\n{tag}post-commit hook: {_install_post_commit(repo_root, args.dry_run)}")
+
+    # 4b. terminal test command (so terminal.run_tests fits the repo's toolchain)
+    print(f"{tag}commands.json: {_install_commands(repo_root, args.dry_run)}")
 
     # 5. summary of the isolated space
     print(f"\n{GREEN}Isolated workspace provisioned:{RESET}")

@@ -44,3 +44,24 @@ def test_post_commit_does_not_clobber_foreign_hook(tmp_path):
 
 def test_post_commit_skips_non_git(tmp_path):
     assert "not a git repo" in reg._install_post_commit(str(tmp_path), dry_run=False)
+
+
+def test_detect_test_command(tmp_path):
+    (tmp_path / "go.mod").write_text("module x\n")
+    assert reg._detect_test_command(str(tmp_path)) == "go test ./..."
+    (tmp_path / "go.mod").unlink()
+    (tmp_path / "package.json").write_text("{}")
+    assert reg._detect_test_command(str(tmp_path)) == "npm test"
+    assert reg._detect_test_command(str(tmp_path / "nope")) is None
+
+
+def test_install_commands_writes_and_preserves(tmp_path):
+    (tmp_path / "go.mod").write_text("module x\n")
+    (tmp_path / ".claude").mkdir()
+    status = reg._install_commands(str(tmp_path), dry_run=False)
+    cj = tmp_path / ".claude" / "commands.json"
+    assert cj.exists() and "go test" in cj.read_text()
+    # does not clobber an existing commands.json
+    cj.write_text('{"run_tests": "custom"}')
+    assert "kept existing" in reg._install_commands(str(tmp_path), dry_run=False)
+    assert cj.read_text() == '{"run_tests": "custom"}'
