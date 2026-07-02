@@ -263,12 +263,17 @@ otherwise bypass them. The hooks make the same policy engine govern everything:
 
 **PreToolUse decision flow.** incident marker → deny all → path policy block → **deny**
 (+ `policy_violations` row) → secret pattern in Write/Edit content → **ask** → else allow
-silently. **Bash is parsed, not skipped** (`shlex` → simple-command segments): a file
-argument on a policy-denied path is **denied**; a network-egress command combined with a
-file argument is **denied** as likely exfiltration; plain network egress is **denied** on
-tier ≥ 2 and **asked** on tier ≤ 1; an inline secret pattern in the command string prompts
-an **ask**. URLs and non-existent bare tokens are not treated as local paths (so `grep
-pattern` and `git log` aren't misread as files under tier-3 default-deny).
+silently. **Bash is parsed, not skipped** (`shlex` → simple-command segments): a
+**destructive/state-mutating command is hard-denied** regardless of path (`rm`, `rmdir`,
+`shred`, `dd`, `truncate`, `chmod`/`chown`, `kill`, and `git push`/`reset`/`rebase`/`clean`/
+`commit --amend`) — the model must edit via the Write/Edit tools or route the command through
+`terminal.run` (approval); a file argument on a policy-denied path is **denied**; a
+network-egress command with a file argument is **denied** as likely exfiltration; plain network
+egress is **denied** on tier ≥ 2 / **asked** on tier ≤ 1; an inline secret prompts an **ask**.
+URLs and non-existent bare tokens aren't treated as local paths (so `grep pattern` and `git log`
+aren't misread as files). Note the limits: arbitrary interpreters (`python x.py`, `make`) can't
+be statically judged, and the hook fails **open** by default — so this is a strong stop for the
+common destructive-shell class, not a full sandbox; keep `CLAUDE_ENV_HOOK_FAIL_CLOSED=true` for tier 2+.
 
 **Failure posture.** Internal errors fail **open** by default so a broken hook can't brick
 the editor; `CLAUDE_ENV_HOOK_FAIL_CLOSED=true` flips that for tier-2+ machines. PostToolUse
