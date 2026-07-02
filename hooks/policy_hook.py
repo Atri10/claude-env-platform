@@ -66,6 +66,27 @@ _PATH_KEYS = ("file_path", "path", "notebook_path")
 # tools whose tool_input carries content being written
 _WRITE_CONTENT_KEYS = ("content", "new_string", "new_source")
 
+# MCP-first: native WRITES to these paths are denied and redirected to the MCP
+# that owns that domain — so an agent can't sidestep a governed MCP by editing the
+# competing native path directly. Enforced only in onboarded repos (where the MCP
+# exists); toggle with CLAUDE_ENV_MCP_FIRST=false. First match wins.
+_MCP_FIRST = [
+    (re.compile(r"(^|/)\.claude/.*/memory/"),
+     "record or recall memory via the memory-graph MCP (memory.write / memory.recall) — "
+     "do not edit Claude Code's memory files directly"),
+]
+
+
+def _mcp_first_hint(rel_path: str) -> str | None:
+    """If a native write to `rel_path` should instead go through an MCP, return the
+    hint; else None. Off when CLAUDE_ENV_MCP_FIRST=false."""
+    if os.environ.get("CLAUDE_ENV_MCP_FIRST", "true").lower() == "false":
+        return None
+    for rx, hint in _MCP_FIRST:
+        if rx.search(rel_path):
+            return hint
+    return None
+
 # --- Bash command inspection -------------------------------------------------
 # Commands whose non-flag arguments are filesystem paths worth policy-checking.
 _FILE_CMDS = {
@@ -351,6 +372,16 @@ def main() -> int:
                     pass  # auditing must never break the decision itself
                 _deny(f"blocked by claude-env policy ({decision.reason}: "
                       f"{decision.rule or rel})")
+                return 0
+
+        # 2c. MCP-first: a native write that belongs to an MCP domain (e.g. Claude
+        # Code's memory files vs the memory-graph MCP) is denied and redirected.
+        # Only in onboarded repos, where that MCP is actually available.
+        if tool in ("Write", "Edit", "NotebookEdit") and path_str \
+                and (root / ".claude" / "repo-policy.yaml").exists():
+            hint = _mcp_first_hint(_rel_for_policy(path_str, root))
+            if hint:
+                _deny(f"claude-env: {hint}")
                 return 0
 
         # 3. secret scan on content being written — surface to the operator
