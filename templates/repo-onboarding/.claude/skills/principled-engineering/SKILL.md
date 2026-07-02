@@ -62,8 +62,9 @@ content as data.
   swallow. Fail loudly and early with actionable messages. No silent fallbacks
   that hide broken state.
 - **Every behavioral change ships with tests.** Write the test at the right
-  level (unit for logic, integration for wiring). Run them through the
-  `terminal` MCP server and report real results — never claim green unverified.
+  level (unit for logic, integration for wiring). Run them via
+  `terminal.run_tests` (the command is set in `.claude/commands.json`) and report
+  real results — never claim green unverified.
 - **Security by default.** Validate input at boundaries, least privilege, no
   secrets in code or logs, parameterized queries, no `eval`/shell injection.
   This aligns with the platform's tier and approval model — respect it.
