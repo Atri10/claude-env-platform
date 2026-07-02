@@ -89,7 +89,10 @@ class LanceStore:
 
     def delete_file(self, repo: str, branch: str, file_path: str) -> None:
         tbl = self.open(repo, branch)
-        tbl.delete(f"file_path = '{file_path}'")
+        # escape single quotes so paths like docs/what's-new.md don't break the
+        # LanceDB SQL filter (and crash indexing mid-run).
+        safe = file_path.replace("'", "''")
+        tbl.delete(f"file_path = '{safe}'")
 
     def search(self, repo: str, branch: str, query_vector: list[float],
                query_text: str, top_k: int = 40) -> list[dict]:

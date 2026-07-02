@@ -248,7 +248,11 @@ class PolicyEngine:
             found = rx.findall(out)
             if found:
                 hits.append((name, len(found)))
-                mode = self.repo.content_on_match or self.glob.content_on_match
+                # the stricter mode wins and global cannot be downgraded by a repo:
+                # if EITHER global or repo says 'block', block (don't fall back to
+                # the repo's default 'redact').
+                mode = "block" if "block" in (self.glob.content_on_match,
+                                              self.repo.content_on_match) else "redact"
                 if mode == "block":
                     return "", [(name, -1)]   # signal full block to caller
                 out = rx.sub(f"[REDACTED:{name}]", out)

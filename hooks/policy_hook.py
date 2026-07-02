@@ -115,7 +115,10 @@ _MUTATING_CMDS = {
 # git subcommands that delete/rewrite history or mutate the remote.
 _GIT_MUTATING = {"push", "reset", "rebase", "clean", "filter-branch", "gc", "prune"}
 # Shell tokens that separate one simple command from the next.
-_CMD_SEP = {";", "|", "&", "&&", "||", "|&", "\n"}
+# command separators AND grouping/subshell delimiters: each starts a fresh
+# simple-command segment so the inner command's leading token is identified
+# (e.g. `(rm -rf x)` / `{ rm x; }` must not hide `rm` behind the `(`/`{`).
+_CMD_SEP = {";", "|", "&", "&&", "||", "|&", "\n", "(", ")", "{", "}"}
 # Redirection operators; the following token is a path being written/read.
 _REDIR = {">", ">>", "<", ">|", "&>", "&>>", "2>", "2>>", "1>", "1>>"}
 
@@ -123,6 +126,24 @@ _REDIR = {">", ">>", "<", ">|", "&>", "&>>", "2>", "2>>", "1>", "1>>"}
 def _looks_like_path(tok: str) -> bool:
     """A token that is structurally a path (absolute, relative, home, dotfile)."""
     return ("/" in tok) or tok.startswith(("~", "."))
+
+
+def _shell_tokens(command: str) -> list[str]:
+    """Tokenize a shell command, respecting quotes AND surfacing operators
+    (`;` `|` `&` `&&` `||` `<` `>` `>>`) as their own tokens.
+
+    `shlex.split()` does NOT split operators glued to a word, so `echo hi;rm x`
+    tokenizes as `['echo', 'hi;rm', 'x']` — the `rm` is never seen as a command
+    and the destructive/segment/redirect checks below are silently bypassed.
+    A shlex.shlex with punctuation_chars fixes that while still honoring quotes
+    (so `echo "a;b"` keeps `a;b` intact)."""
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""            # '#' is not a comment mid-command
+        return list(lex)
+    except ValueError:
+        return [t for t in re.split(r"\s+", command) if t]
 
 
 def _bash_candidates(command: str, cwd: str) -> tuple[list[str], set[str]]:
@@ -133,11 +154,7 @@ def _bash_candidates(command: str, cwd: str) -> tuple[list[str], set[str]]:
     args (grep patterns, subcommands like `git log`) are not mistaken for files
     under tier-3 default-deny.
     """
-    try:
-        tokens = shlex.split(command, comments=True)
-    except ValueError:
-        # unbalanced quotes / exotic syntax: fall back to a crude split
-        tokens = [t for t in re.split(r"\s+", command) if t]
+    tokens = _shell_tokens(command)
 
     # break into simple-command segments so each segment's leading token is a cmd
     segments: list[list[str]] = [[]]
@@ -184,10 +201,7 @@ def _bash_candidates(command: str, cwd: str) -> tuple[list[str], set[str]]:
 def _mutating_reason(command: str) -> str | None:
     """Return a reason if the command is a destructive/state-mutating native shell
     command that must be hard-denied, else None."""
-    try:
-        tokens = shlex.split(command, comments=True)
-    except ValueError:
-        tokens = [t for t in re.split(r"\s+", command) if t]
+    tokens = _shell_tokens(command)
     seg: list[list[str]] = [[]]
     for t in tokens:
         if t in _CMD_SEP:

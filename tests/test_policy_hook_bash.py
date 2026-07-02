@@ -143,6 +143,27 @@ def test_ask_on_inline_secret():
     assert _action(f"export GH={tok}") == "ask"
 
 
+def test_shlex_bypass_chained_destructive_still_denied():
+    # regression: shlex.split glues ';rm' onto the previous token, so a chained
+    # destructive command slipped past the mutating-command hard-deny. The
+    # punctuation-aware tokenizer must split operators into their own tokens.
+    for cmd in ("echo hi; rm -rf build",
+                "echo hi;rm -rf build",
+                "true && rm src/app.py",
+                "ls | rm x",
+                "cat src/app.py; git push origin main",
+                "(rm -rf build)"):
+        assert _action(cmd) == "deny", cmd
+    # operators inside a quoted string are NOT commands -> not a false deny
+    assert _mutating_reason('echo "a;rm b"') is None
+    assert _action('echo "a;rm b"') == "allow"
+
+
+def test_shlex_bypass_chained_denied_path_still_denied():
+    # a denied-path read hidden after a separator must still be caught
+    assert _action("echo ok && cat secrets/prod.env") == "deny"
+
+
 def test_all_verdicts_are_three_tuples():
     # guards against the unpack bug: main() does `action, reason, denied = v`
     eng, d = _engine()

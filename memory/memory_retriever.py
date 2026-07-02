@@ -78,27 +78,42 @@ class MemoryRetriever:
         return self._rank(scored[:top_k], top_k)
 
     def expand(self, seed_ids: list[str], depth: int = 2,
-               rels: list[str] | None = None) -> list[dict]:
-        """Recursive-CTE graph walk from seeds. Returns connected nodes."""
+               rels: list[str] | None = None,
+               extra_ns: list[str] | None = None) -> list[dict]:
+        """Recursive-CTE graph walk from seeds. Returns connected nodes.
+
+        The walk stays inside the allowed namespace(s): an edge is only followed
+        when its destination node is in-namespace, and the final projection is
+        namespace-filtered too. Without this, a seed could hop across an edge
+        into another repo's namespace and leak its nodes, breaking the tier-2/3
+        isolation guarantee this class promises.
+        """
         if not seed_ids:
             return []
-        seeds = ",".join(f"'{s}'" for s in seed_ids)
-        rel_filter = ""
+        seed_ph = ",".join("?" * len(seed_ids))
+        nsf, ns_params = self._ns_filter(extra_ns)
+        rel_filter, rel_params = "", []
         if rels:
-            rel_list = ",".join(f"'{r}'" for r in rels)
-            rel_filter = f"AND e.rel IN ({rel_list})"
+            rel_filter = f"AND e.rel IN ({','.join('?' * len(rels))})"
+            rel_params = list(rels)
+        # namespace guard reused at three points; qualify the column per usage
         sql = f"""
         WITH RECURSIVE walk(node_id, hops) AS (
-            SELECT node_id, 0 FROM memory_nodes WHERE node_id IN ({seeds})
+            SELECT node_id, 0 FROM memory_nodes
+             WHERE node_id IN ({seed_ph}) AND {nsf}
             UNION
             SELECT e.dst, w.hops + 1
             FROM walk w JOIN memory_edges e ON e.src = w.node_id
-            WHERE w.hops < ? {rel_filter}
+            JOIN memory_nodes dn ON dn.node_id = e.dst
+            WHERE w.hops < ? AND dn.{nsf} {rel_filter}
         )
         SELECT DISTINCT n.* FROM walk w JOIN memory_nodes n ON n.node_id = w.node_id
-        WHERE n.superseded_by IS NULL
+        WHERE n.superseded_by IS NULL AND n.{nsf}
         """
-        rows = self.db.query(sql, [depth])
+        params = (list(seed_ids) + ns_params        # seed selection
+                  + [depth] + ns_params + rel_params  # recursive step
+                  + ns_params)                        # final projection
+        rows = self.db.query(sql, params)
         return rows
 
     def recall(self, query: str, depth: int = 2, top_k: int = 10,
@@ -109,7 +124,7 @@ class MemoryRetriever:
         if query_vec:
             seeds += self.embedding_recall(query_vec, top_k, extra_ns)
         seen = {s["node_id"]: s for s in seeds}
-        expanded = self.expand(list(seen.keys()), depth=depth)
+        expanded = self.expand(list(seen.keys()), depth=depth, extra_ns=extra_ns)
         for r in expanded:
             seen.setdefault(r["node_id"], r)
         result = self._rank(list(seen.values()), top_k)
