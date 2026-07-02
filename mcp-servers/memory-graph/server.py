@@ -144,20 +144,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if name == "memory.write":
             if not WRITE_ENABLED:
                 return [TextContent(type="text", text="ERROR: memory writes disabled")]
-            emb_blob = None
-            if _embedder is not None:
-                try:
-                    emb_text = arguments["name"] + " " + json.dumps(arguments["body"])
-                    emb_blob = LlamaEmbedder.to_blob(
-                        _embedder.embed_documents([emb_text])[0])
-                except Exception:
-                    pass
+            # MemoryManager.add_node embeds the node itself (best-effort, cached
+            # embedder), so recall can find it. We deliberately don't compute the
+            # blob here — the previous inline path referenced an unimported symbol
+            # and silently stored NULL embeddings.
             node_id = _mgr.add_node(
                 memory_type=arguments["memory_type"], node_kind=arguments["node_kind"],
                 name=arguments["name"], body=arguments["body"],
                 repo=arguments.get("repo"),
-                confidence=float(arguments.get("confidence", 1.0)),
-                embedding=emb_blob)
+                confidence=float(arguments.get("confidence", 1.0)))
             return [TextContent(type="text", text=node_id)]
         if name == "memory.link":
             if not WRITE_ENABLED:
