@@ -19,8 +19,11 @@ Anything state-mutating maps to `terminal.run` which is intentionally NOT execut
 here; it returns a directive to route through the approval gate. There is no
 `terminal.exec_unrestricted` tool at all.
 
-Configuration: commands come from `${repo}/.claude/commands.json` if present, else
-the conservative defaults below. stdio server. Requires: pip install mcp
+Configuration: each command must be set per-repo in `${repo}/.claude/commands.json`.
+An unconfigured command is NOT run — it returns a directive telling the operator to
+configure it (so we never run a toolchain-wrong default like pytest on a Go repo).
+`claude-env onboard` auto-writes commands.json for single-toolchain repos. stdio
+server. Requires: pip install mcp
 """
 from __future__ import annotations
 
@@ -50,7 +53,8 @@ REPO_ROOT = Path(os.environ.get("CLAUDE_ENV_REPO_ROOT", os.getcwd())).resolve()
 SESSION_ID = os.environ.get("CLAUDE_ENV_SESSION", "mcp-terminal")
 TIMEOUT_S = int(os.environ.get("CLAUDE_ENV_CMD_TIMEOUT", "600"))
 
-# Conservative defaults; overridable per-repo via .claude/commands.json
+# Suggested commands, surfaced in the "not configured" hint. NOT auto-run —
+# a command only executes when set explicitly in .claude/commands.json.
 _DEFAULTS = {
     "run_tests": "pytest -q",
     "run_benchmarks": "pytest -q --benchmark-only",
@@ -65,18 +69,23 @@ _audit = AuditLogger(session_id=SESSION_ID, actor="terminal-mcp",
 server = Server("terminal")
 
 
-def _load_commands() -> dict:
+def _load_commands() -> tuple[dict, set]:
+    """Return (commands, explicitly_configured_keys). A key is 'configured' only
+    if <repo>/.claude/commands.json sets it — so we never silently run a default
+    that's wrong for the repo's toolchain (e.g. pytest on a Go repo)."""
     cfg = REPO_ROOT / ".claude" / "commands.json"
     cmds = dict(_DEFAULTS)
+    configured: set = set()
     if cfg.exists():
         try:
             user = json.loads(cfg.read_text())
             for k in _DEFAULTS:
                 if isinstance(user.get(k), str) and user[k].strip():
                     cmds[k] = user[k]
+                    configured.add(k)
         except Exception:
             pass
-    return cmds
+    return cmds, configured
 
 
 def _scrubbed_env() -> dict:
@@ -126,16 +135,28 @@ async def list_tools() -> list[Tool]:
     ]
 
 
+def _run_configured(cmds: dict, configured: set, kind: str) -> str:
+    """Run a command only if the repo explicitly configured it; otherwise return
+    a clear directive (never blindly run the toolchain-specific default)."""
+    if kind not in configured:
+        return (f"NOT CONFIGURED: no '{kind}' command is set for this repo. Add it to "
+                f"{REPO_ROOT}/.claude/commands.json — e.g. "
+                f'{{"run_tests": "go test ./..."}} (Go), "npm test" (JS), '
+                f'"pytest -q" (Python), "cargo test" (Rust), or "make test". '
+                f"(No command was run.)")
+    return _run(cmds[kind], kind)
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    cmds = _load_commands()
+    cmds, configured = _load_commands()
     if name == "terminal.run_tests":
-        return [TextContent(type="text", text=_run(cmds["run_tests"], "run_tests"))]
+        return [TextContent(type="text", text=_run_configured(cmds, configured, "run_tests"))]
     if name == "terminal.run_benchmarks":
         return [TextContent(type="text",
-                            text=_run(cmds["run_benchmarks"], "run_benchmarks"))]
+                            text=_run_configured(cmds, configured, "run_benchmarks"))]
     if name == "terminal.run_audit":
-        return [TextContent(type="text", text=_run(cmds["run_audit"], "run_audit"))]
+        return [TextContent(type="text", text=_run_configured(cmds, configured, "run_audit"))]
     if name == "terminal.run":
         _audit.security_event(category="terminal_gate", severity="low",
                               detail=f"state-mutating command requested: "
