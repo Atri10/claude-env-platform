@@ -44,6 +44,21 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _embed_for(name: str, body: dict) -> bytes | None:
+    """Best-effort embedding of a node so semantic recall can find it. Returns
+    None (leaving embedding NULL) if no model is configured — memory writes must
+    never fail just because the RAG model is absent. The embedder is cached, so
+    this loads the model at most once per process."""
+    try:
+        import struct
+        from rag.config import get_embedder
+        text = (name or "") + " " + json.dumps(body)
+        vec = get_embedder().embed_documents([text])[0]
+        return struct.pack(f"<{len(vec)}f", *vec)
+    except Exception:
+        return None
+
+
 def _age_days(iso: str) -> float:
     t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
     return max(0.0, (datetime.now(timezone.utc) - t).total_seconds() / 86400)
@@ -68,6 +83,8 @@ class MemoryManager:
         node_id = f"mem-{uuid.uuid4().hex}"
         ts = _now()
         hl = HALF_LIFE.get(node_kind, 90)
+        if embedding is None:                       # make the node semantically recallable
+            embedding = _embed_for(name, body)
         self.db.execute(
             "INSERT INTO memory_nodes "
             "(node_id,namespace,memory_type,node_kind,name,body_json,repo,confidence,"

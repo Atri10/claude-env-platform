@@ -108,12 +108,21 @@ class Indexer:
         return {"repo": self.repo, "tier": self.tier, "rag_enabled": self.rag_enabled,
                 "candidates": len(cand), "allowed": allowed, "blocked": blocked}
 
+    # Files above this size, or that look binary, are skipped: embedding a
+    # decoded PNG/binary yields hundreds of meaningless chunks that pollute RAG.
+    _MAX_INDEX_BYTES = 2 * 1024 * 1024      # 2 MiB
+
     def _index_one(self, branch: str, commit: str, rel: str) -> int:
         abs_path = Path(self.root) / rel
         try:
-            text = abs_path.read_text(errors="ignore")
+            raw = abs_path.read_bytes()
         except Exception:
             return 0
+        if len(raw) > self._MAX_INDEX_BYTES:
+            return 0                         # too large to be useful source
+        if b"\x00" in raw[:8192]:            # NUL byte => binary (image/pdf/etc.)
+            return 0
+        text = raw.decode("utf-8", errors="ignore")
         # content scan (redaction) before indexing
         text, hits = self.policy.scan_content(text)
         if hits and hits[0][1] == -1:

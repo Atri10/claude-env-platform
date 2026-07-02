@@ -357,6 +357,36 @@ def _provision_storage(slug: str, branch: str, dry_run: bool) -> str:
     return _table_name(slug, branch)
 
 
+def _install_post_commit(repo_root: str, dry_run: bool) -> str:
+    """Install scripts/post-commit into <repo>/.git/hooks so each commit triggers
+    an incremental RAG re-index. Idempotent; never clobbers a foreign hook."""
+    git_dir = Path(repo_root) / ".git"
+    if not git_dir.exists():
+        return "skipped (not a git repo)"
+    if git_dir.is_file():                      # worktree/submodule: .git is a file
+        return "skipped (.git is a file — worktree/submodule)"
+    src = _HERE / "scripts" / "post-commit"
+    if not src.exists():
+        return "skipped (post-commit script missing)"
+    hooks = git_dir / "hooks"
+    dst = hooks / "post-commit"
+    marker = "claude-env"                       # our hooks carry this in a comment
+    if dst.exists():
+        try:
+            existing = dst.read_text(errors="ignore")
+        except Exception:
+            existing = ""
+        if marker not in existing:
+            return "kept existing non-claude-env hook (install manually if wanted)"
+        if existing == src.read_text():
+            return "already installed"
+    if not dry_run:
+        hooks.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        dst.chmod(0o755)
+    return "installed"
+
+
 def _maybe_index(repo_root: str, slug: str, branch: str, interactive: bool,
                  dry_run: bool) -> None:
     """Offer to build the initial RAG index now (opt-in; it needs the embedding
@@ -402,6 +432,8 @@ def main() -> int:
                         help="Overwrite existing .claude/ skill & agent files")
     parser.add_argument("--force-policy", action="store_true",
                         help="Overwrite an existing .claude/repo-policy.yaml")
+    parser.add_argument("--no-post-commit", action="store_true",
+                        help="Skip installing the git post-commit RAG re-index hook")
     args = parser.parse_args()
 
     repo_root = str(Path(args.repo_root).resolve())
@@ -450,7 +482,12 @@ def main() -> int:
         }
         _install_template(repo_root, subs, args.force_template, args.dry_run)
 
-    # 4. summary of the isolated space
+    # 4. git post-commit hook -> incremental RAG re-index on every commit
+    tag = f"{YELLOW}DRY RUN{RESET} " if args.dry_run else ""
+    if not args.no_post_commit:
+        print(f"\n{tag}post-commit hook: {_install_post_commit(repo_root, args.dry_run)}")
+
+    # 5. summary of the isolated space
     print(f"\n{GREEN}Isolated workspace provisioned:{RESET}")
     print(f"  slug        : {slug}")
     print(f"  tier        : {tier}")
@@ -459,7 +496,7 @@ def main() -> int:
     print(f"  memory ns   : {memory_ns}  (cross-project reads: "
           f"{'disabled' if isolated else 'allowed'})")
 
-    # 5. optional first index
+    # 6. optional first index
     _maybe_index(repo_root, slug, branch, interactive, args.dry_run)
     return 0
 

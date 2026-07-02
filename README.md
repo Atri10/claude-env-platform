@@ -709,6 +709,33 @@ Pruning archives to `~/.claude-env/archive/memory/<ns>.jsonl` and never prunes `
 
 ## 19. Approvals
 
+Governance has **two enforcement layers**, and it's worth knowing which one you're hitting:
+
+- **MCP servers hard-deny** dangerous operations inline — they do *not* open an approval.
+  Asking Claude (via the MCP tools) to `git push`/`amend`/`rebase`/`reset --hard` or to run an
+  arbitrary shell command returns `DENIED: … route through approval gate`; state-mutating
+  work simply doesn't run. The native-tool **hooks** ([§11](#11-native-tool-hooks)) behave the
+  same way (deny / `ask`-to-confirm secret writes).
+- **The orchestration approval gate** (`agents/orchestration/approval_gate.py`) is what actually
+  *opens* a pending, human-resolvable approval in the `human_approvals` table. It runs when you
+  drive work through the agent orchestrator — `claude-env route "<task>"` — not on every ad-hoc
+  MCP call. (So on a fresh install `claude-env approvals --list-open` is empty until you use the
+  orchestrator or a tier-2+ action opens a gate.)
+
+**A gate opens when ANY of these is true** (evaluated per agent action by the orchestrator):
+
+| Trigger | Example |
+|---|---|
+| the agent's registry entry has `requires_approval: true` | the `devops` agent (any action) |
+| the repo is **tier 2 or 3** | *any* action in a sensitive repo |
+| a write targets a path outside the agent's `write_paths` | `backend` writing `infra/main.tf` |
+| a state-mutating terminal command | `terminal.run …` (tests/benches/audits run unattended) |
+| git history rewrite / push | `git push`, `commit --amend`, `rebase`, `reset --hard` |
+| destructive memory op | `memory.delete`, `memory.prune --apply` |
+| the action matches the agent's `denied_tools` | hard stop, surfaced as a gate |
+
+Resolve pending gates:
+
 ```bash
 claude-env approvals --list-open
 claude-env approvals-ui --port 8002 --by you        # one-click localhost UI (decisions audited)
