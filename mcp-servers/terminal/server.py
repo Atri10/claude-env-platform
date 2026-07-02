@@ -15,9 +15,11 @@ Commands run with:
   * a scrubbed environment (no inherited secrets)
   * shell=False, argv lists only (no shell interpolation, no pipes)
 
-Anything state-mutating maps to `terminal.run` which is intentionally NOT executed
-here; it returns a directive to route through the approval gate. There is no
-`terminal.exec_unrestricted` tool at all.
+Anything state-mutating maps to `terminal.run`, which opens a human approval,
+surfaces the approvals web UI, and BLOCKS until the operator approves or denies.
+On approval the command runs under the same sandbox (argv-only via shlex, no
+shell/pipes, scrubbed env, repo-root cwd, timeout); on denial/timeout it does not.
+There is no `terminal.exec_unrestricted` tool at all.
 
 Configuration: each command must be set per-repo in `${repo}/.claude/commands.json`.
 An unconfigured command is NOT run — it returns a directive telling the operator to
@@ -52,6 +54,11 @@ except ImportError:
 REPO_ROOT = Path(os.environ.get("CLAUDE_ENV_REPO_ROOT", os.getcwd())).resolve()
 SESSION_ID = os.environ.get("CLAUDE_ENV_SESSION", "mcp-terminal")
 TIMEOUT_S = int(os.environ.get("CLAUDE_ENV_CMD_TIMEOUT", "600"))
+# Approval flow: how long terminal.run blocks waiting for a human decision, how
+# often it polls, and the approvals-UI port to auto-open.
+_WAIT_S = int(os.environ.get("CLAUDE_ENV_APPROVAL_WAIT_S", "120"))
+_POLL_S = 2
+_UI_PORT = int(os.environ.get("CLAUDE_ENV_APPROVAL_PORT", "8002"))
 
 # Suggested commands, surfaced in the "not configured" hint. NOT auto-run —
 # a command only executes when set explicitly in .claude/commands.json.
@@ -106,19 +113,61 @@ def _repo_tier() -> int | None:
     return None
 
 
-def _notify_approval(req_id: str, command: str) -> None:
-    """Best-effort macOS notification so a gate doesn't sit unseen."""
-    if sys.platform != "darwin":
+def _open_approvals_ui() -> None:
+    """Surface an ACTUAL UI: ensure the approvals web server is running (auto-start
+    it if nothing is on the port), then open the browser to it. Beats a contentless
+    OS notification. Disable with CLAUDE_ENV_APPROVAL_AUTO_UI=false."""
+    if os.environ.get("CLAUDE_ENV_APPROVAL_AUTO_UI", "true").lower() != "true":
         return
+    import socket
+    import time
+
+    def _listening() -> bool:
+        s = socket.socket()
+        s.settimeout(0.3)
+        try:
+            s.connect(("127.0.0.1", _UI_PORT))
+            return True
+        except Exception:
+            return False
+        finally:
+            s.close()
+
     try:
-        msg = f"terminal.run: {command}"[:120].replace('"', "'")
-        subprocess.run(
-            ["osascript", "-e",
-             f'display notification "{msg}" with title '
-             f'"claude-env approval needed ({req_id})"'],
-            capture_output=True, timeout=5)
+        if not _listening():
+            ui = _HOME / "agents" / "orchestration" / "approvals_ui.py"
+            subprocess.Popen([sys.executable, str(ui), "--port", str(_UI_PORT)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            for _ in range(20):                       # wait up to ~2s for it to bind
+                if _listening():
+                    break
+                time.sleep(0.1)
+        url = f"http://127.0.0.1:{_UI_PORT}"
+        if sys.platform == "darwin":
+            subprocess.run(["open", url], capture_output=True, timeout=5)
+        elif sys.platform.startswith("linux"):
+            subprocess.run(["xdg-open", url], capture_output=True, timeout=5)
     except Exception:
         pass
+
+
+async def _await_decision(req_id: str) -> tuple[str, str | None]:
+    """Block until the operator approves/denies this request (or we time out).
+    Polls the human_approvals row the approvals UI updates in another process."""
+    import asyncio
+    from lib.db import get_db
+    db = get_db()
+    waited = 0
+    while waited < _WAIT_S:
+        row = db.query_one(
+            "SELECT decision, decided_by FROM human_approvals WHERE request_id=?",
+            (req_id,))
+        if row and row["decision"] in ("approved", "denied"):
+            return row["decision"], row["decided_by"]
+        await asyncio.sleep(_POLL_S)
+        waited += _POLL_S
+    return "pending", None
 
 
 def _run(template: str, kind: str) -> str:
@@ -156,8 +205,9 @@ async def list_tools() -> list[Tool]:
              description="Run the repository's configured security-audit command.",
              inputSchema={"type": "object", "properties": {}}),
         Tool(name="terminal.run",
-             description="Request execution of a state-mutating command. NOT executed "
-                         "here; returns an approval-gate directive.",
+             description="Request a state-mutating command. Opens a human approval and "
+                         "BLOCKS until you approve/deny in the approvals UI, then runs "
+                         "it (argv-only, sandboxed) if approved.",
              inputSchema={"type": "object",
                           "properties": {"command": {"type": "string"}},
                           "required": ["command"]}),
@@ -188,19 +238,28 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=_run_configured(cmds, configured, "run_audit"))]
     if name == "terminal.run":
         command = str(arguments.get("command", "")).strip()
+        if not command:
+            return [TextContent(type="text", text="ERROR: empty command")]
         _audit.security_event(category="terminal_gate", severity="low",
                               detail=f"state-mutating command requested: {command}",
                               source="terminal.run")
-        # Open a human approval (pending row + notification) so an operator can
-        # review it in `claude-env approvals-ui`. The command is NOT executed here.
+        # Open a human approval, surface the real UI, then BLOCK until the operator
+        # decides. On approval the command runs (same sandbox: argv-only, no shell,
+        # scrubbed env, repo-root cwd, timeout); on denial/timeout it does not.
         req_id = _audit.human_approval_request(
             agent="terminal", action=f"terminal.run: {command}", tier=_repo_tier())
-        _notify_approval(req_id, command)
+        _open_approvals_ui()
+        decision, by = await _await_decision(req_id)
+        if decision == "approved":
+            out = _run(command, "run")
+            return [TextContent(type="text",
+                    text=f"APPROVED by {by} (request {req_id}). Executed:\n{out}")]
+        if decision == "denied":
+            return [TextContent(type="text",
+                    text=f"DENIED by {by} (request {req_id}). Command was NOT run.")]
         return [TextContent(type="text",
-                            text=f"GATED — approval requested ({req_id}). This command "
-                                 f"was NOT run. Review and approve/deny it in the "
-                                 f"approvals UI:\n  claude-env approvals-ui\n"
-                                 f"or:  claude-env approvals --list-open")]
+                text=f"NO DECISION within {_WAIT_S}s — request {req_id} is still pending. "
+                     f"Approve it in the approvals UI, then ask me to run it again.")]
     return [TextContent(type="text", text=f"ERROR: unknown or denied tool {name}")]
 
 
