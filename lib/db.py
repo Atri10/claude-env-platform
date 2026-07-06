@@ -91,12 +91,22 @@ class Database:
             cur.executemany(self._xlate(sql), list(seq))
 
     @contextmanager
-    def tx(self):
-        """Explicit transaction. Rolls back on exception."""
+    def tx(self, immediate: bool = False):
+        """Explicit transaction. Rolls back on exception.
+
+        immediate=True acquires the SQLite write lock up front (BEGIN IMMEDIATE)
+        instead of lazily on first write (plain BEGIN). Use this whenever a
+        transaction reads state that must not change before it writes based on
+        that state (e.g. read-current-tip-then-insert for a hash chain) -- across
+        separate OS processes/connections, this app's in-process locks don't
+        serialize anything, so without BEGIN IMMEDIATE two writers can both read
+        the same "current" row and then both commit, forking the chain.
+        """
         with self._lock:
             cur = self._conn.cursor()
             try:
-                cur.execute("BEGIN")
+                cur.execute("BEGIN IMMEDIATE" if immediate and self.backend == "sqlite"
+                            else "BEGIN")
                 yield cur
                 cur.execute("COMMIT")
             except Exception:
