@@ -9,9 +9,14 @@ Purpose:
 
 Memory types -> storage:
     episodic   : node_kind in {session, decision, investigation}
-    semantic   : node_kind in {entity, concept, architecture}
+    semantic   : node_kind in {entity, concept, architecture, preference}
     procedural : node_kind in {workflow, convention, pattern}    (namespace 'global')
     agent      : namespace 'agent:<id>'                          (per-agent learnings)
+
+add_node() rejects any (memory_type, node_kind) pair outside this taxonomy —
+VALID_KINDS is the single source of truth (also drives HALF_LIFE lookups), so a
+caller can't silently fall back to the generic 90-day half-life / lose
+prune-protection by inventing an ad hoc node_kind like "issue".
 
 Confidence:
     stored confidence is the value at created_at/updated_at; effective confidence
@@ -38,6 +43,17 @@ HALF_LIFE = {            # days
     "workflow": 540, "convention": 540, "pattern": 365,
     "preference": 270,
 }
+
+VALID_KINDS = {
+    "episodic": {"session", "decision", "investigation"},
+    "semantic": {"entity", "concept", "architecture", "preference"},
+    "procedural": {"workflow", "convention", "pattern"},
+    "agent": set(HALF_LIFE),   # agent namespace reuses any of the above kinds
+}
+
+
+class InvalidMemoryKind(ValueError):
+    """Raised when (memory_type, node_kind) isn't in the documented taxonomy."""
 
 
 def _now() -> str:
@@ -80,9 +96,14 @@ class MemoryManager:
     def add_node(self, memory_type: str, node_kind: str, name: str,
                  body: dict, repo: str | None = None,
                  confidence: float = 1.0, embedding: bytes | None = None) -> str:
+        allowed = VALID_KINDS.get(memory_type)
+        if allowed is None or node_kind not in allowed:
+            raise InvalidMemoryKind(
+                f"invalid (memory_type={memory_type!r}, node_kind={node_kind!r}); "
+                f"expected one of {VALID_KINDS}")
         node_id = f"mem-{uuid.uuid4().hex}"
         ts = _now()
-        hl = HALF_LIFE.get(node_kind, 90)
+        hl = HALF_LIFE[node_kind]
         if embedding is None:                       # make the node semantically recallable
             embedding = _embed_for(name, body)
         self.db.execute(

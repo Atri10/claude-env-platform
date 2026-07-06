@@ -80,12 +80,19 @@ class AuditLogger:
                 "tier": self.tier, "body": payload,
             }
             canon = _canon(full_payload)
-            prev = self.db.query_one(
-                "SELECT event_hash FROM audit_events ORDER BY event_id DESC LIMIT 1")
-            prev_hash = prev["event_hash"] if prev else GENESIS
-            event_hash = _hash(prev_hash, canon)
 
-            with self.db.tx() as cur:
+            # prev-hash read + insert must be one atomic unit: BEGIN IMMEDIATE
+            # takes the SQLite write lock before the SELECT, so a concurrent
+            # writer (a different process/connection -- _WRITE_LOCK only
+            # serializes this process) can't read the same "current tip" and
+            # fork the chain. See lib/db.py::Database.tx().
+            with self.db.tx(immediate=True) as cur:
+                cur.execute(
+                    "SELECT event_hash FROM audit_events ORDER BY event_id DESC LIMIT 1")
+                prev_row = cur.fetchone()
+                prev_hash = prev_row["event_hash"] if prev_row else GENESIS
+                event_hash = _hash(prev_hash, canon)
+
                 cur.execute(
                     "INSERT INTO audit_events "
                     "(ts,event_type,actor,session_id,repo,tier,payload_json,prev_hash,event_hash) "

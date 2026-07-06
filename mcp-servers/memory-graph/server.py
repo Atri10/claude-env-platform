@@ -31,7 +31,7 @@ for p in (_HOME, _HOME / "memory"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from memory.memory_manager import MemoryManager  # noqa: E402
+from memory.memory_manager import HALF_LIFE, VALID_KINDS, MemoryManager  # noqa: E402
 from memory.memory_retriever import MemoryRetriever  # noqa: E402
 
 try:
@@ -94,11 +94,20 @@ async def list_tools() -> list[Tool]:
     if WRITE_ENABLED:
         tools += [
             Tool(name="memory.write",
-                 description="Create a memory node in this server's namespace.",
+                 description="Create a memory node in this server's namespace. "
+                             "node_kind must match memory_type: episodic={session,"
+                             "decision,investigation}, semantic={entity,concept,"
+                             "architecture,preference}, procedural={workflow,"
+                             "convention,pattern}, agent=any of the above. Use "
+                             "'decision' for a confirmed-but-deferred issue/finding "
+                             "(it gets a 365-day half-life and is never auto-pruned) "
+                             "and 'investigation' for an open/unresolved one.",
                  inputSchema={"type": "object",
                               "properties": {
-                                  "memory_type": {"type": "string"},
-                                  "node_kind": {"type": "string"},
+                                  "memory_type": {"type": "string",
+                                                  "enum": list(VALID_KINDS)},
+                                  "node_kind": {"type": "string",
+                                                "enum": sorted(HALF_LIFE)},
                                   "name": {"type": "string"},
                                   "body": {"type": "object"},
                                   "repo": {"type": "string"},
