@@ -47,6 +47,33 @@ python memory/memory_sync.py import --in team.jsonl --namespace proj-other
 
 (`memory/memory_sync.py:24-27`)
 
+---
+
+## How to use it
+
+```bash
+# Share a project namespace with a teammate — redacted JSONL, safe to hand off
+claude-env memory-sync export --namespace proj-payments --out payments.jsonl
+
+# Full audit dump — include superseded nodes too, not just the live set
+claude-env memory-sync export --namespace proj-payments --out payments-full.jsonl \
+  --include-superseded
+
+# New machine, same namespace — import as-is
+claude-env memory-sync import --in payments.jsonl
+
+# New machine, different namespace — remap everything on the way in
+claude-env memory-sync import --in payments.jsonl --namespace proj-payments-staging
+```
+
+The last example is the remap case: the export file's `meta` line still says
+`namespace: proj-payments` (that field is decorative, per the JSONL format above), but
+every node and edge lands under `proj-payments-staging` in the target DB because
+`--namespace` on `import` overrides the per-record namespace uniformly. Omit
+`--namespace` on import when you want each record to keep the namespace it was
+exported from. Re-running the same `import` command twice is safe — it's idempotent by
+`node_id`, so the second run just skips everything already present.
+
 ## JSONL file format
 
 One JSON object per line, three `kind`s, always meta first:

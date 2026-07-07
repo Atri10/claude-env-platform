@@ -62,6 +62,33 @@ of crashing.
 
 ---
 
+## How to use it
+
+```bash
+# Quick interactive onboarding of a new repo — prompts for tier, description,
+# etc. wherever a flag is omitted (only works on a real TTY)
+claude-env onboard /abs/path/to/my-service
+
+# Non-interactive onboarding for a CI/scripting context — explicit tier,
+# --yes skips all prompts and falls back to detected defaults for everything else
+claude-env onboard /abs/path/to/my-service --yes --tier 2 --description "Payments API"
+
+# Preview what would change on an already-onboarded repo before committing to it —
+# nothing is written; every helper still computes and prints its status string
+claude-env onboard /abs/path/to/my-service --dry-run
+```
+
+`onboard` and `register` are aliases for the same script, so `claude-env register
+/abs/path/to/my-service ...` behaves identically. Re-running onboarding on a repo
+that's already been onboarded is safe by default — `repo-policy.yaml` is kept as-is
+unless `--force-policy` is passed, and existing `.claude/skills`/`.claude/agents`
+files are never overwritten unless `--force-template` is passed; only `CLAUDE.md`'s
+managed block is always refreshed. `--dry-run` is worth reaching for before
+re-onboarding a repo you've customized, since it prints the full plan (including
+which artifacts would be kept vs. regenerated) without touching disk.
+
+---
+
 ## The onboarding flow, in order
 
 `main()` runs these steps unconditionally (skipping only what a flag disables),

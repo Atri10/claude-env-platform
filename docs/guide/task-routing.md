@@ -130,6 +130,34 @@ def needs_clarification(self, task: str, target: str | None = None,
 
 ---
 
+## How to use it
+
+```bash
+# Route a task and see only the winning specialist
+claude-env route "fix the flaky login test"
+
+# Bias routing with the primary file/path the task touches — the +2.5
+# write_paths bonus (see the scoring walkthrough above) can flip the winner
+claude-env route "update the dashboard styles" --target frontend/src/Dashboard.tsx
+
+# See the full ranking, not just the top pick — useful for debugging *why*
+# one specialist beat another (which intent patterns matched, whether the
+# path bonus or the write-capability penalty/bonus decided it)
+claude-env route "write docs for the new endpoint" --all
+
+# Point at a different registry, e.g. a repo-local override
+claude-env route "add an index to the users table" --registry ./agents/agent_registry.yaml
+```
+
+`--all` is the one worth reaching for whenever a routing decision looks surprising:
+it reruns `rank()` and prints every agent's score plus its `why` string, so you can
+see whether a low-scoring candidate lost on intent keywords, the `target` path
+falling outside its `write_paths`, or the `-2.0` read-only penalty — rather than
+just seeing the single winner and guessing. `--target` and `--registry` default to
+`None` and `agents/agent_registry.yaml` at the repo root respectively when omitted.
+
+---
+
 ## How agent_handoff.py works
 
 ### `HandoffPacket` — the scoped context container

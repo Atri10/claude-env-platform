@@ -65,6 +65,35 @@ dispatch and exit-code aggregation.
 
 ---
 
+## How to use it
+
+```bash
+# Full sweep — run all 7 validators after a platform upgrade or bootstrap.py re-mirror
+claude-env validate all
+
+# Run just one validator, e.g. after a policy change to config/global-policy
+claude-env validate security
+
+# The RAG validator is the one exception: it takes extra positional args
+# (a repo root, and an optional test query — "test" if the query is omitted)
+# rather than nothing, because it needs a real onboarded repo to query against
+claude-env validate rag ~/code/some-onboarded-repo "how does auth work"
+
+# Same call without a query — falls back to the default query "test"
+claude-env validate rag ~/code/some-onboarded-repo
+```
+
+`claude-env validate` with no argument is shorthand for `validate all`. Every other
+validator name (`installation`, `security`, `memory`, `agents`, `mcp`, `features`)
+takes no CLI flags of its own — the scripts behind them are fixed end-to-end checks,
+not configurable — so `rag`'s `<repo_root> [query]` positional args are a real
+exception to the pattern, not just a documentation gap. Exit code is `0` only if
+every validator run in the batch passed; for `validate all` it's the bitwise OR of
+each validator's own exit code, so a single failing validator among the seven makes
+the whole sweep report nonzero.
+
+---
+
 ## Reference table — one row per validator
 
 | Validator | What it checks (function-level) | Failure surface |

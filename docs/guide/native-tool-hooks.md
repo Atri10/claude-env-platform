@@ -60,6 +60,31 @@ All boolean-ish env vars use the same idiom: `os.environ.get(NAME, default).lowe
 
 ---
 
+## How to use it
+
+```bash
+# Preview the resulting settings.json without writing anything
+claude-env hooks --dry-run
+
+# Install the policy + audit hooks into ~/.claude/settings.json
+claude-env hooks
+
+# Remove them again
+claude-env hooks --uninstall
+
+# Target a different settings file (e.g. a project-local settings.json)
+claude-env hooks --settings ./.claude/settings.json
+```
+
+Running `--dry-run` before the real install is worth doing every time — it prints the
+exact `hooks` block that would be merged into the target file, so you can confirm the
+matchers and command paths before anything on disk changes. Whichever of `hooks`,
+`--uninstall`, or a `--settings`-targeted install you run, **Claude Code must be
+restarted afterward** for the change to take effect, per this repo's own deploy
+workflow.
+
+---
+
 ## How the logic works
 
 ### `PreToolUse`: extracting a path from the tool call

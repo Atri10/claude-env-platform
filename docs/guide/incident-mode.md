@@ -59,6 +59,29 @@ for human-facing output (`status`, the hook's denial message, the `off` audit ev
 
 ---
 
+## How to use it
+
+```bash
+# Arm the kill switch — every policy evaluation fails closed until lifted
+claude-env incident on --reason "suspected token leak" --by atriya
+
+# Check whether it's currently active (exit code 1 = active, 0 = inactive —
+# safe to use directly in a shell conditional or monitoring check)
+claude-env incident status
+
+# Lift it once the situation is resolved
+claude-env incident off --by atriya
+```
+
+`--reason` and `--by` are optional on `on` (defaulting to `"unspecified"` and
+`$USER`/`"operator"` respectively), but supplying both is worth doing every time —
+they're the only human-readable trace of *why* the platform was frozen once you're
+looking at the audit ledger or compliance report later. `status`'s exit code is the
+one designed for automation; `on`/`off` always exit `0` and are meant to be read from
+their printed output, not branched on.
+
+---
+
 ## How the logic works
 
 ### `cmd_on()` — arming the switch

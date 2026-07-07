@@ -62,6 +62,36 @@ the platform's `$CLAUDE_ENV_HOME` deploy rule).
 
 ---
 
+## How to use it
+
+Unlike most other platform scripts, these two are **not** wired into `bin/claude-env` —
+there's no `claude-env consolidate-memory` or `claude-env prune-memory` subcommand.
+They're invoked as standalone scripts through the deployed venv Python, normally by the
+nightly memory-maintenance job rather than by hand:
+
+```bash
+# Consolidate one namespace's low-confidence clusters
+~/.claude-env/venv/bin/python memory/memory_consolidator.py --namespace proj-payments
+
+# Consolidate every namespace with memory
+~/.claude-env/venv/bin/python memory/memory_consolidator.py --all
+
+# Preview what the pruner would remove — the default, since --apply is required to
+# actually archive+delete anything
+~/.claude-env/venv/bin/python memory/memory_pruner.py --namespace proj-payments
+
+# Actually prune it, across every namespace
+~/.claude-env/venv/bin/python memory/memory_pruner.py --all --apply
+```
+
+Both scripts print one JSON object per namespace to stdout (`{"namespace": ..., "clusters_consolidated": ...}`
+or `{"namespace": ..., "pruned"|"would_prune": <count>}`), so a manual run is easy to
+pipe into `jq` or a log file. Run the pruner without `--apply` first if you're checking
+its behavior after changing a threshold constant — it costs nothing and tells you
+exactly how many nodes would be affected before you commit to deleting anything.
+
+---
+
 ## How the logic works
 
 ### Consolidator: `_clusters()` — eligibility, adjacency, components, grouping

@@ -67,6 +67,36 @@ Where `config/rag.yaml` itself is found (`_resolve_yaml_path`, `rag/config.py:50
 
 ---
 
+## How to use it
+
+```bash
+# Sanity-check what would be indexed before running a full index — no model
+# load, just policy-allowed vs. blocked file paths
+claude-env scan /abs/path/to/my-service
+
+# Build the full RAG index for the repo (loads the configured embedder,
+# chunks every scanned file, upserts into the repo's LanceDB table)
+claude-env index /abs/path/to/my-service
+
+# Incrementally re-index just the files that changed since a given git ref
+# (internally runs `git diff --name-only <ref> HEAD` to build the file list)
+claude-env reindex /abs/path/to/my-service --since HEAD~1
+
+# Incrementally re-index specific files by name instead
+claude-env reindex /abs/path/to/my-service src/app.py docs/guide/rag-pipeline.md
+```
+
+`scan`, `index`, and `reindex` are raw `sys.argv` scripts, not `argparse` — they
+take **no flags beyond what's shown above** (a bare positional `repo_root` for
+`scan`/`index`; `repo_root` plus either a variadic file list or `--since <ref>`
+for `reindex`). There's no `--help` output beyond a one-line usage string, so
+this section is the actual reference for their arguments. Running `scan` before
+the first `index` is worth doing on any new repo — it surfaces policy-driven
+surprises (a large vendored directory that isn't actually excluded, say) before
+paying the cost of loading the embedding model.
+
+---
+
 ## `rag/config.py` — the one place models get chosen
 
 ```python

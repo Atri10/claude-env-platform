@@ -61,6 +61,33 @@ once regardless of how many times the nightly job runs.
 
 ---
 
+## How to use it
+
+The ingestor normally runs unattended as the first step of `scripts/nightly_memory.sh` (see
+[Scheduling](#scheduling) below) — the CLI below is for manual/ad-hoc invocation, e.g. catching
+up outside the nightly window or checking what a run would do before it does it.
+
+```bash
+# Manually catch up on new sessions right now, without waiting for the nightly job
+claude-env ingest-sessions
+
+# Preview what would be ingested — no memory nodes, usage signals, or
+# session_ingest_state rows written for successfully-parsed sessions
+claude-env ingest-sessions --dry-run
+
+# Point at a different transcripts directory, e.g. a test fixture or a
+# non-standard Claude Code home
+claude-env ingest-sessions --transcripts /path/to/other/projects
+```
+
+`--dry-run` is the safe way to sanity-check a large backlog of transcripts (or a change to
+the parsing logic) before letting a real run write nodes — it still respects the dedupe table
+for already-ingested sessions, so it reports only what's actually new. Combine both flags
+(`--transcripts ... --dry-run`) to preview ingestion against a fixture directory without
+touching the real memory graph at all.
+
+---
+
 ## How the logic works
 
 ### Locating and parsing a transcript

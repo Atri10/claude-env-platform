@@ -119,6 +119,30 @@ projection=None)`, which is the only method that touches `audit_events` directly
 
 ---
 
+## How to use it
+
+```bash
+# A 7-day compliance report, rendered as markdown to stdout
+claude-env report --window 7d
+
+# A JSON report scoped to one repo, written to a file for an auditor
+claude-env report --repo my-service --format json --out /tmp/my-service-report.json
+
+# List recent sessions, then replay one by id
+claude-env replay --list
+claude-env replay 3f9c2a1e-...-session --format text
+```
+
+Reach for `claude-env report` when you need auditor-ready evidence — window and
+format default to `30d` / `md` if you omit the flags, but scoping to `--repo` and
+writing straight to `--out` is the common case for handing someone a file. Reach for
+`claude-env replay` when a report's `policy_violations` or `security_events` rows
+point at a specific session and you need the full "why did the agent do that?"
+timeline: `--list` to find the `session_id`, then `replay <session_id>` to
+reconstruct it.
+
+---
+
 ## How the logic works
 
 ### Hash-chain construction — `_append()`

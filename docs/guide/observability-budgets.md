@@ -71,6 +71,30 @@ that config is read from `$CLAUDE_ENV_HOME`, not the source tree (see
 
 ---
 
+## How to use it
+
+```bash
+# Quick check across all repos — text table, human-readable
+claude-env budget
+
+# Same check, scoped to one repo
+claude-env budget --repo payments
+
+# Machine-readable output for a CI job or script
+claude-env budget --format json
+
+# Suppress the local macOS notification (e.g. running from a script/cron)
+claude-env budget --format json --no-notify
+```
+
+The plain `claude-env budget` form is what you'd run from a shell prompt to eyeball
+spend; `--format json` is the one to parse in a script or CI step (check `overall` in
+the returned object, or the process exit code, for `EXCEEDED`). `--no-notify` is worth
+adding whenever budget is invoked non-interactively, since the notification is
+best-effort and meant for a human at the machine, not an automated caller.
+
+---
+
 ## How `budgets.py` works
 
 ### Cost tracking mechanism

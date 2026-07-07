@@ -69,6 +69,33 @@ never go through the gate at all — they run immediately if configured, or refu
 
 ---
 
+## How to use it
+
+```bash
+# See every pending approval request across all agents/repos
+claude-env approvals --list-open
+
+# Resolve one by ID from a terminal session, no web UI needed
+claude-env approvals --resolve <REQUEST_ID> --approve --by atriya
+
+# ...or deny it, with the same flag shape
+claude-env approvals --resolve <REQUEST_ID> --deny --by atriya
+
+# Launch the local approvals web UI on a specific port (default: 8002,
+# falls back to a free port automatically if that one's busy)
+claude-env approvals-ui --port 8010
+```
+
+`--by` is optional on `--resolve` (defaults to `"operator"`) and on `approvals-ui`
+(defaults to `getpass.getuser()@socket.gethostname()`) — supplying it is worth doing
+when resolving on someone else's behalf or from a shared/service account, since it's
+what lands in `decided_by` on the hash-chained `human_approvals` row. `--list-open` and
+`--resolve` are mutually exclusive uses of the same `approval_gate.py` CLI entry point;
+reaching for `--list-open` first to find a `REQUEST_ID` before resolving it is the
+normal flow when you'd rather stay in a terminal than open the browser UI.
+
+---
+
 ## How the logic works
 
 ### `ApprovalGate.evaluate()` — six independent trigger conditions

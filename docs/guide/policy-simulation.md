@@ -62,6 +62,28 @@ hardcoded constant.
 
 ---
 
+## How to use it
+
+```bash
+# Dry-run a candidate tier-2 policy against a real repo before installing it
+claude-env policy-sim simulate /path/to/repo --candidate config/candidate-policy.yaml
+
+# Same run, machine-readable — pipe into jq or a CI gate
+claude-env policy-sim simulate /path/to/repo --candidate config/candidate-policy.yaml --format json
+
+# Check whether a repo's policy has drifted from a team baseline
+claude-env policy-sim diff .claude/repo-policy.yaml config/team-baseline-policy.yaml
+```
+
+Reach for `simulate` before ever replacing a repo's live `.claude/repo-policy.yaml` —
+it's the only way to see which files would become newly blocked or newly allowed
+without touching the real policy or the enforcement surfaces. Reach for `diff` when
+you just need to know whether two policy *documents* disagree (e.g. a repo's policy
+vs. a team baseline) and don't care about a specific repo's file tree at all; its
+non-zero exit code on drift also makes it usable as a CI gate.
+
+---
+
 ## How the logic works
 
 ### `_repo_files()` — git-first, capped rglob fallback

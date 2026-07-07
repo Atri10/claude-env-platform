@@ -117,6 +117,32 @@ see [`task-routing.md`](task-routing.md).
 
 ---
 
+## How to use it
+
+`claude-env route` is `task_router.py`'s CLI entry point — invoking it is the fastest way to
+see how the registry's `write_paths`/scoring actually resolves for a real task, without
+reading YAML by hand. (The scoring algorithm itself is [`task-routing.md`](task-routing.md)'s
+territory; this is just what calling it looks like.)
+
+```bash
+# A database-shaped task — should resolve to the `database` specialist
+claude-env route "add a migration to add an index on users.email"
+
+# A frontend task, biased with --target so write_paths scoring has a real path to match against
+claude-env route "fix the button alignment on the settings page" --target ui/SettingsPage.tsx
+
+# See the full ranking, not just the winner — useful when an agent overlaps
+# on write_paths (e.g. backend vs. testing both claim src/**)
+claude-env route "write integration tests for the checkout flow" --all
+```
+
+`--all` is worth reaching for whenever the target path sits in an ambiguous zone like
+`src/**` — it shows how close the runner-up scored, not just which agent won. `--registry
+<file>` swaps in a different registry YAML entirely (e.g. a modified copy under test),
+which is useful for checking a proposed registry change's routing impact before merging it.
+
+---
+
 ## How the registry is loaded
 
 There is no dedicated `AgentRegistry` class — three modules each open and parse the YAML
