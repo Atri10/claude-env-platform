@@ -1,0 +1,118 @@
+<svg width="100%" viewBox="0 0 740 760" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>memory_sync.py export / import flow</title>
+<desc>Two parallel flowcharts. Export: select nodes and edges by namespace, drop the
+model-specific embedding column, redact secrets from every node name and body via
+SecretDetector.redact walking parsed JSON values, write a JSONL file (one meta line,
+then node lines, then edge lines), and log a memory_write audit row with
+operation=export. Import: read the JSONL file line by line, skip existing node_ids
+and edges (idempotent, additive), null out dangling superseded_by references, remap
+the namespace if --namespace is given, insert nodes then edges whose endpoints both
+exist, and log a memory_write audit row per node with operation=import.</desc>
+<defs>
+<marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+<style>
+  text { font-family: "Anthropic Sans", -apple-system, "system-ui", "Segoe UI", sans-serif; }
+  .h { font-size: 14px; font-weight: 600; }
+  .t { font-size: 13px; font-weight: 500; }
+  .s { font-size: 11px; font-weight: 400; }
+  .edge { fill: none; stroke: rgb(137,135,129); stroke-width: 1.5px; }
+</style>
+
+<!-- Column headers -->
+<text x="185" y="26" text-anchor="middle" class="h" fill="rgb(60,52,137)">export_ns()</text>
+<text x="555" y="26" text-anchor="middle" class="h" fill="rgb(60,52,137)">import_ns()</text>
+
+<!-- ===================== EXPORT COLUMN ===================== -->
+
+<!-- E1 -->
+<rect x="25" y="46" width="320" height="50" rx="8" fill="rgb(238,237,254)" stroke="rgb(83,74,183)" stroke-width="1"/>
+<text x="185" y="66" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(60,52,137)">1. Select namespace</text>
+<text x="185" y="84" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">nodes+edges WHERE namespace=?</text>
+<line x1="185" y1="96" x2="185" y2="118" class="edge" marker-end="url(#a3)"/>
+
+<!-- E2 -->
+<rect x="25" y="118" width="320" height="50" rx="8" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="0.5"/>
+<text x="185" y="138" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(68,68,65)">2. Filter superseded + edges</text>
+<text x="185" y="156" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">edges kept only if both endpoints in node set</text>
+<line x1="185" y1="168" x2="185" y2="190" class="edge" marker-end="url(#a3)"/>
+
+<!-- E3 -->
+<rect x="25" y="190" width="320" height="50" rx="8" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="0.5"/>
+<text x="185" y="210" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(68,68,65)">3. Drop embedding column</text>
+<text x="185" y="228" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">model-specific vector; re-derive locally on import</text>
+<line x1="185" y1="240" x2="185" y2="262" class="edge" marker-end="url(#a3)"/>
+
+<!-- E4 secret redaction (rust, highlighted) -->
+<rect x="15" y="262" width="340" height="66" rx="8" fill="rgb(250,236,231)" stroke="rgb(153,60,29)" stroke-width="1.5"/>
+<text x="185" y="282" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(113,43,19)">4. Redact secrets — SecretDetector.redact()</text>
+<text x="185" y="299" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(153,60,29)">name field, and body_json walked as parsed</text>
+<text x="185" y="315" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(153,60,29)">JSON values (not the raw escaped string)</text>
+<line x1="185" y1="328" x2="185" y2="350" class="edge" marker-end="url(#a3)"/>
+
+<!-- E5 -->
+<rect x="25" y="350" width="320" height="50" rx="8" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="0.5"/>
+<text x="185" y="370" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(68,68,65)">5. Write portable JSONL</text>
+<text x="185" y="388" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">1 meta line, then node lines, then edge lines</text>
+<line x1="185" y1="400" x2="185" y2="422" class="edge" marker-end="url(#a3)"/>
+
+<!-- E6 -->
+<rect x="25" y="422" width="320" height="50" rx="8" fill="rgb(233,244,236)" stroke="rgb(46,125,86)" stroke-width="1"/>
+<text x="185" y="442" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(30,90,61)">6. Audit: memory_write(export)</text>
+<text x="185" y="460" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(30,90,61)">one row, node_id=None, "export:Nn/Me"</text>
+
+<!-- ===================== IMPORT COLUMN ===================== -->
+
+<!-- I1 -->
+<rect x="395" y="46" width="320" height="50" rx="8" fill="rgb(238,237,254)" stroke="rgb(83,74,183)" stroke-width="1"/>
+<text x="555" y="66" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(60,52,137)">1. Read JSONL, line by line</text>
+<text x="555" y="84" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">meta line skipped; kind=node / kind=edge</text>
+<line x1="555" y1="96" x2="555" y2="118" class="edge" marker-end="url(#a3)"/>
+
+<!-- I2 -->
+<rect x="395" y="118" width="320" height="56" rx="8" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="0.5"/>
+<text x="555" y="136" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(68,68,65)">2. Idempotency check</text>
+<text x="555" y="153" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">node_id / edge_id already exists?</text>
+<line x1="715" y1="146" x2="730" y2="146" class="edge" marker-end="url(#a3)"/>
+<line x1="555" y1="174" x2="555" y2="196" class="edge" marker-end="url(#a3)"/>
+
+<!-- I2 skip branch -->
+<rect x="595" y="188" width="120" height="40" rx="8" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="0.5"/>
+<text x="655" y="208" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(68,68,65)">skip (stats++)</text>
+<line x1="595" y1="150" x2="640" y2="150" class="edge"/>
+<line x1="640" y1="150" x2="655" y2="188" class="edge" marker-end="url(#a3)"/>
+
+<!-- I3 -->
+<rect x="395" y="196" width="320" height="52" rx="8" fill="rgb(233,244,236)" stroke="rgb(46,125,86)" stroke-width="1"/>
+<text x="555" y="214" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(30,90,61)">3. Namespace resolution</text>
+<text x="555" y="232" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(30,90,61)">--namespace override, else rec's own namespace</text>
+<line x1="555" y1="248" x2="555" y2="270" class="edge" marker-end="url(#a3)"/>
+
+<!-- I4 -->
+<rect x="395" y="270" width="320" height="56" rx="8" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="0.5"/>
+<text x="555" y="288" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(68,68,65)">4. Null-safe dangling refs</text>
+<text x="555" y="305" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">superseded_by / edge src+dst must resolve</text>
+<line x1="555" y1="326" x2="555" y2="348" class="edge" marker-end="url(#a3)"/>
+
+<!-- I5 -->
+<rect x="395" y="348" width="320" height="50" rx="8" fill="rgb(233,244,236)" stroke="rgb(46,125,86)" stroke-width="1"/>
+<text x="555" y="368" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(30,90,61)">5. INSERT into target namespace</text>
+<text x="555" y="386" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(30,90,61)">memory_nodes then memory_edges</text>
+<line x1="555" y1="398" x2="555" y2="420" class="edge" marker-end="url(#a3)"/>
+
+<!-- I6 -->
+<rect x="395" y="420" width="320" height="50" rx="8" fill="rgb(233,244,236)" stroke="rgb(46,125,86)" stroke-width="1"/>
+<text x="555" y="440" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(30,90,61)">6. Audit: memory_write(import)</text>
+<text x="555" y="458" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(30,90,61)">one row per node imported</text>
+
+<!-- Connective note -->
+<rect x="140" y="500" width="460" height="66" rx="10" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="1"/>
+<text x="370" y="522" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(68,68,65)">The two flows are connected only by the JSONL file</text>
+<text x="370" y="540" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">export never calls import, and import trusts the file's</text>
+<text x="370" y="556" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">shape — there is no re-scan for secrets on import</text>
+
+<text x="370" y="610" text-anchor="middle" class="s" fill="rgb(95,94,90)">Invariant: redaction happens once, at export. Import is additive-only —</text>
+<text x="370" y="628" text-anchor="middle" class="s" fill="rgb(95,94,90)">existing node_ids/edge_ids are never overwritten (supersede semantics stay intact).</text>
+</svg>
