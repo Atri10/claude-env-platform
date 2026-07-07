@@ -32,7 +32,7 @@ something is routed through one of two enforcement surfaces — **MCP servers** 
 a single **audit ledger**. Nothing bypasses this chokepoint, and nothing leaves your
 machine except an optional, tier-gated documentation fetch.
 
-![claude-env overall architecture](architecture.svg)
+![claude-env overall architecture](assets/architecture.svg)
 
 ---
 

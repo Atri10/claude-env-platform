@@ -140,7 +140,7 @@ Bash). Both consult one **policy engine** and write one **append-only, hash-chai
 (the security spine), over local knowledge stores and local inference. The only network egress is
 the documentation server for tier-0/1 repos.
 
-![claude-env overall architecture](docs/architecture.svg)
+![claude-env overall architecture](docs/assets/architecture.svg)
 
 The six MCP servers are `filesystem-policy` (the chokepoint), `git` (read-mostly), `lancedb-rag`,
 `memory-graph`, `terminal` (allow-listed), and `documentation` (tier-gated fetch). They start in a
