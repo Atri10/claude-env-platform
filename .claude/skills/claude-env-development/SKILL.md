@@ -2,10 +2,11 @@
 name: claude-env-development
 description: >-
   How to develop the claude-env platform itself — the deploy-to-$CLAUDE_ENV_HOME
-  workflow, running tests, the branch-first commit rule, and the security
-  invariants you must not break. Load this whenever editing platform code
-  (mcp-servers, hooks, security, rag, memory, agents, bootstrap, scripts) or
-  wiring a new tool/policy.
+  workflow, running tests, the branch-first commit rule, the security
+  invariants you must not break, and keeping docs/guide/'s per-module technical
+  docs in sync with the code they document. Load this whenever editing platform
+  code (mcp-servers, hooks, security, rag, memory, agents, bootstrap, scripts)
+  or wiring a new tool/policy.
 ---
 
 # Developing claude-env
@@ -62,6 +63,31 @@ long-lived processes). CLI (`claude-env …`) and scripts pick up changes immedi
    (`Read, Grep, Glob`) — never `Bash`/`Write`/`Edit`. Subagents are contained by their `tools:`
    allow-list + the MCP servers, not by their prompt and not reliably by the PreToolUse hook (its
    scope over subagent tool calls is undocumented). `tests/test_subagent_tools.py` enforces it.
+
+## Keep docs/guide/ in sync
+
+`docs/guide/` has one highly technical doc per source module (config tables, decision-logic
+walkthroughs with real code excerpts, invariants) — see `docs/guide/README.md`'s per-section
+tables for the full source → doc mapping. These docs go stale exactly like code comments do,
+except a stale *doc* is worse: it looks authoritative and won't be caught by tests.
+
+**Whenever you edit a file that `docs/guide/README.md` maps to a doc, check that doc in the same
+turn** — before considering the change done, not as follow-up cleanup:
+
+- Changed a config key, default, or its effect? Update that doc's configuration reference table.
+- Changed evaluation order, a threshold, or any decision logic? Update the code excerpts and the
+  prose walkthrough (the excerpts are meant to be copy-pasted from current source, not paraphrased).
+- Changed something a diagram depicts (e.g. `docs/assets/guide/<doc-slug>/*.svg`)? Regenerate or
+  edit the diagram too, not just the prose.
+- Added a new independent module with no existing doc? Add a row to `docs/guide/README.md`'s
+  table (status 🔜) — it doesn't need a full doc written in the same turn, but it should be listed.
+- This only applies to platform code covered by `docs/guide/`. It does not apply to
+  `templates/repo-onboarding/` (a separate deliverable installed into *other* repos, not this
+  platform) or to onboarded repos in general.
+
+If a change is large enough that updating the doc properly would itself be a substantial task,
+it's fine to do it as an immediate follow-up commit on the same branch — but say so explicitly
+rather than silently leaving the doc stale.
 
 ## Gotchas learned the hard way
 
