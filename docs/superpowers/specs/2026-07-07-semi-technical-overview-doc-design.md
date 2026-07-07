@@ -1,7 +1,36 @@
 # Design: `docs/OVERVIEW.md` — semi-technical product overview
 
 **Date:** 2026-07-07
-**Status:** Approved
+**Status:** Approved (revised — see Revision below)
+
+## Revision: problem-first restructure
+
+After the first pass (module-by-module, 21 sections), the user asked for a structure
+optimized for lower-context human readers: group the same coverage into ~5-7 broad,
+recognizable problems, each naming the feature(s) that solve it and walking through
+one concrete before/after example — rather than one section per module.
+
+Final grouping (7 problems, full feature coverage preserved):
+
+1. The agent could read or touch something it shouldn't → policy engine, hooks,
+   secret/injection detection, incident mode, policy simulation
+2. No one knows what the agent actually did → audit ledger, session replay,
+   compliance reporting
+3. Risky actions run without anyone checking → approvals workflow, terminal
+   allow-listing
+4. The agent forgets everything, every session → memory graph, session ingestion,
+   consolidation/pruning, team knowledge sync
+5. Knowledge and search shouldn't leave the building → local RAG, retrieval/poison
+   screening, the six MCP servers as the local-only enforcement surface
+6. One generalist agent doing everything, badly → specialist agents, task
+   routing/handoff, conflict resolution
+7. You can't tell if it's working well or costing too much → budgets/cost tracking,
+   feedback loop, dashboard, validation suite, nightly automation
+
+Onboarding remains a short closing "how this gets turned on" section. The
+architecture diagram moved to a shared intro above all seven problems (it's the
+answer to all of them, not any one). The request-lifecycle diagram moved into problem
+3, where it's the most direct illustration.
 
 ## Purpose
 
