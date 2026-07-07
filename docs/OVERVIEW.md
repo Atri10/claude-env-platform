@@ -307,5 +307,7 @@ what gets installed live in
 
 - For exhaustive installation steps, CLI command reference, and full YAML config
   schemas, see [`README.md`](../README.md).
-- Deeper, module-by-module technical documentation will live under `docs/guide/` as it
-  is written.
+- For code-level deep dives — full config parameter tables, decision-logic
+  walkthroughs with real code excerpts, and internal flow diagrams — see the
+  [technical guide](guide/README.md). It's being built out feature by feature;
+  [`guide/policy-engine.md`](guide/policy-engine.md) is the first one.
