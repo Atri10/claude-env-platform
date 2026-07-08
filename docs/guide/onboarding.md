@@ -300,25 +300,16 @@ No test in this file exercises `_write_repo_policy`, `_install_claude_md`, or
 
 ## Facts, invariants & edge cases
 
-- **The policy file is templated, not generated.** `_write_repo_policy` does
-  targeted regex/string substitution on `config/repo-policy.template.yaml`'s
-  actual text; it never constructs YAML from a data structure. Every other
-  key in the template (allow/deny lists, `content_scan`, `rag.*`,
+- **The policy file is templated, not generated** — see [`.claude/repo-policy.yaml`
+  — the isolation boundary](#1-claude-repo-policyyaml--the-isolation-boundary) above.
+  Every other template key (allow/deny lists, `content_scan`, `rag.*`,
   `agent_permissions.*`) reaches the onboarded repo unedited — see the tier-2+
   `.sql` gotcha documented directly in the template
   (`config/repo-policy.template.yaml`) and in
   [`policy-engine.md`](policy-engine.md#facts--invariants).
-- **`EXAMPLE-REPO-SLUG` is replaced everywhere in one pass**, which is why the
-  template's `memory.namespace: "proj-EXAMPLE-REPO-SLUG"` and top-level
-  `repo: "EXAMPLE-REPO-SLUG"` both end up correctly slug-filled from a single
-  `.replace()` call rather than two separate substitutions.
-  `--repo-name`/prompted slug goes through `_slugify()` first, so the RAG
-  table, memory namespace, and `repo-policy.yaml`'s `repo:` field are always
-  the same sanitized string.
-  <br><br>
-  **Reproducer** — `_slugify("My Cool Repo!!") == "my-cool-repo"`, but
-  `repo-policy.template.yaml` shows the raw `EXAMPLE-REPO-SLUG` string
-  is replaced with that already-slugified value; nothing re-validates it after
+- **`EXAMPLE-REPO-SLUG` is replaced everywhere in one pass** (see above), so the
+  RAG table, memory namespace, and `repo-policy.yaml`'s `repo:` field are always the
+  same `_slugify()`-sanitized string; nothing re-validates the slug after
   substitution.
 - **Isolation is not the default; tier drives it.** `_write_repo_policy` only
   flips `isolated: false` → `true` when tier is `"2"` or `"3"`; tiers 0/1 keep
@@ -334,21 +325,18 @@ No test in this file exercises `_write_repo_policy`, `_install_claude_md`, or
   refreshed on every run regardless of any force flag — there's no way to
   "pin" a `CLAUDE.md` managed block against updates short of deleting the
   markers yourself.
-- **A missing `~/.claude.json` is a hard stop, not a soft warning.** Step 3
-  (`_patch_claude_json`) calls `sys.exit(1)` if the file doesn't exist,
-  aborting the entire `main()` before steps 4-6 run — even though repo-policy
-  writing (step 1) already happened and won't be rolled back.
+- **A missing `~/.claude.json` is a hard stop, not a soft warning** — see [step 3
+  above](#3-mcp-env--patching-claudejson); it aborts `main()` before steps 4-6 run
+  even though repo-policy writing (step 1) already happened and won't be rolled back.
 - **`--dry-run` still performs real read-only work.** `_provision_storage`
   skips `mkdir` under `--dry-run` but still computes and returns the real
   table name; `_detect_test_command` and `_detect_branch` always run for
   real (they're read-only by nature) — only the mutating calls
   (`write_text`, `copy2`, `chmod`, `mkdir`) are gated by the `dry_run` flag
   threaded through every helper.
-- **The RAG table naming convention is duplicated, not shared.** The
-  docstring on `_table_name` says outright it must "mirror
-  `rag/retrievers/lance_store.table_name`" — this is a manually-kept
-  convention between two modules, not a shared function call, so a change to
-  one without the other would silently desync the reported table name from
+- **The RAG table naming convention is duplicated, not shared** — see [Namespaces —
+  RAG table + memory namespace](#2-namespaces--rag-table--memory-namespace) above; a
+  change to one without the other would silently desync the reported table name from
   the one the indexer actually creates.
 - **Post-commit hook detection is a single substring check.** Any hook
   script containing the literal text `"claude-env"` anywhere is treated as

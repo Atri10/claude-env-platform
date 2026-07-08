@@ -425,12 +425,10 @@ bloat the ledger — only the five keys in the loop (`file_path`, `path`,
 
 ## Facts, invariants & edge cases
 
-- **The docstring's stated precedence is incomplete.** `_inspect_bash()`'s own
-  docstring says "destructive command > denied path > exfiltration > plain network
-  egress > secret in the command string" (`hooks/policy_hook.py`), but the real
-  code has a control-plane write check between "destructive" and "denied path" that
-  the one-line summary never mentions (`hooks/policy_hook.py`). Read the code,
-  not just the docstring, if you need the exact order.
+- **The docstring's stated precedence is incomplete** — see the six-step chain
+  [above](#_inspect_bash--the-six-step-precedence-chain); the control-plane write
+  check between "destructive" and "denied path" isn't in the docstring's one-line
+  summary. Read the code, not just the docstring, if you need the exact order.
 - **Reading the control plane is always fine; only writes are guarded.** `cat
   .claude/repo-policy.yaml` and `grep tier .claude/repo-policy.yaml` are both allowed
   (`test_control_plane_read_is_allowed`, `tests/test_policy_hook_bash.py`) —
@@ -444,13 +442,13 @@ bloat the ledger — only the five keys in the loop (`file_path`, `path`,
   and the file doesn't exist yet either. `touch` isn't in `_FILE_CMDS` regardless, so
   this particular example is moot, but the general gap (nonexistent bare-token targets
   of a `_FILE_CMDS` command) exists by design.
-- **The hard-deny list intentionally excludes additive commands.** `mkdir`, `touch`,
-  `cp`, `ln` are not in `_MUTATING_CMDS`, "to avoid over-blocking"
-  (`hooks/policy_hook.py` comment) — `cp src/app.py src/copy.py` is allowed
-  outright by `test_allow_readonly_and_additive_commands`
-  (`tests/test_policy_hook_bash.py`), even though `cp` can overwrite an
-  existing file. The destination is still subject to the policy-blocked-path check and
-  the control-plane guard, just not the hard "state-mutating" deny.
+- **The hard-deny list intentionally excludes additive commands** (`mkdir`, `touch`,
+  `cp`, `ln`; see [`_mutating_reason()`](#_mutating_reason--the-hard-deny-list-independent-of-path)).
+  `cp src/app.py src/copy.py` is allowed outright by
+  `test_allow_readonly_and_additive_commands` (`tests/test_policy_hook_bash.py`),
+  even though `cp` can overwrite an existing file — the destination is still subject
+  to the policy-blocked-path check and the control-plane guard, just not the hard
+  "state-mutating" deny.
 - **The audit row for a Bash denial happens *before* the deny is printed, and failure
   to write it is swallowed.** `hooks/policy_hook.py` wraps the
   `AuditLogger(...).policy_violation(...)` call in its own `try`/`except Exception:
@@ -475,12 +473,11 @@ bloat the ledger — only the five keys in the loop (`file_path`, `path`,
   broadens the *installed* matcher too — otherwise Claude Code itself never invokes the
   hook for a `Read`/`Glob`/`Grep` call in the first place. Setting the env var alone,
   without changing `POST_MATCHER`, does nothing.
-- **`Write` content is never stored in the audit ledger, even truncated.**
-  `audit_hook.py`'s `summary` loop only ever reads `file_path`, `path`,
-  `notebook_path`, `command`, `pattern` — `content`/`new_string`/`new_source` (the keys
-  `policy_hook.py`'s secret scan inspects) are absent from that list
-  (`hooks/audit_hook.py`). The ledger records *that* a write happened and to
-  *which* path, never the bytes written.
+- **`Write` content is never stored in the audit ledger, even truncated** — the
+  `summary` loop only reads the five keys listed [above](#posttooluse-audit_hookpy);
+  `content`/`new_string`/`new_source` (the keys `policy_hook.py`'s secret scan
+  inspects) are absent (`hooks/audit_hook.py`). The ledger records *that* a write
+  happened and to *which* path, never the bytes written.
 - **`_repo_root()` prefers an existing repo policy file over a bare `.git`.** Because
   the loop checks `(cand / ".claude" / "repo-policy.yaml").exists() or (cand /
   ".git").exists()` at each directory (`hooks/policy_hook.py`) walking

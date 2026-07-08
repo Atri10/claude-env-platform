@@ -203,14 +203,13 @@ Three things worth being precise about:
   configured commands and `terminal.run`: `_ENV_ALLOW = {"PATH", "HOME", "LANG",
   "LC_ALL", "TMPDIR", "VIRTUAL_ENV", "PWD"}` (`mcp-servers/terminal/server.py`) — no
   inherited secrets, API keys, or tokens reach the child process's environment.
-- **`documentation.fetch`'s tier comes from an env var the server trusts as-is.**
-  `TIER = int(os.environ.get("CLAUDE_ENV_TIER", "1"))` (`server.py`) — this server
-  does not itself consult `.claude/repo-policy.yaml`; whatever process launches it
-  (per `config/mcp-servers.json`'s env block) is responsible for setting
-  `CLAUDE_ENV_TIER` correctly. Contrast with `terminal`'s `_repo_tier()`
-  (`mcp-servers/terminal/server.py`), which reads the tier directly out of
-  `repo-policy.yaml` by regex for its approval record — the two servers get tier from
-  different places.
+- **`documentation.fetch`'s tier comes from an env var the server trusts as-is**
+  (`TIER = int(os.environ.get("CLAUDE_ENV_TIER", "1"))`, `server.py`) rather than
+  from `.claude/repo-policy.yaml` directly; whatever process launches it (per
+  `config/mcp-servers.json`'s env block) is responsible for setting it correctly.
+  Contrast with `terminal`'s `_repo_tier()` (`mcp-servers/terminal/server.py`),
+  which reads the tier straight out of `repo-policy.yaml` by regex — the two
+  servers get tier from different places.
 - **`memory-graph` degrades gracefully without an embedder.** If `rag.config.get_embedder()`
   raises, the server catches it, writes a warning to stderr, and continues with
   `_embedder = None` — `memory.write` still stores nodes (without embeddings) and

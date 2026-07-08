@@ -255,12 +255,11 @@ not two.
   `re.compile()` anywhere in this file, unlike `PolicyEngine`, which precompiles its
   regex deny rules at construction. For high-volume paths (every RAG hit, every write),
   this is a real (if currently unmeasured) per-call cost.
-- **`SecretDetector.redact()` never checks `scan()` first and never audits.** It
-  unconditionally runs all 8 substitutions on every call, whether or not anything
-  matches, and — unlike `scan()` — never calls `self.audit.security_event(...)`. A
-  caller relying on `redact()` alone (as `memory/session_ingestor.py` and
-  `memory/memory_sync.py` both do, via `SecretDetector(...).redact`) gets silent,
-  un-audited redaction with no record that a secret was ever present.
+- **`SecretDetector.redact()` never checks `scan()` first and never audits** (see
+  [above](#secretdetector--boolean-match-plus-redact)). A caller relying on
+  `redact()` alone — as `memory/session_ingestor.py` and `memory/memory_sync.py`
+  both do, via `SecretDetector(...).redact` — gets silent, un-audited redaction
+  with no record that a secret was ever present.
 - **`hooks/policy_hook.py` bypasses the class entirely.** It imports the raw
   `SECRET_PATTERNS` list (`from security.detectors import SECRET_PATTERNS`, at
   `hooks/policy_hook.py` for Bash command scanning and `hooks/policy_hook.py`
@@ -281,10 +280,10 @@ not two.
   fetched document body and returns an explicit `"BLOCKED: fetched content failed safety
   screening."` message to the caller. Same detector, same thresholds, different UX for
   a block. See [`rag-pipeline.md`](rag-pipeline.md) for the retrieval-time flow in full.
-- **`RagPoisonDetector`'s default `actor` differs from the other two.** `session_id="sec",
-  actor="indexer"` vs. `actor="system"` for the other two classes (`security/detectors.py,
-  86, 110`) — a small but deliberate signal that this detector's primary caller is the
-  RAG/documentation indexing and retrieval path, not the general security subsystem.
+- **`RagPoisonDetector`'s default `actor` differs from the other two** (`actor="indexer"`
+  vs. `"system"`; see the [config reference](#configuration-reference) above) — a small
+  but deliberate signal that this detector's primary caller is the RAG/documentation
+  indexing and retrieval path, not the general security subsystem.
 - **A `Verdict.reasons` entry is not always the reason it looks like.** For
   `PromptInjectionDetector`, `reasons` holds truncated *regex source text* (`pat[:40]`),
   not the matched substring from the input. For `RagPoisonDetector`, `reasons` is the

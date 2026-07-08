@@ -25,7 +25,7 @@
 
 <!-- gridlines at cap -->
 <line x1="670" y1="400" x2="670" y2="70" class="grid" stroke-dasharray="3,3"/>
-<text x="670" y="416" text-anchor="middle" class="s" fill="rgb(95,94,90)">20 (CAP)</text>
+<text x="664" y="391" text-anchor="end" class="s" fill="rgb(95,94,90)">20 (CAP)</text>
 <line x1="90" y1="127" x2="700" y2="127" class="grid" stroke-dasharray="3,3"/>
 <text x="80" y="131" text-anchor="end" class="s" fill="rgb(153,60,29)">0.152 max</text>
 

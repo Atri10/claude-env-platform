@@ -296,42 +296,31 @@ function only looks at the eight fields listed above, nothing more.
   that deliberately does **not** touch the audit ledger, because it isn't a real
   enforcement decision, just a forecast. Confirmed by reading the entire function:
   the only I/O is two YAML reads and a `git ls-files`/`rglob` walk.
-- **The candidate engine is compiled from a dict, not loaded from
-  `.claude/repo-policy.yaml`.** `_engine_for_doc()` never writes the candidate file
-  into the repo's real policy location — you can point `--candidate` at a file
-  anywhere on disk, including outside the repo entirely, and `simulate` never
-  touches the repo's actual `.claude/repo-policy.yaml`.
-- **Both engines share one global policy — always today's on-disk one.** `simulate`
-  cannot forecast a *global*-policy change; `GLOBAL_POLICY` is read once and reused
-  for both the current and candidate `PolicyEngine`. Only the repo-side document
-  differs between them.
+- **The candidate engine is compiled from an in-memory dict, not loaded from
+  `.claude/repo-policy.yaml`** — see `_engine_for_doc()` above; `--candidate` can
+  point anywhere on disk, and `simulate` never touches the repo's real policy file.
+- **Both engines share one global policy — always today's on-disk one**, as
+  described above under `_engine_for_doc()`; only the repo-side document differs
+  between the current and candidate runs.
 - **`blocked_rule_changes` only tracks `.rule`, not `.reason`, and only when the
-  action stays `block`.** A file whose action is `allow` under both policies is
-  never checked for anything having changed, even if the matched-allow-rule string
-  differs between runs (`evaluate_path()`'s `allow` decisions don't always populate
-  `rule` anyway — see the `.rule` vs `.reason` fallback above).
-- **`_repo_files`'s 20,000-file cap only applies to the non-git fallback path.** A
-  git repo with more than 20,000 tracked files gets all of them via `git ls-files`;
-  a non-git directory (or one with an empty index) silently truncates at 20,000
-  during the `rglob` walk, with no warning printed that truncation occurred.
+  action stays `block`** — see the classification logic above; a file that stays
+  `allow` under both policies is never checked for a changed reason.
+- **`_repo_files`'s 20,000-file cap only applies to the non-git fallback path** —
+  see `_repo_files()` above; a git repo's tracked files are never capped, no matter
+  how many there are.
 - **`_print_sim`'s 50-row cap is display-only.** The full `newly_blocked` and
   `newly_allowed` lists are always complete in the returned dict (and in
   `--format json` output); only the human-readable `text` format truncates each
   list to 50 rows with a `... and N more` line.
-- **`diff_policies` treats a non-list value at a compared key as "empty", not as an
-  error or a drift signal.** If someone mistypes `deny.paths` as a single string in
-  YAML instead of a list, `section()` returns `set()` for it silently — the field
-  reads as if it were unset, and a real difference between "a string" and "a list"
-  is not reported as drift at all.
-- **Exit codes differ by subcommand.** `simulate` always returns `0` regardless of
-  how many files became newly blocked — it's advisory, not a gate. `diff` returns
-  `1` when `in_sync` is `False`, which makes it usable directly as a CI drift-check
-  gate (`policy_sim.py diff current.yaml baseline.yaml || fail-the-build`), unlike
-  `simulate`.
-- **No test coverage exists for this module.** There is no `tests/test_policy_sim.py`
-  in the repository — everything in this document was verified by reading
-  `security/policy_sim.py` directly, not by reading test fixtures or asserted
-  examples.
+- **`diff_policies` treats a non-list value at a compared key as "empty," not an
+  error or a drift signal** — see `section()` above; a mistyped scalar reads as
+  unset rather than as drift.
+- **Exit codes differ by subcommand.** `simulate` always returns `0` — it's
+  advisory, not a gate. `diff` returns `1` when `in_sync` is `False`, making it
+  usable directly as a CI drift-check gate
+  (`policy_sim.py diff current.yaml baseline.yaml || fail-the-build`).
+- **No test coverage exists for this module**, as noted in the intro — everything
+  here was verified by reading `security/policy_sim.py` directly.
 
 ---
 

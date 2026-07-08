@@ -219,29 +219,23 @@ before it will pick a winner.*
 
 ## Facts, invariants & edge cases
 
-- **The security veto is a hard short-circuit, not a weighted vote.** Verified by
-  reading `_decide()` directly: it filters on the boolean
-  `is_security_block` and returns on the first match. The `security: 100` entry in
-  `_PRECEDENCE` is never read by this branch — it only matters in steps 3
-  and 4, for ranking among proposals that were not already vetoed. If a `security`-
-  agent proposal is submitted *without* `is_security_block=True`, it gets no special
-  treatment beyond its precedence weight of 100 (which will usually still win step
-  4, but through the ranking path, not the veto path).
-- **`is_security_block` is a data flag, not an identity check.** Any proposal from
+- **The security veto is a hard short-circuit, not a weighted vote** — see
+  [`_decide()`](#_decide--the-security-veto-is-a-literal-short-circuit-not-a-score)
+  above. If a `security`-agent proposal is submitted *without* `is_security_block=True`,
+  it gets no special treatment beyond its precedence weight of 100 (which will usually
+  still win step 4, but through the ranking path, not the veto path).
+- **`is_security_block` is a data flag, not an identity check** — any proposal from
   any agent can set it; the resolver does not verify `agent == "security"`. Callers
-  populating `Proposal` objects are responsible for only setting the flag when a
-  real security agent actually flagged something.
+  populating `Proposal` objects are responsible for only setting the flag when a real
+  security agent actually flagged something.
 - **Two independent veto flags, same shape, different order.** `is_security_block`
   (step 1) and `is_policy_block` (step 2) are checked with identical logic, but
   security is checked strictly first — if both are set on different proposals in
   the same batch, the security-flagged one wins and the policy-flagged one becomes
   a loser without step 2 ever running.
-- **The evidence step requires file overlap, not just presence of evidence.**
-  `_same_target()` (`conflict_resolver.py`) intersects `files` sets
-  pairwise against the first proposal's set; proposals with an empty `files` list
-  are excluded from `sets` entirely and can never contribute to a match. Two
-  evidenced/unevidenced proposals touching disjoint files skip step 3 and fall to
-  step 4 or 5 instead.
+- **The evidence step requires file overlap, not just presence of evidence** — see
+  step 3 above; proposals with an empty `files` list are excluded from the overlap
+  check entirely and can never contribute to a match.
 - **The precedence-gap threshold is a literal `10`, hardcoded.** Not configurable
   via any config file — this module has no YAML/JSON config surface at all, unlike
   `policy_engine.py`. Changing the margin means editing `conflict_resolver.py`.
@@ -249,26 +243,21 @@ before it will pick a winner.*
   and additively** (`+5` and `+3`, `conflict_resolver.py`) — a destructive,
   non-additive, single-file change (`radius = 1 + 5 + 3 = 9`) can lose to a
   reversible, additive four-file change (`radius = 4`) in step 5.
-- **Escalation still picks `losers = proposals`, i.e. everyone, including implicitly
-  the "best" one.** There is no partial credit; `winner` is `None` and every
-  submitted proposal lands in `losers`.
+- **Escalation still picks `losers = proposals`** — see step 6 above; there is no
+  partial credit, `winner` is `None`, and every submitted proposal lands in `losers`.
 - **An escalated resolution is logged as `success=False` in the audit `agent_action`
-  row**, even though `_decide()` didn't raise or error — `resolve()` computes
-  `success=not res.escalate` (`conflict_resolver.py`). Anyone reading the audit
-  ledger for failures will see conflict escalations mixed in with genuine
-  action failures unless they also check the `[ESCALATED]` summary suffix.
+  row**, even though `_decide()` didn't raise or error — see the note on
+  `success=not res.escalate` above. Anyone reading the audit ledger for failures will
+  see conflict escalations mixed in with genuine action failures unless they also
+  check the `[ESCALATED]` summary suffix.
 - **0 and 1 proposals never reach `_decide()` at all.** `resolve()` special-cases
   both: zero proposals returns `Resolution(None, [], "no proposals")` with
   `escalate=False` (not an escalation — there was nothing to disagree about), and
-  exactly one proposal auto-wins with `"single proposal; no conflict"`. Neither
-  case touches the audit logger's `security_event` path.
-- **Every call to `resolve()` writes at least one audit row**, via the
-  `AuditLogger` constructed in `__init__` — this happens even for the trivial
-  0- and 1-proposal returns, since those return *before* the `agent_action`/
-  `security_event` calls in `resolve()`... concretely: the 0- and 1-proposal early returns happen **before** the `self.audit.agent_action(...)`
-  call, so **no audit row is written for trivial cases** — only conflicts that reach
-  `_decide()` get logged. This is a correction worth flagging explicitly since it's
-  easy to misread the method as "always audits."
+  exactly one proposal auto-wins with `"single proposal; no conflict"`.
+- **Only conflicts that reach `_decide()` write an audit row.** The 0- and 1-proposal
+  early returns in `resolve()` happen *before* the `self.audit.agent_action(...)` call,
+  so despite the constructor building an `AuditLogger` unconditionally, no audit row is
+  written for trivial cases — it's easy to misread the method as "always audits."
 - **No test file exists for this module.** A repo-wide search for
   `conflict_resolver`, `ConflictResolver`, and `Proposal(` outside the source file
   itself (including all of `tests/`) returned no matches — there is currently no

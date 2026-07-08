@@ -287,9 +287,9 @@ regardless of which agent is `src`.
   `agent_handoff`, `routing`, `handoff`, and `orchestrat*` returned nothing. All
   behavior above is verified directly against the source; none of it is confirmed by
   an automated test today.
-- **Routing is pure regex + glob scoring, not ML and not a decision tree.** There is no
-  model, no embedding similarity, no learned weight — `_INTENT` and `_WRITE_INTENT` are
-  hand-written regexes with hand-picked integer/float weights
+- **Routing is pure regex + glob scoring, not ML** — see
+  [Scoring, not classification](#scoring-not-classification) above; there is no model,
+  embedding similarity, or learned weight, only hand-picked integer/float weights
   (`task_router.py`).
 - **`documentation` is a write agent, contrary to what its intent bucket might suggest.**
   `_WRITE_AGENTS = {"backend", "frontend", "database", "devops", "testing",
@@ -302,22 +302,18 @@ regardless of which agent is `src`.
   the ranked list purely because `target` falls under that agent's `write_paths` — the
   final `if score > 0` gate only excludes agents that scored on nothing at all, not
   agents that scored only on path.
-- **`needs_clarification()` always recomputes ranking from scratch** — it is not
-  memoized against a prior `route()` call in the same request, so calling both back to
-  back (as the CLI's `_main()` does, `task_router.py`) runs `rank()` twice.
-- **Scope violations in `agent_handoff.py` are logged, never enforced.** A handoff whose
-  `paths` fall entirely outside the destination agent's `write_paths` still succeeds
-  and returns a normal `HandoffPacket` — the only effect is a low-severity
-  `security_event`. Real enforcement of what the receiving agent can actually write
-  happens later, at execution time, via the `PolicyEngine` and `ApprovalGate` — routing
-  and handoff are advisory/observational layers, not gates (this matches the router's
-  own docstring: "Routing never grants permission," `task_router.py`). Nothing in
-  either module stops the receiver from *acting* on paths outside its declared scope.
-- **`notes` is the only field marked `treat-as="data"` in the rendered context.**
-  `objective` and `artifacts` render as plain tags with no such marker — a consumer of
-  `packet.context` that builds a receiver prompt needs its own logic to decide how much
-  trust to extend to `objective` versus `notes`; the packet only flags the one field
-  that's explicitly sender-authored free text.
+- **`needs_clarification()` always recomputes ranking from scratch** — see
+  [`route()` and `needs_clarification()`](#route-and-needs_clarification) above;
+  calling both back to back, as the CLI's `_main()` does, runs `rank()` twice.
+- **Scope violations in `agent_handoff.py` are logged, never enforced** — see
+  [`_validate()`](#_validate--scope-checking-is-advisory-not-blocking) above. Real
+  enforcement happens later, at execution time, via the `PolicyEngine` and
+  `ApprovalGate`; nothing in either module stops the receiver from *acting* on paths
+  outside its declared scope.
+- **`notes` is the only field marked `treat-as="data"` in the rendered context** — see
+  [Context rendering wraps everything as DATA](#context-rendering-wraps-everything-as-data)
+  above; a consumer building a receiver prompt needs its own logic to decide how much
+  trust to extend to `objective` versus `notes`.
 - **Both modules independently reimplement the same path-matching idiom** — `fnmatch.fnmatch(t, wp) or fnmatch.fnmatch(t, wp.rstrip("/*") + "/*")` appears verbatim in both `task_router.py` and `agent_handoff.py`. There is no shared helper; a change to one does not propagate to the other.
 - **CLI entry points exist for both modules and are directly runnable** —
   `task_router.py`'s `_main()` supports `--all` to print the full ranking, and

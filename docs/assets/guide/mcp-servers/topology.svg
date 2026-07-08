@@ -97,5 +97,6 @@
 <rect x="30" y="392" width="630" height="42" rx="8" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="0.5" stroke-dasharray="3 2"/>
 <text x="345" y="413" text-anchor="middle" class="s" fill="rgb(95,94,90)">jetbrains (order 7, optional, IDE-provided) — not covered by this doc, still policy-respecting</text>
 
-<text x="380" y="460" text-anchor="middle" class="s" fill="rgb(95,94,90)">Every server: stdio transport, own process, own audit actor. Only documentation.fetch ever leaves the machine, and only at tier 0-1.</text>
+<text x="380" y="452" text-anchor="middle" class="s" fill="rgb(95,94,90)">Every server: stdio transport, own process, own audit actor.</text>
+<text x="380" y="468" text-anchor="middle" class="s" fill="rgb(95,94,90)">Only documentation.fetch ever leaves the machine, and only at tier 0-1.</text>
 </svg>

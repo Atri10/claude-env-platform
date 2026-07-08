@@ -288,21 +288,17 @@ embedding-based recall (keyword recall and graph expansion still find it).
 
 ## Facts, invariants & edge cases
 
-- **The confidence-decay formula is real exponential half-life, verified in code, not
-  assumed:** `stored * 2 ** (-age_days / half_life_days)`
-  (`memory/memory_manager.py`). At `age_days == half_life_days`, effective
-  confidence is exactly `stored * 0.5`.
+- **The confidence-decay formula** (see [above](#confidence-decay-the-actual-formula))
+  means that at `age_days == half_life_days`, effective confidence is exactly
+  `stored * 0.5`.
 - **`get_node` is the one unaudited access path.** Every write (`add_node`,
   `add_edge`, `supersede`) calls `self.audit.memory_write`, and `list_nodes`/`recall`
   call `memory_read` — but `get_node` does not. Only `_touch()`'s side effect
   (`last_access`/`access_count`) records that a `get_node` happened, and only in the
   database, not the audit ledger. (`add_edge` used to share this gap; it now audits as
   `memory_write(operation="link:<rel>")`.)
-- **Reading doesn't reset decay; writing does.** `_touch()` updates `last_access` and
-  `access_count` but never `updated_at`, so `get_node`/`list_nodes` calls don't slow a
-  memory's decay. Only a write that sets `updated_at` (a `supersede`, or `decay_all`
-  re-persisting the decayed value) resets the age clock used by
-  `effective_confidence`.
+- **Reading doesn't reset decay; writing does** — see [age is measured from
+  `updated_at`](#confidence-decay-the-actual-formula) above.
 - **`decay_all()` makes decay "sticky."** Without it, `effective_confidence` is purely
   a read-time computation off the original `confidence`/`updated_at` — nothing is lost.
   Calling `decay_all()` collapses that into the new stored `confidence` and bumps
@@ -331,27 +327,18 @@ embedding-based recall (keyword recall and graph expansion still find it).
   `tests/test_memory_edge_validation.py` covers `MemoryManager.add_edge()`'s
   rel/namespace/audit validation. `add_node`/`supersede`/`list_nodes` still have no
   dedicated direct test.
-- **`weight` on `memory_edges` is stored but currently inert.** Neither `expand()` nor
-  `_rank()` reads it — traversal treats every edge as equal weight regardless of the
-  column's value. It's schema-ready for a future weighted-traversal feature, not yet
-  wired to anything.
-- **`rel` is enforced in Python, not by a DB CHECK.** The six names
-  (`RELATES_TO`, `DEPENDS_ON`, `DECISION_ABOUT`, `DISCOVERED_IN`, `SUPERSEDES`,
-  `CONSOLIDATES`) live in `MemoryManager.VALID_RELS`; `add_edge()` raises
-  `InvalidMemoryRel` for anything else, and the `memory.link` MCP tool exposes the set
-  as a JSON-Schema `enum` so a caller sees the vocabulary before writing. The schema
-  comment (`sql/001_schema.sql`) is kept in sync as documentation but does no
-  enforcement itself. Note `CONSOLIDATES` — emitted by `memory_consolidator` — was
-  historically missing from that comment; `VALID_RELS` includes it.
-- **A missing embedding model degrades gracefully, never fails a write.** `_embed_for`
-  catches all exceptions and returns `None`; `add_node` proceeds with
-  `embedding=None`. Semantic (`embedding_recall`) search simply won't surface that
-  node; keyword recall and graph `expand()` still can.
-- **`agent` is a memory_type, not a fifth kind bucket.** `VALID_KINDS["agent"] =
-  set(HALF_LIFE)` means every kind from every other type is legal under `memory_type =
-  "agent"` — the distinguishing feature of "agent memory" is the `namespace`
-  convention (`agent:<id>`) mentioned in the module docstring, not a restricted kind
-  list.
+- **`weight` on `memory_edges` is stored but currently inert** — see the [edge schema
+  table](#edge-schema--memory_edges-sql001_schemasql) above; neither `expand()` nor
+  `_rank()` reads it.
+- **`rel` is enforced in Python, not by a DB CHECK** — see the [edge schema
+  table](#edge-schema--memory_edges-sql001_schemasql) above. Note `CONSOLIDATES` —
+  emitted by `memory_consolidator` — was historically missing from the schema comment;
+  `VALID_RELS` includes it.
+- **A missing embedding model degrades gracefully, never fails a write** — see
+  [Best-effort embedding](#best-effort-embedding--writes-never-fail-on-a-missing-model)
+  above.
+- **`agent` is a memory_type, not a fifth kind bucket** — see the [taxonomy
+  section](#the-memory_typenode_kind-taxonomy-valid_kinds) above.
 - **`supersede()` is append-only by construction, not by a DB trigger.** Unlike the
   audit ledger (which has DB-level triggers rejecting `UPDATE`/`DELETE` on
   `audit_events`), nothing in `sql/001_schema.sql` stops direct code from `UPDATE`ing

@@ -287,15 +287,13 @@ the model from a deny-list to an allow-list.*
 
 ## Facts, invariants & edge cases
 
-- **Deny always wins, with one narrow exception.** The only rule that can make a
-  would-be-denied path readable is `override_deny`, and even then content scanning
-  still runs on the bytes (`tests/test_policy_engine.py`,
+- **Deny always wins, with one narrow exception** — `override_deny` (see
+  [step 3 above](#evaluate_path--the-eight-step-decision)). Even then content
+  scanning still runs on the bytes (`tests/test_policy_engine.py`,
   `test_override_deny_does_not_bypass_content_scan`).
-- **Content-scan strictness cannot be downgraded by either side.** If *either* the
-  global or the repo policy says `on_match: "block"`, the result is a block — a repo
-  cannot soften a global block to a redact, and (symmetrically) a stricter repo
-  setting overrides a looser global one. Verified directly by
-  `test_content_block_not_downgraded_by_repo_redact`
+- **Content-scan strictness cannot be downgraded by either side** (see
+  [stricter-mode-wins](#scan_content--content-scanning-is-a-separate-pass)).
+  Verified by `test_content_block_not_downgraded_by_repo_redact`
   (`tests/test_policy_engine.py`), which forces global=`block`/repo=`redact`
   and asserts a full block still occurs.
 - **The self-protection deny list is global-only, by design.** Paths like

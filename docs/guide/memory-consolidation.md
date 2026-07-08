@@ -281,11 +281,10 @@ sourced entirely from reading `memory_consolidator.py` and `memory_pruner.py` di
 
 ## Facts, invariants & edge cases
 
-- **`superseded_old` pruning ignores `PROTECTED_KINDS`? No — protection still applies.**
-  Because the `node_kind in PROTECTED_KINDS` check happens before *either* prune
-  condition is evaluated and unconditionally `continue`s, a `decision` or
-  `architecture` node that was superseded 30+ days ago is still skipped. Protection is
-  absolute, not just a floor/staleness override.
+- **Protection is absolute, including for `superseded_old`** — the `node_kind in
+  PROTECTED_KINDS` check (see [above](#pruner-prune_ns--selection-archive-then-delete-protection))
+  runs before either prune condition, so a `decision`/`architecture` node superseded
+  30+ days ago is still skipped, not just a floor/staleness override.
 - **Consolidating an `episodic` or `procedural` cluster will raise, not silently
   degrade.** `consolidate_ns()` always calls `mm.add_node(mt, "concept", ...)`. Per
   `memory_manager.py`, `"concept"` is only valid under `memory_type="semantic"`
@@ -317,9 +316,10 @@ sourced entirely from reading `memory_consolidator.py` and `memory_pruner.py` di
   `superseded_old` branch then independently makes them prunable 30 days later. The
   consolidator does not archive or delete anything itself — cleanup of consolidated
   sources is entirely deferred to a later pruner run.
-- **`_clusters()` only ever looks at non-superseded nodes** (`WHERE ... superseded_by
-  IS NULL`), so a node already consolidated into a summary cannot also be pulled into
-  a second, different cluster.
+- **`_clusters()` only ever looks at non-superseded nodes** (see [fetch
+  candidates](#consolidator-_clusters--eligibility-adjacency-components-grouping)
+  above), so a node already consolidated into a summary cannot also be pulled into a
+  second, different cluster.
 - **Both scripts use `effective_confidence()`/`_age_days()` imported directly from
   `memory_manager.py`** (not reimplemented), so decay math is identical to what
   `MemoryManager.list_nodes()` uses for reads — see `memory-graph.md` for that

@@ -39,7 +39,7 @@
 <!-- Step 3: deny pending approvals -->
 <rect x="30" y="182" width="500" height="50" rx="8" fill="rgb(238,237,254)" stroke="rgb(83,74,183)" stroke-width="1"/>
 <text x="280" y="202" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(60,52,137)">2. deny every pending human_approvals row</text>
-<text x="280" y="219" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">ApprovalGate.list_open() &#8594; AuditLogger.human_approval_resolve(..., "incident:&lt;by&gt;")</text>
+<text x="280" y="219" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">ApprovalGate.list_open() &#8594; resolve each "denied", decided_by="incident:&lt;by&gt;"</text>
 <line x1="280" y1="232" x2="280" y2="254" class="edge" marker-end="url(#a3)"/>
 
 <!-- Step 4: snapshot db -->

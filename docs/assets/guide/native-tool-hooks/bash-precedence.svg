@@ -37,7 +37,7 @@
 <line x1="560" y1="182" x2="660" y2="182" class="edge" marker-end="url(#b1)"/>
 <rect x="660" y="157" width="90" height="50" rx="8" fill="rgb(250,236,231)" stroke="rgb(153,60,29)" stroke-width="1"/>
 <text x="705" y="177" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(113,43,19)">deny</text>
-<text x="705" y="193" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(153,60,29)">reads still allowed</text>
+<text x="705" y="193" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(153,60,29)">reads OK</text>
 <line x1="380" y1="212" x2="380" y2="234" class="edge" marker-end="url(#b1)"/>
 
 <!-- Step 1: policy-denied file arg -->
