@@ -51,9 +51,26 @@ VALID_KINDS = {
     "agent": set(HALF_LIFE),   # agent namespace reuses any of the above kinds
 }
 
+# Edge relation vocabulary. The first five are the schema-documented set; the
+# last is emitted by memory_consolidator (CONSOLIDATES edges linking a summary
+# node to its sources). This is the single source of truth: add_edge() rejects
+# anything outside it, and the memory.link MCP tool advertises it as an enum.
+VALID_RELS = {
+    "RELATES_TO", "DEPENDS_ON", "DECISION_ABOUT", "DISCOVERED_IN",
+    "SUPERSEDES", "CONSOLIDATES",
+}
+
 
 class InvalidMemoryKind(ValueError):
     """Raised when (memory_type, node_kind) isn't in the documented taxonomy."""
+
+
+class InvalidMemoryRel(ValueError):
+    """Raised when an edge `rel` isn't in the documented VALID_RELS vocabulary."""
+
+
+class CrossNamespaceEdge(ValueError):
+    """Raised when an edge would join nodes across namespaces (isolation leak)."""
 
 
 def _now() -> str:
@@ -117,11 +134,34 @@ class MemoryManager:
         return node_id
 
     def add_edge(self, src: str, dst: str, rel: str, weight: float = 1.0) -> str:
+        if rel not in VALID_RELS:
+            raise InvalidMemoryRel(
+                f"invalid rel={rel!r}; expected one of {sorted(VALID_RELS)}")
+        # Both endpoints must exist AND live in this edge's namespace. The FK
+        # already rejects non-existent nodes, but not cross-namespace joins:
+        # expand() only traverses in-namespace, so an edge whose dst is in
+        # another namespace is dead weight at best and a write-side isolation
+        # leak at worst. Reject it at creation rather than let the validator
+        # flag it after the fact.
+        rows = self.db.query(
+            "SELECT node_id, namespace FROM memory_nodes WHERE node_id IN (?, ?)",
+            (src, dst))
+        ns_by_id = {r["node_id"]: r["namespace"] for r in rows}
+        for endpoint in (src, dst):
+            if endpoint not in ns_by_id:
+                raise CrossNamespaceEdge(f"edge endpoint {endpoint!r} does not exist")
+            if ns_by_id[endpoint] != self.ns:
+                raise CrossNamespaceEdge(
+                    f"edge endpoint {endpoint!r} is in namespace "
+                    f"{ns_by_id[endpoint]!r}, not {self.ns!r}")
         edge_id = f"edge-{uuid.uuid4().hex}"
         self.db.execute(
             "INSERT INTO memory_edges (edge_id,namespace,src,dst,rel,weight,created_at) "
             "VALUES (?,?,?,?,?,?,?)",
             (edge_id, self.ns, src, dst, rel, weight, _now()))
+        # Edge creation is a write; audit it like add_node so the module's
+        # "all writes emit a memory_writes row" contract actually holds.
+        self.audit.memory_write(self.ns, "edge", edge_id, f"link:{rel}")
         return edge_id
 
     def supersede(self, old_node_id: str, memory_type: str, node_kind: str,
