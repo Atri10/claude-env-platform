@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS memory_edges (
     namespace    TEXT NOT NULL,
     src          TEXT NOT NULL REFERENCES memory_nodes(node_id),
     dst          TEXT NOT NULL REFERENCES memory_nodes(node_id),
-    rel          TEXT NOT NULL,              -- RELATES_TO|DEPENDS_ON|DECISION_ABOUT|DISCOVERED_IN|SUPERSEDES
+    rel          TEXT NOT NULL,              -- RELATES_TO|DEPENDS_ON|DECISION_ABOUT|DISCOVERED_IN|SUPERSEDES|CONSOLIDATES (enforced by MemoryManager.VALID_RELS)
     weight       REAL NOT NULL DEFAULT 1.0,
     created_at   TEXT NOT NULL
 );

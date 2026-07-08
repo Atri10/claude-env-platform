@@ -56,7 +56,7 @@ persisted by `decay_all()`.
 | `edge_id` | TEXT PK | `f"edge-{uuid4().hex}"`. |
 | `namespace` | TEXT NOT NULL | The namespace the edge was written under — used by `expand()`'s traversal filter. |
 | `src` / `dst` | TEXT NOT NULL, FK → `memory_nodes(node_id)` | Direction matters: traversal in `expand()` only follows `src → dst`. |
-| `rel` | TEXT NOT NULL | Documented vocabulary (schema comment, `sql/001_schema.sql:236`): `RELATES_TO` \| `DEPENDS_ON` \| `DECISION_ABOUT` \| `DISCOVERED_IN` \| `SUPERSEDES`. Not enforced by a CHECK constraint — any string can be written; `add_edge()` takes `rel` as a free-form parameter. |
+| `rel` | TEXT NOT NULL | Vocabulary: `RELATES_TO` \| `DEPENDS_ON` \| `DECISION_ABOUT` \| `DISCOVERED_IN` \| `SUPERSEDES` \| `CONSOLIDATES` (`MemoryManager.VALID_RELS`, the single source of truth — the schema comment lists the same set). Enforced not by a DB CHECK but by `add_edge()`, which raises `InvalidMemoryRel` for anything outside the set; the `memory.link` MCP tool advertises the same set as a JSON-Schema `enum`. |
 | `weight` | REAL NOT NULL DEFAULT 1.0 | Stored but not read by any ranking logic in either file — available for a future weighted-traversal use, currently inert. |
 | `created_at` | TEXT NOT NULL | ISO-8601 UTC. |
 
@@ -99,7 +99,7 @@ convention (`agent:<id>`), per the module docstring
 |---|---|---|
 | `__init__` | `(namespace: str, session_id: str = "mem", actor: str = "system", isolated: bool = False)` | Opens `get_db()`, stores `ns`/`isolated`, builds an `AuditLogger`. |
 | `add_node` | `(memory_type, node_kind, name, body: dict, repo=None, confidence=1.0, embedding=None) -> str` | Validates against `VALID_KINDS`, generates `node_id`, embeds if not supplied, inserts, audits, returns `node_id`. Raises `InvalidMemoryKind` on a bad pair. |
-| `add_edge` | `(src, dst, rel, weight=1.0) -> str` | Inserts one `memory_edges` row, returns `edge_id`. **Not audited** — no `self.audit.*` call in this method. |
+| `add_edge` | `(src, dst, rel, weight=1.0) -> str` | Validates `rel` against `VALID_RELS` and requires both endpoints to exist in the manager's own namespace (raising `InvalidMemoryRel` / `CrossNamespaceEdge` otherwise), then inserts one `memory_edges` row and audits it as `memory_write(operation="link:<rel>")`. Returns `edge_id`. |
 | `supersede` | `(old_node_id, memory_type, node_kind, name, body: dict, **kw) -> str` | Creates a new node via `add_node`, links `new → old` with `rel="SUPERSEDES"`, sets `old.superseded_by = new_id`, audits as `"supersede"`. |
 | `get_node` | `(node_id: str) -> dict \| None` | Point read; calls `_touch()` (updates `last_access`, `access_count`) on a hit. **Not audited** — no `memory_read` call in this method either. |
 | `list_nodes` | `(memory_type=None, min_confidence=0.0, include_superseded=False, limit=100) -> list[dict]` | Namespace-scoped list, optional type filter, excludes superseded nodes by default, computes `effective_confidence` per row and drops rows below `min_confidence`, audits once with the total count. |
@@ -293,11 +293,12 @@ embedding-based recall (keyword recall and graph expansion still find it).
   assumed:** `stored * 2 ** (-age_days / half_life_days)`
   (`memory/memory_manager.py:83-84`). At `age_days == half_life_days`, effective
   confidence is exactly `stored * 0.5`.
-- **`add_edge` and `get_node` are not audited**, unlike every other write/read path in
-  both classes. `add_node`, `supersede`, and `list_nodes` all call
-  `self.audit.memory_write`/`memory_read`; `add_edge` and `get_node` do not — only
-  `_touch()`'s side effect (`last_access`/`access_count`) records that a `get_node`
-  happened, and only in the database, not the audit ledger.
+- **`get_node` is the one unaudited access path.** Every write (`add_node`,
+  `add_edge`, `supersede`) calls `self.audit.memory_write`, and `list_nodes`/`recall`
+  call `memory_read` — but `get_node` does not. Only `_touch()`'s side effect
+  (`last_access`/`access_count`) records that a `get_node` happened, and only in the
+  database, not the audit ledger. (`add_edge` used to share this gap; it now audits as
+  `memory_write(operation="link:<rel>")`.)
 - **Reading doesn't reset decay; writing does.** `_touch()` updates `last_access` and
   `access_count` but never `updated_at`, so `get_node`/`list_nodes` calls don't slow a
   memory's decay. Only a write that sets `updated_at` (a `supersede`, or `decay_all`
@@ -318,24 +319,31 @@ embedding-based recall (keyword recall and graph expansion still find it).
   `proj-a`'s namespace; `MemoryRetriever(namespace="proj-a", isolated=True).expand(["a1"],
   depth=3)` reaches `a2` but never `b1` — an edge's own `namespace` column doesn't
   matter for the guard, only the **destination node's** namespace does
-  (`dn.{nsf}` in the recursive step).
+  (`dn.{nsf}` in the recursive step). This read-side guard is defense-in-depth:
+  `add_edge()` now *also* refuses to create a cross-namespace edge in the first place
+  (raising `CrossNamespaceEdge`), so the leaky edge in that test only exists because it
+  is inserted via raw SQL to exercise the traversal filter directly.
 - **`isolated=False` cross-namespace reads are opt-in per call, not global.**
   `tests/test_memory_isolation.py::test_expand_extra_ns_allowed_when_not_isolated`
   shows a non-isolated retriever still needs `extra_ns=["global"]` passed explicitly
   to `expand()` to reach a `global`-namespace node — omitting `extra_ns` scopes to
   `self.ns` only even when `isolated=False`.
-  No test file exercises `MemoryManager` (`add_node`/`supersede`/`list_nodes`)
-  directly — `tests/test_memory_isolation.py` covers `MemoryRetriever.expand()` only.
+  `tests/test_memory_isolation.py` covers `MemoryRetriever.expand()`;
+  `tests/test_memory_edge_validation.py` covers `MemoryManager.add_edge()`'s
+  rel/namespace/audit validation. `add_node`/`supersede`/`list_nodes` still have no
+  dedicated direct test.
 - **`weight` on `memory_edges` is stored but currently inert.** Neither `expand()` nor
   `_rank()` reads it — traversal treats every edge as equal weight regardless of the
   column's value. It's schema-ready for a future weighted-traversal feature, not yet
   wired to anything.
-- **`rel` has a documented vocabulary but no enforced one.** The five names
-  (`RELATES_TO`, `DEPENDS_ON`, `DECISION_ABOUT`, `DISCOVERED_IN`, `SUPERSEDES`) are a
-  schema comment (`sql/001_schema.sql:236`), not a CHECK constraint or Python enum —
-  `add_edge(src, dst, rel, weight)` accepts any string for `rel`. Only `supersede()`
-  itself is guaranteed to write the correct literal `"SUPERSEDES"`.
-  (`memory/memory_manager.py:131`).
+- **`rel` is enforced in Python, not by a DB CHECK.** The six names
+  (`RELATES_TO`, `DEPENDS_ON`, `DECISION_ABOUT`, `DISCOVERED_IN`, `SUPERSEDES`,
+  `CONSOLIDATES`) live in `MemoryManager.VALID_RELS`; `add_edge()` raises
+  `InvalidMemoryRel` for anything else, and the `memory.link` MCP tool exposes the set
+  as a JSON-Schema `enum` so a caller sees the vocabulary before writing. The schema
+  comment (`sql/001_schema.sql:236`) is kept in sync as documentation but does no
+  enforcement itself. Note `CONSOLIDATES` — emitted by `memory_consolidator` — was
+  historically missing from that comment; `VALID_RELS` includes it.
 - **A missing embedding model degrades gracefully, never fails a write.** `_embed_for`
   catches all exceptions and returns `None`; `add_node` proceeds with
   `embedding=None`. Semantic (`embedding_recall`) search simply won't surface that

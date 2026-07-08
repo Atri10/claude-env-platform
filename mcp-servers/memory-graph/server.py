@@ -31,7 +31,8 @@ for p in (_HOME, _HOME / "memory"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from memory.memory_manager import HALF_LIFE, VALID_KINDS, MemoryManager  # noqa: E402
+from memory.memory_manager import (  # noqa: E402
+    HALF_LIFE, VALID_KINDS, VALID_RELS, MemoryManager)
 from memory.memory_retriever import MemoryRetriever  # noqa: E402
 
 try:
@@ -114,11 +115,17 @@ async def list_tools() -> list[Tool]:
                                   "confidence": {"type": "number"}},
                               "required": ["memory_type", "node_kind", "name", "body"]}),
             Tool(name="memory.link",
-                 description="Create a typed edge between two nodes in this namespace.",
+                 description="Create a typed edge between two nodes in this "
+                             "namespace. Both nodes must already exist in THIS "
+                             "namespace (cross-namespace links are rejected). rel "
+                             "must be one of the documented relations: RELATES_TO "
+                             "(generic association), DEPENDS_ON, DECISION_ABOUT, "
+                             "DISCOVERED_IN, SUPERSEDES, CONSOLIDATES.",
                  inputSchema={"type": "object",
                               "properties": {"src": {"type": "string"},
                                              "dst": {"type": "string"},
-                                             "rel": {"type": "string"},
+                                             "rel": {"type": "string",
+                                                     "enum": sorted(VALID_RELS)},
                                              "weight": {"type": "number"}},
                               "required": ["src", "dst", "rel"]}),
         ]
