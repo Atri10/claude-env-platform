@@ -196,34 +196,27 @@ against six representative routing cases and six approval scenarios (`validate_a
   `agent_handoff.py` each call `yaml.safe_load()` on the file separately. A field added
   to the YAML does nothing until some consumer is written to read it (see
   `tier_limits.web_search_allowed_tiers` below).
-- **`tier_limits.web_search_allowed_tiers` (research agent only) has no confirmed
-  runtime reader among the three orchestration loaders.** It's documented intent
-  (`agent_registry.yaml`) but neither `TaskRouter` nor `ApprovalGate` reads
-  `tier_limits`. Don't assume declaring a limit here enforces it — verify the actual
-  enforcement point (likely the `documentation.fetch` tool / tier-gated fetch path)
-  before relying on it.
-- **YAML merge-key (`<<: *defaults`) semantics are shallow, not deep.** An agent that
-  overrides `denied_tools` replaces the whole list rather than extending the defaults'
-  two-item baseline. Every agent that overrides it in the current file re-adds
-  `terminal.exec_unrestricted` (or the broader `terminal.exec`) by hand — this is
-  consistent by convention, not enforced by YAML or by any loader.
-- **An agent with no `write_paths` key cannot pass a write-scope check at all.**
-  `ApprovalGate._within_scope()` returns `False` immediately if `cfg.get("write_paths")`
-  is falsy (`approval_gate.py`) — `orchestrator`, `architect`, `security`,
-  `performance`, and `research` are therefore always "out of scope" for any write
-  action, which in turn always adds an approval reason via `evaluate()`'s scope check.
-  This is presumably intentional (these five are meant to be read-only/advisory) but it
-  is enforced as a side effect of an empty list, not a dedicated read-only flag.
+- **`tier_limits.web_search_allowed_tiers`** — see the [per-agent fields table](#per-agent-fields)
+  above; it has no confirmed runtime reader among the three loaders. Don't assume
+  declaring a limit here enforces it — verify the actual enforcement point (likely the
+  `documentation.fetch` tool / tier-gated fetch path) before relying on it.
+- **YAML merge-key (`<<: *defaults`) semantics are shallow, not deep** — see the
+  [`defaults` anchor section](#defaults-anchor-agent_registryyaml) above for the
+  mechanics and why the current file is consistent by convention rather than by
+  enforcement.
+- **An agent with no `write_paths` key cannot pass a write-scope check at all** — see
+  the `write_paths` row in the [per-agent fields table](#per-agent-fields); this makes
+  `orchestrator`, `architect`, `security`, `performance`, and `research` always
+  "out of scope" for any write action, enforced as a side effect of an empty list
+  rather than a dedicated read-only flag.
 - **`devops` is the only agent with blanket `requires_approval: true`.** Every other
   agent relies on the other four gate conditions (tier ≥2, out-of-scope write,
   state-mutating terminal keywords, git rewrite, memory-destructive keywords) rather
   than an unconditional flag.
-- **`global_approval_gates` is documentation, not executable policy.** `ApprovalGate`
-  loads the list into `self.global_gates` but never iterates it in `evaluate()` — the
-  five behaviors it names are separately hand-implemented as keyword/tier/scope checks.
-  If someone edits the five bullet points at `agent_registry.yaml` expecting
-  gate behavior to change, it won't; the corresponding Python in `approval_gate.py` has
-  to change too.
+- **`global_approval_gates` is documentation, not executable policy** — see
+  [How the registry is loaded](#how-the-registry-is-loaded) above. Editing the five
+  bullet points in `agent_registry.yaml` won't change gate behavior on its own; the
+  corresponding Python in `approval_gate.py` has to change too.
 - **`tests/test_subagent_tools.py` does not test `agent_registry.yaml`.** It enforces a
   related but separate invariant: the platform's actual Claude Code subagent
   definitions under `.claude/agents/*.md` (and the onboarding template's copies under
@@ -236,10 +229,9 @@ against six representative routing cases and six approval scenarios (`validate_a
   No test file in `tests/` parses `agent_registry.yaml` itself; `validate_agents.py`
   (a standalone script, not collected by `pytest`) is the only consistency check for
   this file.
-- **`backend` and `testing` overlap on `src/**` as a write path.** Both declare it
-  (`agent_registry.yaml`, `:91`); routing between them for a `src/**` target falls to
-  `task_router.py`'s intent-keyword scoring, not the path match alone — see
-  [`task-routing.md`](task-routing.md) for how the tie is broken.
+- **`backend` and `testing` overlap on `src/**` as a write path** — see
+  [above](#all-11-agents); the tie between them is broken by `task_router.py`'s
+  intent-keyword scoring, not path matching alone (see [`task-routing.md`](task-routing.md)).
 
 ---
 

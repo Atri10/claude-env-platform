@@ -469,47 +469,30 @@ the UI manually.
   (`agent_registry.yaml`), is effectively achieved anyway by trigger condition 3
   (out-of-scope write), but through a completely separate code path — the
   `global_approval_gates` list itself is dead configuration as of this reading.
-- **No `write_paths` key means every write by that agent gates.** `_within_scope`
-  returns `False` immediately if `cfg.get("write_paths")` is falsy
-  (`approval_gate.py`) — an agent entry that simply omits `write_paths`
-  is *more* restrictive than one with an empty list in the same way (both are falsy),
-  not more permissive.
-- **`terminal.run` bypasses `ApprovalGate` entirely.** It calls
-  `_audit.human_approval_request()` directly (`server.py`), not
-  `ApprovalGate(...).evaluate()`/`.open()`. This means the `_STATE_MUTATING_TERMINAL`
-  substring check inside `ApprovalGate.evaluate()` (which matches `"terminal.run"`)
-  would be redundant if some *other* caller also ran `evaluate()` on a
-  `terminal.run`-shaped action — as of this reading, nothing in the repo does that;
+- **No `write_paths` key means every write by that agent gates** — see trigger
+  condition 3 above; omitting the key is equally as restrictive as an empty list.
+- **`terminal.run` bypasses `ApprovalGate` entirely** — see above; it calls
+  `_audit.human_approval_request()` directly, not `evaluate()`/`.open()`.
   `ApprovalGate` and the terminal server's gating are two independent enforcement
   points that happen to agree on this one case, not one calling the other.
   `agents/orchestration/task_router.py`/`agent_handoff.py` (not covered by this doc)
   would be the place to check if `evaluate()` is wired in elsewhere.
-- **`denied_tools` doesn't deny — it gates.** Despite the name, a
-  `denied_tools` match doesn't stop the action outright; it appends a reason string
-  and the action becomes an approvable request like any other gated action
-  (`approval_gate.py`, comment confirms this is deliberate).
-- **The approvals UI never blocks; the caller does.** All blocking in this workflow
-  happens in `terminal.run`'s `_await_decision` poll loop, reading a row that a
-  *separate process* (the UI's `do_POST` handler) updates. There is no IPC, socket,
-  or shared memory between them — only the SQLite-backed `human_approvals` table via
-  `lib/db.py::get_db()`.
-- **CSRF token is per-process, not per-request or per-session.** `TOKEN` is generated
-  once at import time and reused for every card on every page render until the
-  process restarts — reloading the page does not rotate it.
-- **`decided_by` cannot be spoofed by page content.** The value POSTed by the browser
-  form is never trusted for identity — `DECIDED_BY` is a server-side module global
-  computed from `getpass.getuser()`/`socket.gethostname()` (or `--by`) and is what
-  actually gets passed to `gate.resolve()`, regardless of anything in the form body
-  besides `id`, `decision`, and `token`.
-- **A denied or timed-out `terminal.run` leaves no residual process.** Because the
-  command only ever executes *after* `decision == "approved"` is observed
-  (`server.py`), there is nothing to kill on denial — the subprocess is never
-  started in the first place.
-- **Timeout is a soft state, not a terminal one.** A `"pending"` result from
-  `_await_decision` after `_WAIT_S` doesn't cancel or expire the approval request —
-  the `human_approvals` row is untouched (`decision` stays `'pending'` in the DB), so
-  a human resolving it later and the agent asking again both still work; nothing
-  cleans up stale pending rows automatically in this file.
+- **`denied_tools` doesn't deny — it gates** — see the seventh mechanism above; a
+  match becomes an approvable request like any other gated action, not an outright
+  rejection.
+- **The approvals UI never blocks; the caller does** — see above; the only channel
+  between the two processes is the SQLite-backed `human_approvals` table via
+  `lib/db.py::get_db()`, with no IPC, socket, or shared memory.
+- **CSRF token is per-process, not per-request or per-session** — see above;
+  reloading the page does not rotate it.
+- **`decided_by` cannot be spoofed by page content** — see above; the form body's
+  `id`, `decision`, and `token` fields are the only inputs trusted, never identity.
+- **A denied or timed-out `terminal.run` leaves no residual process.** The command
+  only ever executes after `decision == "approved"` is observed, so there is
+  nothing to kill on denial — the subprocess is never started.
+- **Timeout is a soft state, not a terminal one** — see `_await_decision` above; the
+  `human_approvals` row stays `pending`, so a later resolution or a repeated request
+  both still work, and nothing cleans up stale pending rows automatically.
 - **`_repo_tier()` is a best-effort regex read, not a shared parser.** It scans
   `<repo>/.claude/repo-policy.yaml` line-by-line with `re.match(r"\s*tier\s*:\s*([0-3])\b", line)`
   rather than using a YAML loader or the `security/policy_engine.py` config loading

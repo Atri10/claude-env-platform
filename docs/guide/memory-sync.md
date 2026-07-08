@@ -279,17 +279,16 @@ transaction:
 
 | Call site | When | `memory_type` | `node_id` | `operation` |
 |---|---|---|---|---|
-| `memory_sync.py` | once per `export_ns()` call | `None` — not passed as a real memory_type; passed positionally as `namespace, "export", None, ...` — **wait, see note below** | `None` | `"export:{N}n/{M}e"` |
+| `memory_sync.py` | once per `export_ns()` call | `"export"` | `None` | `"export:{N}n/{M}e"` |
 | `memory_sync.py` | once per imported node | `rec.get("memory_type", "?")` | `rec["node_id"]` | `"import"` |
 
-> Reading the export call site precisely: `AuditLogger(...).memory_write(namespace,
-> "export", None, f"export:{len(nodes)}n/{len(edges)}e")` — the positional arguments
-> are `(namespace, memory_type, node_id, operation)`, so this call actually records
-> `memory_type="export"` and `operation="export:{N}n/{M}e"`. It is **not** logging a
-> real `memory_type` value from the taxonomy (`episodic|semantic|procedural|agent`);
-> `"export"` is being used as a sentinel in that column. Worth knowing if you query
-> `memory_writes` expecting `memory_type` to always be a taxonomy value — one row
-> shape per export breaks that assumption.
+The export row is a real gotcha if you query `memory_writes` expecting `memory_type`
+to always hold a taxonomy value (`episodic|semantic|procedural|agent`): the export
+call site is `AuditLogger(...).memory_write(namespace, "export", None,
+f"export:{len(nodes)}n/{len(edges)}e")`, and `memory_write`'s positional signature is
+`(namespace, memory_type, node_id, operation)` — so `"export"` lands in the
+`memory_type` column as a sentinel, not a taxonomy value. One export produces exactly
+one such row, regardless of how many nodes/edges it contains.
 
 Both `export_ns` and `import_ns` construct their own `AuditLogger("mem-sync",
 actor="memory-sync")` — the session id is always the literal string `"mem-sync"`,
@@ -318,13 +317,11 @@ audit row per node.*
   `embedding` column is left at the SQLite default (`NULL`) after `INSERT`, matching
   the docstring's rationale that embeddings are model-specific and should be
   re-derived locally rather than transported.
-- **`--namespace` on import is all-or-nothing.** There is no per-record remap map —
-  it's a single override string applied uniformly to every node and edge in the file,
-  or none at all (each record keeps its original `namespace` field).
-- **The `meta` line is decorative.** `import_ns()` reads it only to skip it
-  (`kind == "meta": continue`); the declared `nodes`/`edges` counts are never compared
-  against what's actually found in the file, so a hand-edited file with a stale meta
-  count imports without complaint.
+- **`--namespace` on import is all-or-nothing** — see [namespace
+  scoping](#namespace-scoping) above; there is no per-record remap map.
+- **The `meta` line is decorative** — see [JSONL file format](#jsonl-file-format)
+  above; a hand-edited file with a stale meta count imports without complaint since the
+  counts are never checked against what's actually in the file.
 - **Idempotency is by primary key, not content hash.** Two different exports that
   happen to both contain a node with the same `node_id` collide the same way as
   re-importing the same file — the second one is always skipped, even if its content
@@ -337,9 +334,9 @@ audit row per node.*
   this module, so a crash mid-import can leave a partially-imported namespace (though
   that's also idempotent-safe to resume — already-inserted `node_id`s will be skipped
   on a re-run).
-- **CLI flag name mismatch is intentional but easy to miss:** the `import` subcommand
-  parses `--in` but stores it as `args.infile` (`memory_sync.py`) — `dest="infile"`
-  — so the file path on the command line is always `--in`, never `--infile`.
+- **CLI flag name mismatch is intentional but easy to miss** — see the [CLI/interface
+  reference](#cli--interface-reference) above: the file path on the command line is
+  always `--in`, never `--infile`.
 
 ---
 

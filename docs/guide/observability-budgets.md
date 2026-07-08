@@ -373,42 +373,34 @@ regression-testing the exact numbers.
 
 ## Facts, invariants & edge cases
 
-- **Budgets are advisory, not enforced.** No hook or MCP server calls `budgets.py`
-  before letting an agent proceed; the only consequence of `EXCEEDED` is a non-zero
-  exit code (useful for CI/shell integration, but not wired into anything in this
-  repo) and a best-effort local notification. This mirrors the module's own docstring
-  framing it as "a local governance check," not a gate.
-- **A budget of `0` or absent means unlimited, and so does a negative number.**
-  `evaluate()`'s `if budget <= 0` treats both the documented "0 or absent" case and
-  any accidental negative value the same way — unlimited, `pct` never computed.
+- **Budgets are advisory, not enforced** — see [Budget enforcement is a soft cap,
+  not a hard block](#budget-enforcement-is-a-soft-cap-not-a-hard-block) above for the
+  full mechanism and code.
+- **A budget of `0` or absent means unlimited, and so does a negative number** —
+  `evaluate()`'s `if budget <= 0` treats both the same way (detailed above).
 - **`warn_at` and cap thresholds use `>=`, not `>`.** Spend exactly equal to the
   budget (`pct == 1.0`) already counts as `EXCEEDED`; spend exactly at `warn_at`
   already counts as `"warning"` — both boundaries are inclusive of the stricter state.
-- **Feedback recording and boost lookup never raise, by design.** Both
-  `record_retrieved()` and `usage_boosts()` wrap their bodies in
-  `try/except Exception: pass`/`except Exception: return {}` — a DB outage degrades
-  retrieval to "no boost applied," never to a hard failure. `stats()` is the one
-  function in `feedback.py` without this guard, since it's only called from
-  observability surfaces, not the retrieval hot path.
+- **Feedback recording and boost lookup never raise, by design** — see
+  [record_retrieved()](#the-two-signals-and-how-they-correlate) and `usage_boosts()`
+  above; `stats()` is the one function in `feedback.py` without this guard, since
+  it's only called from observability surfaces, not the retrieval hot path.
 - **The boost formula has no negative case and no separate down-weighting signal.**
   There is only `retrieved` and `used` — nothing records "retrieved but *not* used,"
   so chunks are never actively penalized for being ignored; they simply don't
   accumulate a boost.
 - **`CLAUDE_ENV_FEEDBACK_BOOST` is checked by string equality to `"false"`, case
-  insensitively.** Any other value, including typos like `"False "` with trailing
-  whitespace or `"0"`, leaves boosting **on** — only the exact token `false`
-  (case-insensitive) disables it.
-- **`dashboard.py serve` will not create a database for you.** It checks
-  `Path(db).exists()` up front and exits `1` with a message to run bootstrap first,
-  rather than letting Datasette fail with a less clear error.
-- **The dashboard's window parsing silently degrades on unknown units.** Anything not
-  ending in `h` is treated as days, and non-digit strings fall back to a hardcoded
-  `30`, with no validation or error surfaced to the user.
+  insensitively** — see [the reranking boost
+  formula](#the-reranking-boost-formula--verified-exact) above; only the exact token
+  `false` (case-insensitive) disables it.
+- **`dashboard.py serve` will not create a database for you** — see [How
+  dashboard.py works](#how-dashboardpy-works) above for the exit-1 behavior.
+- **The dashboard's window parsing silently degrades on unknown units** — see
+  [How dashboard.py works](#how-dashboardpy-works) above for the exact parsing rule.
 - **All three modules resolve config/DB location the same way: prefer
-  `$CLAUDE_ENV_HOME`, fall back to the repo.** `budgets.py::_config_path()` and
-  `dashboard.py::_db_path()` (via `CLAUDE_ENV_DSN`, defaulting under `HOME`) both
-  follow the platform convention that the deployed copy under `$CLAUDE_ENV_HOME` is
-  authoritative, not the source tree.
+  `$CLAUDE_ENV_HOME`, fall back to the repo.** `budgets.py::_config_path()` (detailed
+  above) and `dashboard.py::_db_path()` (via `CLAUDE_ENV_DSN`, defaulting under
+  `HOME`) both follow the platform convention that the deployed copy is authoritative.
 
 ---
 

@@ -272,26 +272,23 @@ logging the lift, for the same reason.*
 
 ## Facts, invariants & edge cases
 
-- **The marker's existence is the entire contract.** `evaluate_path()` only calls
-  `.exists()` — it never parses the JSON. The `ts`/`by`/`reason` fields exist purely for
-  human consumption (`status`, the hook's denial message, the lift's audit detail); a
-  zero-byte file at the right path would freeze the platform just as effectively as a
-  well-formed one.
+- **The marker's existence is the entire contract** (see
+  [marker file format](#marker-file-format) above) — a zero-byte file at the right
+  path would freeze the platform just as effectively as a well-formed one.
 - **Enforcement is not transactional with the bookkeeping.** Because the marker write
   happens first and the approval-denial/snapshot/audit-logging steps are best-effort
   inside one `try/except`, it's possible (if `audit.audit_logger` fails to import, say)
   for incident mode to be fully active while zero pending approvals were denied and no
   snapshot was taken — the only guarantee is the freeze itself, per the comment on
   `security/incident.py`.
-- **`incident on` is idempotent by design, not by accident.** Calling it twice does not
-  refresh the marker's timestamp or re-run the approval-denial/snapshot/audit steps a
-  second time — `cmd_on` returns early and only echoes the existing marker
-  (`security/incident.py`). To capture a second wave of newly-created pending
-  approvals during a still-active incident, an operator must `off` then `on` again,
-  which *does* re-run the full sequence (and re-snapshots the DB).
-- **PostgreSQL deployments get no automatic snapshot.** `_snapshot_db()` returns `None`
-  immediately for any DSN not starting with `sqlite` (`security/incident.py`); the
-  inline comment points to a "RUNBOOK backup §" for `pg_dump`-based backups, which is an
+- **`incident on` is idempotent by design, not by accident** (see the idempotency
+  guard [above](#cmd_on--arming-the-switch)). To capture a second wave of
+  newly-created pending approvals during a still-active incident, an operator must
+  `off` then `on` again, which *does* re-run the full sequence (and re-snapshots
+  the DB).
+- **PostgreSQL deployments get no automatic snapshot** (see
+  [`_snapshot_db()`](#_snapshot_db--online-wal-safe-backup) above) — the inline
+  comment points to a "RUNBOOK backup §" for `pg_dump`-based backups, an
   operational runbook reference, not something implemented in this file.
 - **Two independent copies of the incident check exist by design, not by DRY failure.**
   `policy_engine.py::_incident_marker()` and `hooks/policy_hook.py`'s `INCIDENT_MARKER`

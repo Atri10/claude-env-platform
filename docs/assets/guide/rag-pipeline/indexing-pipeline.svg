@@ -58,7 +58,7 @@
 <!-- Side: on disk -->
 <rect x="20" y="355" width="180" height="70" rx="8" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="1"/>
 <text x="110" y="376" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(68,68,65)">~/.claude-env/knowledge/</text>
-<text x="110" y="394" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">lancedb/&lt;repo&gt;__&lt;branch&gt;.lance</text>
+<text x="110" y="394" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">lancedb/&lt;slug&gt;__&lt;branch&gt;</text>
 <text x="110" y="410" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">local disk only, no egress</text>
 
 <text x="380" y="450" text-anchor="middle" class="s" fill="rgb(95,94,90)">One table per (repo, branch); upsert is idempotent because chunk_id is a stable hash of (repo, path, start, end).</text>

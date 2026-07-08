@@ -493,71 +493,57 @@ fallback, except the model path itself, which has no fallback and fails loud via
 
 ## Facts, invariants & edge cases
 
-- **No model name or path is ever hardcoded.** `rag/config.py`'s own docstring
-  states this as a design rule (`rag/config.py`), and every constructor
-  (`LlamaEmbedder`, `CrossEncoderReranker`) only accepts paths/dirs passed in from
-  config — grepping the embedder/reranker source for a literal model filename
-  turns up none.
-- **An unconfigured embedding model fails loud, not silently.** `get_embedder()`
-  raises `RuntimeError` with setup instructions if `embedding.model_path` is empty
-  (`rag/config.py`) — there is no default/example model shipped or assumed.
-- **An unconfigured or broken reranker degrades gracefully instead.** Unlike the
-  embedder, `CrossEncoderReranker` never raises on construction — `ok=False` plus
-  identity-order passthrough in `rerank()` is the designed fallback, since
-  reranking is explicitly optional (`reranker.model_dir: ""` disables it by
-  config, not by error).
-- **The embedder instance is cached; the reranker is not.** `get_embedder()`
-  memoizes on `model_path` because loading a GGUF is expensive
-  (`rag/config.py`); `get_reranker()` has no equivalent cache and
-  reconstructs a `CrossEncoderReranker` (including re-loading the ONNX session)
-  on every call — worth knowing if it's called per-query in a hot path.
+- **No model name or path is ever hardcoded** (see `rag/config.py` above) — every
+  constructor only accepts paths/dirs from config, and grepping the
+  embedder/reranker source for a literal model filename turns up none.
+- **An unconfigured embedding model fails loud, not silently** — `get_embedder()`
+  raises `RuntimeError` with setup instructions when `embedding.model_path` is
+  empty (shown above); no default/example model is shipped or assumed.
+- **An unconfigured or broken reranker degrades gracefully instead** — unlike the
+  embedder, `CrossEncoderReranker` never raises on construction; `ok=False` plus
+  identity-order passthrough in `rerank()` is the designed fallback (see above),
+  since reranking is explicitly optional.
+- **The embedder instance is cached; the reranker is not** (see above) — worth
+  knowing if `get_reranker()` runs per-query in a hot path, since it reloads the
+  ONNX session on every call.
 - **Vectors are always L2-normalized before storage or query**, so LanceDB's
-  cosine metric and a raw dot product agree (`rag/embeddings/llama_embedder.py`).
-- **Changing `embedding_dim` requires a full re-index.** The dimension is fixed
-  into the LanceDB `vector` field type at table-creation time
-  (`rag/retrievers/lance_store.py`); an existing table isn't migrated.
+  cosine metric and a raw dot product agree (`rag/embeddings/llama_embedder.py`,
+  see above).
+- **Changing `embedding_dim` requires a full re-index** — the dimension is fixed
+  into the LanceDB `vector` field type at table-creation time (see above); an
+  existing table isn't migrated.
 - **`chunk_id` is a hash of `(repo, path, start_line, end_line)`, not of the text
-  itself.** Two consequences: (1) upsert is idempotent across re-runs as long as
-  line ranges are stable, and (2) if a file's content changes but chunk
-  boundaries don't shift, the old chunk_id is reused and the row is
-  overwritten — `content_hash` (SHA-256 of the text) is stored alongside for an
-  indexer to notice the change, but `chunkers.py`/`lance_store.py` don't
-  themselves compare it to skip work.
-- **A large AST unit is sub-windowed, not truncated.** Any function/class over
-  1.5x the 512-token code target (768 tokens) is split further with the same
-  sliding-window logic used for the fallback path
-  (`rag/chunkers/chunkers.py`), rather than being embedded as one
-  oversized chunk or cut off.
-- **tree-sitter parser failures are cached as `None` per language**, so a broken
-  or unsupported grammar only pays the failed-import/build cost once, not per
-  file (`rag/chunkers/chunkers.py`).
-- **The pack's own `get_parser()` is deliberately not used.** The code builds
-  `tree_sitter.Parser` + `tree_sitter_language_pack.get_language()` by hand because
-  the pack's convenience `get_parser()` has an incompatible API for this module's
-  byte-offset walk (`rag/chunkers/chunkers.py`) — a maintenance trap if
-  "simplified" later without reading this comment.
-- **Nested functions don't get their own chunk.** `_chunk_code`'s `walk()` returns
-  immediately after capturing a unit node and does not descend into its children
-  (`rag/chunkers/chunkers.py`), so an inner function is embedded only as part
-  of its enclosing function/class chunk.
-- **Markdown section overlap is defined but unused.** `TARGETS["markdown"]`
-  unpacks an `overlap` value in `_chunk_markdown`, but unlike `_split_window`
-  nothing in that function actually re-includes trailing lines across a
-  token-triggered mid-section flush — only heading boundaries get a clean
-  section start.
-- **LanceDB has no native upsert; this module fakes one.** `upsert()` is
-  delete-by-id-list then `add()` (`rag/retrievers/lance_store.py`) — a
-  crash between the delete and the add would leave rows missing until the next
-  successful run; there is no transaction wrapping the two calls.
-- **Hybrid search silently degrades to vector-only.** Any exception from the
-  `query_type="hybrid"` path (most commonly a missing FTS index because
-  `create_fts_index` failed in `open()`) is caught and retried as plain vector
-  search with the same `top_k` — callers can't distinguish "hybrid ran" from
-  "fell back to vector-only" from the return value alone.
-- **File paths with single quotes are escaped for `delete_file()`**, specifically
-  called out in the source comment as a real bug class (a path like
-  `docs/what's-new.md` would otherwise break the generated filter and crash
-  indexing mid-run) — `rag/retrievers/lance_store.py`.
+  itself** (see above) — if a file's content changes but chunk boundaries don't
+  shift, the old chunk_id is reused and the row is overwritten; `content_hash`
+  is stored alongside for an indexer to notice the change, but
+  `chunkers.py`/`lance_store.py` don't themselves compare it to skip work.
+- **A large AST unit is sub-windowed, not truncated** (see above) — anything over
+  1.5x the 512-token code target (768 tokens) is split with the same
+  sliding-window logic as the fallback path, rather than embedded whole or cut
+  off.
+- **tree-sitter parser failures are cached as `None` per language** (see above),
+  so a broken or unsupported grammar only pays the failed-import/build cost
+  once, not per file.
+- **The pack's own `get_parser()` is deliberately not used**, because its API is
+  incompatible with this module's byte-offset walk (see above) — a maintenance
+  trap if "simplified" later without reading that comment.
+- **Nested functions don't get their own chunk** — `walk()` returns immediately
+  after capturing a unit node without descending into its children (see above),
+  so an inner function is embedded only as part of its enclosing chunk.
+- **Markdown section overlap is defined but unused** — `TARGETS["markdown"]`
+  unpacks an `overlap` value in `_chunk_markdown`, but nothing in that function
+  re-includes trailing lines across a token-triggered mid-section flush (see
+  above); only heading boundaries get a clean section start.
+- **LanceDB has no native upsert; this module fakes one** via delete-by-id-list
+  then `add()` (see above) — a crash between the two would leave rows missing
+  until the next successful run; there is no transaction wrapping them.
+- **Hybrid search silently degrades to vector-only** on any exception from the
+  `query_type="hybrid"` path, most commonly a missing FTS index (see above) —
+  callers can't distinguish "hybrid ran" from "fell back to vector-only" from
+  the return value alone.
+- **File paths with single quotes are escaped for `delete_file()`** (see above)
+  — without it, a path like `docs/what's-new.md` would break the generated
+  filter and crash indexing mid-run.
 - **No test file exists for chunkers, embedder, reranker, or `LanceStore`.** The
   only RAG-adjacent test in `tests/` is `test_retrieve_ranking.py`, which covers
   `rag/pipelines/retrieve.py::_relevance` (the score-selection helper used after

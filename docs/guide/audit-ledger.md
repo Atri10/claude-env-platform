@@ -343,11 +343,9 @@ def render_csv(d: dict) -> str:
 
 ## Facts, invariants & edge cases
 
-- **The hash covers the whole envelope, not just the caller's payload.** `_canon()` is
-  called on `{ts, event_type, actor, session_id, repo, tier, body}` — so two identical
-  `tool_call(...)` calls made at different timestamps or by different actors produce
-  different `event_hash` values even if `body` is byte-identical. There is no way to
-  hash only `body`.
+- **The hash covers the whole envelope, not just the caller's payload** — see
+  `_append()` above; two identical `tool_call(...)` calls made at different
+  timestamps or by different actors still produce different `event_hash` values.
 - **`GENESIS` is a real, literal string, not a sentinel object.** The very first row's
   `prev_hash` column contains the seven ASCII characters `GENESIS`
   (`audit/audit_logger.py`); `verify_chain()` seeds its local `prev_hash` variable
@@ -371,11 +369,9 @@ def render_csv(d: dict) -> str:
   the table name: `if table != "human_approvals": cols["ts"] = ts`
   (`audit/audit_logger.py`) — that table tracks `requested_at`/`decided_at`
   instead, set explicitly by `human_approval_request`/`human_approval_resolve`.
-- **`verify_chain()` takes no arguments and ignores instance state.** Calling it on
-  any `AuditLogger` instance — regardless of that instance's `session_id`, `actor`, or
-  `repo` — verifies the *entire* `audit_events` table, not a scoped subset. This is
-  why `compliance_report.py` can construct a throwaway `AuditLogger("report",
-  actor="reporter")` purely to call the method.
+- **`verify_chain()` takes no arguments and ignores instance state** — see
+  `compliance_report.py`'s use of a throwaway `AuditLogger` above; it verifies the
+  *entire* `audit_events` table regardless of that instance's `session_id`/`actor`/`repo`.
 - **Dropping the table is the only way to erase history, and it's still detectable.**
   Per the module docstring (`audit/audit_logger.py`): because `UPDATE`/`DELETE`
   are trigger-blocked, the only way to alter history is to drop `audit_events`
@@ -383,19 +379,14 @@ def render_csv(d: dict) -> str:
   `total_events=0`, a discontinuity visible in every future `compliance_report.py`
   run's `chain.total_events`.
 - **`top_tools` and `security_events` in `compliance_report.py` are never repo-filtered**,
-  even when `--repo` is passed — `tool_calls` and `security_events` have no `repo`
-  column in the schema, so `rfilter`/`rparams` (built from the `--repo` flag) are
-  applied to `events_by_type`, `actors`, `policy_violations`, and `approvals`, but
-  silently skipped for these two tables. The `[: None if not repo else None]` slice on
-  `top_tools` (`audit/compliance_report.py`) is a no-op either way — both branches
-  of that ternary are `None`, so the slice never actually truncates anything.
-- **`chain.total_events` is not window-scoped.** Every other `gather()` field is
-  filtered by `WHERE ts>=?`, but `total_events` is a plain `COUNT(*)` over the whole
-  table — a `--window 24h` report's chain-integrity total still reflects the entire
-  ledger's history, not just the last day.
-- **The module docstring's claim of "millisecond precision" is imprecise.** `_now()`
-  (`audit/audit_logger.py`) uses `strftime("%Y-%m-%dT%H:%M:%S.%fZ")`, and
-  Python's `%f` always renders six digits (microseconds), not three.
+  even when `--repo` is passed, since `tool_calls`/`security_events` have no `repo`
+  column (see the `gather()` key table above). The `[: None if not repo else None]`
+  slice on `top_tools` (`audit/compliance_report.py`) is a no-op either way — both
+  branches of that ternary are `None`, so it never actually truncates anything.
+- **`chain.total_events` is not window-scoped** — see the `gather()` key table above;
+  a `--window 24h` report's chain-integrity total still reflects the entire ledger.
+- **The module docstring's claim of "millisecond precision" is imprecise** — see the
+  `ts` column note above; Python's `%f` always renders six digits (microseconds).
 - **No test file exists for this module as of this writing.** There is no
   `tests/test_audit_logger.py` (or similarly named file) in `tests/` — the smoke test
   at the bottom of `audit/audit_logger.py` (`if __name__ == "__main__":`, lines

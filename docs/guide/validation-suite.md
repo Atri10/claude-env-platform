@@ -209,32 +209,23 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
   and `validate_agents.py` have no `soft` concept at all — every failed check in those
   three is fatal.
 - **`validate_features.py` is the only validator that never touches the real
-  `$CLAUDE_ENV_HOME`.** It redirects `CLAUDE_ENV_HOME`/`CLAUDE_ENV_DSN` to a fresh
-  `tempfile.mkdtemp()` before importing anything platform-related, specifically to
-  avoid polluting the real audit ledger, memory graph, or settings
-  (`validation/validate_features.py, 30-34`).
-  `validate_memory.py` and `validate_security.py` instead protect the real
-  environment by using disposable namespaces / reversible probes rather than a
-  sandboxed DB — two different isolation strategies for the same underlying concern.
+  `$CLAUDE_ENV_HOME`** — see [`validate_features.py` isolates itself before
+  importing platform code](#validate_featurespy-isolates-itself-before-importing-platform-code)
+  above; `validate_memory.py` and `validate_security.py` instead protect the real
+  environment via disposable namespaces / reversible probes — two different
+  isolation strategies for the same underlying concern.
 - **`validate_mcp.py` resolves server paths against the *repo*, not the deployed
   mirror, even though the config uses `${CLAUDE_ENV_HOME}`.** `_server_path()`
   strips everything up to `mcp-servers/` from the configured arg and re-joins it
   under `REPO`, specifically so this validator works from a source checkout
   (`validation/validate_mcp.py`).
 - **The `mcp` package is optional for `validate_mcp.py`'s import checks but not for
-  its config-shape checks.** If `import mcp` fails, every per-server "does it import
-  and expose `server`" check downgrades to `WARN` instead of `FAIL`
-  (`validation/validate_mcp.py`); the JSON-shape and security-posture
-  assertions earlier in the same script are unaffected and remain hard failures.
+  its config-shape checks** — see the [reference table row](#reference-table--one-row-per-validator)
+  above; the JSON-shape and security-posture assertions remain hard failures either way.
 - **`validate_features.py`'s plugin-manifest check is conditionally skipped, not
-  soft-failed.** If `claude-plugin/` doesn't exist in the current tree (true for a
-  deployed `$CLAUDE_ENV_HOME` mirror, since the plugin is a distribution artifact),
-  the script prints a `SKIP` line and does not increment `_failures` at all — a third
-  outcome distinct from both `PASS`/`FAIL` and the `WARN` used elsewhere
-  (`validation/validate_features.py`).
-  The CLI-dispatcher-coverage check at the end of the same script is a static string
-  scan of `bin/claude-env`'s source text for 15 literal quoted subcommand names, not
-  an actual invocation of each subcommand (`validation/validate_features.py`).
+  soft-failed** — a third outcome distinct from both `PASS`/`FAIL` and `WARN` (see the
+  [reference table row](#reference-table--one-row-per-validator) above for the exact
+  condition and the CLI-dispatcher-coverage check's static-scan caveat).
 - **`validate_agents.py` hardcodes the 10-specialist set as a Python literal**, not
   derived from the registry file:
   `{"architect", "backend", "frontend", "database", "devops", "security",
@@ -250,10 +241,9 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
   value, so it would still pass even if the half-life math changed, as long as *some*
   decay occurs over a 26-year gap.
 - **`rag` is a seventh `VALIDATORS` entry that structurally doesn't belong to this
-  directory.** `bin/claude-env:51` lists it alongside the six covered here, but its
-  script lives at `rag/validate_rag.py`, not `validation/validate_rag.py`
-  (`bin/claude-env:141-142` special-cases the path). `claude-env validate all` runs
-  all seven; this doc only covers the six under `validation/`.
+  directory** — its script lives at `rag/validate_rag.py`, not
+  `validation/validate_rag.py` (`bin/claude-env:141-142` special-cases the path); see
+  the note at the top of this doc.
 - **None of the six scripts import each other or share a base module** beyond
   standard library and the platform modules they're testing — each is a fully
   standalone `if __name__ == "__main__"` entry point, confirmed by re-reading every

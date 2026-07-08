@@ -234,28 +234,24 @@ before and after wrapping.
   `observability/feedback.py,65-75`. Both feedback functions are documented as
   "Never raises" and swallow exceptions internally — a feedback-store outage degrades
   retrieval to unboosted ranking, it does not fail the query.
-- **The boost can only reorder, never admit or exclude.** It runs after reranking has
-  already cut candidates down to `top_n`; `boosts.get(chunk_id, 0.0)` defaults to zero
-  for any chunk with no usage history, so unboosted chunks keep their reranked
-  position relative to each other.
-- **`duration_ms` on the audit event excludes boost and wrap time.** It's
-  `int(t_search + t_rerank)` only — the feedback lookup/sort and the wrapping loop run
-  after that sum is computed and are untimed.
-- **Empty results are handled everywhere, not just at the end.** `boost_enabled() and
-  ranked` short-circuits the feedback path; `max(scores) if scores else None`,
-  `min(scores) if scores else None`, `ranked[0] if ranked else None`, and `sum(scores)
-  / len(scores) if scores else None` all guard the zero-candidate case explicitly — an
-  empty LanceDB table or a reranker that returns nothing produces a valid `Decision`-
-  free empty list, not an exception.
+- **The boost can only reorder, never admit or exclude** (see step 4 above) —
+  `boosts.get(chunk_id, 0.0)` defaults to zero for any chunk with no usage
+  history, so unboosted chunks keep their reranked position relative to each
+  other.
+- **`duration_ms` on the audit event excludes boost and wrap time** (see above)
+  — it's `int(t_search + t_rerank)` only.
+- **Empty results are handled everywhere, not just at the end** (see the audit/
+  quality-metrics section above) — an empty LanceDB table or a reranker that
+  returns nothing produces a valid, empty list, not an exception.
 - **`sys.path` is mutated at import time.** `retrieve.py` inserts the repo root
   (`Path(__file__).resolve().parents[2]`) into `sys.path` before the `rag.*`/`audit.*`/
   `observability.*` imports, guarded with `# noqa: E402` — this file is written to be
   runnable both as `python rag/pipelines/retrieve.py <repo> <query>` and as an imported
   module.
-- **The CLI's printed score bypasses `_relevance()`.** `retrieve.py`
-  (`h.get('rerank_score', 0)`) prints raw `rerank_score` (defaulting to `0`, not
-  `_relevance(h)`), so CLI output for a vector-only run without a working reranker
-  will always show `0.00` even though the actual ranking used negated distance.
+- **The CLI's printed score bypasses `_relevance()`** (see interface reference
+  above) — it prints raw `rerank_score` defaulting to `0`, so CLI output for a
+  vector-only run without a working reranker always shows `0.00` even though
+  the actual ranking used negated distance.
 
 ### From `tests/test_retrieve_ranking.py`
 

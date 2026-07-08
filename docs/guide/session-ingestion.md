@@ -272,11 +272,11 @@ is wrapped in `|| true` so a failure here doesn't abort the rest of the nightly 
 
 ## Facts, invariants & edge cases
 
-- **Idempotent by transcript, not by content.** The dedupe key is the transcript's file stem
-  (`session_id`), checked once at the top of the loop before any parsing happens
-  (`memory/session_ingestor.py`). A transcript is never re-parsed or re-ingested once a
-  `session_ingest_state` row exists for its `session_id`, even across `--dry-run` and real runs
-  interleaved (dry-run mode still checks this table, it just doesn't write to it — see below).
+- **Idempotent by transcript, not by content** — see [the dedupe
+  check](#locating-and-parsing-a-transcript) above. A transcript is never re-parsed or
+  re-ingested once a `session_ingest_state` row exists for its `session_id`, even
+  across `--dry-run` and real runs interleaved (dry-run mode still checks this table,
+  it just doesn't write to it — see below).
 - **Skipped/unparseable sessions still get a dedupe row — but only outside `--dry-run`.**
   If `_parse_transcript` returns `None` or the transcript has no `cwd` (so no `repo`), the code
   still inserts a `session_ingest_state` row with `node_id=NULL` when not in dry-run mode
