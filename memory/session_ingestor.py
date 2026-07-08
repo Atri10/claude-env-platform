@@ -36,6 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib.db import get_db                          # noqa: E402
 from memory.memory_manager import MemoryManager    # noqa: E402
 from security.detectors import SecretDetector      # noqa: E402
+from lib.logging_setup import get_logger           # noqa: E402
+
+_log = get_logger("memory")
 
 DEFAULT_TRANSCRIPTS = Path.home() / ".claude" / "projects"
 MIN_EVENTS = 3          # skip trivial sessions
@@ -74,6 +77,10 @@ def _parse_transcript(path: Path) -> dict | None:
             try:
                 rec = json.loads(line)
             except Exception:
+                # a single malformed JSONL line shouldn't abort ingesting the
+                # whole transcript; skip it (debug — transcripts can be large).
+                _log.debug("skipping unparseable transcript line in %s",
+                           path.name, exc_info=True)
                 continue
             events += 1
             cwd = rec.get("cwd") or cwd

@@ -28,6 +28,10 @@ HOME = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from lib.logging_setup import get_logger  # noqa: E402
+
+_log = get_logger("observability")
+
 
 def _db_path() -> str:
     dsn = os.environ.get("CLAUDE_ENV_DSN",
@@ -127,7 +131,9 @@ def serve(port: int) -> int:
         register("dashboard", port)
         unregister = _unreg
     except Exception:
-        pass
+        # service-registry bookkeeping is optional; the dashboard still serves.
+        _log.warning("could not register dashboard in the service registry",
+                     exc_info=True)
     print(f"dashboard (datasette) -> http://127.0.0.1:{port}")
     try:
         return subprocess.run(
@@ -141,7 +147,9 @@ def serve(port: int) -> int:
             try:
                 unregister("dashboard")
             except Exception:
-                pass
+                # cleanup best-effort; a stale registry entry is harmless.
+                _log.debug("failed to unregister dashboard from service registry",
+                           exc_info=True)
 
 
 def main() -> int:

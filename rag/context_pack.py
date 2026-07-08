@@ -31,6 +31,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from memory.memory_manager import MemoryManager   # noqa: E402
+from lib.logging_setup import get_logger           # noqa: E402
+
+_log = get_logger("rag")
 
 LANG_BY_EXT = {
     ".py": "Python", ".ts": "TypeScript", ".tsx": "TypeScript", ".js": "JavaScript",
@@ -72,7 +75,8 @@ def detect_commands(root: Path) -> list[tuple[str, str]]:
                 if name in scripts:
                     cmds.append((name, f"npm run {name}"))
         except Exception:
-            pass
+            # malformed package.json — skip npm command detection, keep going.
+            _log.debug("could not parse %s for scripts", pkg, exc_info=True)
     mk = root / "Makefile"
     if mk.exists():
         for line in mk.read_text(errors="ignore").splitlines():
@@ -114,7 +118,10 @@ def memory_sections(repo: str) -> tuple[list[dict], list[dict]]:
                                           "updated": n["updated_at"][:10],
                                           "body": json.loads(n["body_json"])})
     except Exception:
-        pass  # DB not bootstrapped yet — repo signals alone still produce a useful pack
+        # DB not bootstrapped yet — repo signals alone still produce a useful
+        # pack, so degrade gracefully. Log in case it's a real DB fault.
+        _log.info("memory sections unavailable for repo %s; "
+                  "producing pack from repo signals only", repo, exc_info=True)
     return conventions[:15], decisions[:10]
 
 

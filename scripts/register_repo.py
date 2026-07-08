@@ -51,6 +51,11 @@ from pathlib import Path
 
 _HERE = Path(__file__).resolve().parents[1]   # root of the claude-env source tree
 _HOME = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+from lib.logging_setup import get_logger  # noqa: E402
+
+_log = get_logger("onboarding")
 _CLAUDE_JSON = Path.home() / ".claude.json"
 _MCP_CONFIG = _HERE / "config" / "mcp-servers.json"
 _TEMPLATE_DIR = _HERE / "templates" / "repo-onboarding"
@@ -403,7 +408,9 @@ def _detect_test_command(repo_root: str) -> str | None:
             if any(ln.startswith("test:") for ln in (r / "Makefile").read_text().splitlines()):
                 return "make test"
         except Exception:
-            pass
+            # unreadable Makefile — just don't infer a test command from it.
+            _log.debug("could not read Makefile in %s for test-cmd inference", r,
+                       exc_info=True)
     return None
 
 
