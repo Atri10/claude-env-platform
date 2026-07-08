@@ -86,23 +86,53 @@ def _enforce_path(rel: str) -> None:
 async def list_tools() -> list[Tool]:
     return [
         Tool(name="filesystem.read",
-             description="Read a repo-relative file. Policy + secret scan enforced; "
-                         "secrets are redacted or the read is blocked.",
+             description="Read a single repo-relative file's text through the policy "
+                         "chokepoint. The path is resolved inside the repo root "
+                         "(traversal / absolute escapes are rejected), evaluated by the "
+                         "policy engine, and the content is secret-scanned: matched "
+                         "secrets are redacted in-line, and if a hard-block secret is "
+                         "found the whole read is refused. Fails closed on policy-blocked "
+                         "paths (returns 'BLOCKED: ...') and on files over the max read "
+                         "size (~2 MB). Every call is audited. Use this instead of the "
+                         "native file reader for repo files so policy + redaction apply.",
              inputSchema={"type": "object",
-                          "properties": {"path": {"type": "string"}},
+                          "properties": {"path": {"type": "string",
+                                          "description": "Repo-relative path, e.g. "
+                                          "'src/app.py' or 'docs/readme.md'. Absolute paths "
+                                          "and '..' segments that escape the repo root are "
+                                          "rejected."}},
                           "required": ["path"]}),
         Tool(name="filesystem.write",
-             description="Write a repo-relative file. Destination policy + payload "
-                         "secret scan enforced. Approval gating is applied upstream.",
+             description="Write text to a repo-relative file through the policy chokepoint "
+                         "(creating parent directories as needed, overwriting if it "
+                         "exists). The destination is policy-evaluated and the payload is "
+                         "secret-scanned before writing: detected secrets are scrubbed, and "
+                         "a hard-block secret refuses the write entirely. Policy-blocked "
+                         "destinations fail closed. The write is audited (tool_call + "
+                         "agent_action). Higher-risk writes may additionally be gated by an "
+                         "upstream human-approval step.",
              inputSchema={"type": "object",
-                          "properties": {"path": {"type": "string"},
-                                         "content": {"type": "string"}},
+                          "properties": {"path": {"type": "string",
+                                          "description": "Repo-relative destination path, "
+                                          "e.g. 'src/new_module.py'. Escapes above the repo "
+                                          "root are rejected."},
+                                         "content": {"type": "string",
+                                          "description": "Full UTF-8 text to write; replaces "
+                                          "any existing file contents. Secrets are scrubbed "
+                                          "before it hits disk."}},
                           "required": ["path", "content"]}),
         Tool(name="filesystem.list",
-             description="List entries under a repo-relative directory, omitting "
-                         "policy-blocked paths.",
+             description="List the immediate entries of a repo-relative directory (one level, "
+                         "non-recursive), with a trailing '/' on subdirectories. "
+                         "Policy-blocked children are hidden entirely, so this doubles as a "
+                         "way to see what an agent is actually permitted to reach. Returns "
+                         "'BLOCKED: not a directory' if the path is a file. The call is "
+                         "audited.",
              inputSchema={"type": "object",
-                          "properties": {"path": {"type": "string"}},
+                          "properties": {"path": {"type": "string",
+                                          "description": "Repo-relative directory path, e.g. "
+                                          "'.' for the repo root or 'src/'. Escapes above the "
+                                          "repo root are rejected."}},
                           "required": ["path"]}),
     ]
 

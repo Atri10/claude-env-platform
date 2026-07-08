@@ -42,6 +42,11 @@ for p in (_HOME, _HOME / "audit", _HOME / "lib"):
         sys.path.insert(0, str(p))
 
 from audit.audit_logger import AuditLogger  # noqa: E402
+from lib.logging_setup import get_logger  # noqa: E402
+
+# stderr-safe (never stdout — stdio protocol channel); also lands in
+# logs/mcp-terminal.log.
+_log = get_logger("mcp-terminal", stderr=True)
 
 try:
     from mcp.server import Server
@@ -92,7 +97,10 @@ def _load_commands() -> tuple[dict, set]:
                     cmds[k] = user[k]
                     configured.add(k)
         except Exception:
-            pass
+            # malformed commands.json — fall back to built-in defaults rather
+            # than failing; log so a broken override file is diagnosable.
+            _log.warning("could not parse %s; using default commands", cfg,
+                         exc_info=True)
     return cmds, configured
 
 
@@ -110,7 +118,8 @@ def _repo_tier() -> int | None:
             if m:
                 return int(m.group(1))
     except Exception:
-        pass
+        # tier is advisory metadata on the approval record; absence is fine.
+        _log.debug("could not read repo tier from %s", pol, exc_info=True)
     return None
 
 
@@ -146,7 +155,9 @@ def _open_approvals_ui() -> None:
         elif sys.platform.startswith("linux"):
             subprocess.run(["xdg-open", url], capture_output=True, timeout=5)
     except Exception:
-        pass
+        # auto-opening the approval UI is a convenience; the request still blocks
+        # and the operator can open the URL manually. Log the failure.
+        _log.info("could not auto-open approval UI in a browser", exc_info=True)
 
 
 async def _await_decision(req_id: str) -> tuple[str, str | None]:
@@ -192,21 +203,45 @@ def _run(template: str, kind: str) -> str:
 async def list_tools() -> list[Tool]:
     return [
         Tool(name="terminal.run_tests",
-             description="Run the repository's configured test command (read-only, "
-                         "sandboxed cwd, scrubbed env, timeout).",
+             description="Run this repo's configured test command (from "
+                         "<repo>/.claude/commands.json) in a sandbox: repo-root cwd, "
+                         "scrubbed env (no inherited secrets), shell=False argv-only (no "
+                         "pipes/interpolation), hard timeout. Takes no arguments — you cannot "
+                         "choose the command, only trigger the vetted one. If no test command "
+                         "is configured it runs NOTHING and returns a 'NOT CONFIGURED' "
+                         "directive. Returns exit code + truncated stdout/stderr; audited.",
              inputSchema={"type": "object", "properties": {}}),
         Tool(name="terminal.run_benchmarks",
-             description="Run the repository's configured benchmark command.",
+             description="Run this repo's configured benchmark command from "
+                         "<repo>/.claude/commands.json, in the same sandbox as run_tests "
+                         "(repo-root cwd, scrubbed env, argv-only, timeout). Takes no "
+                         "arguments. Returns 'NOT CONFIGURED' and runs nothing if unset; "
+                         "otherwise returns exit code + truncated output. Audited.",
              inputSchema={"type": "object", "properties": {}}),
         Tool(name="terminal.run_audit",
-             description="Run the repository's configured security-audit command.",
+             description="Run this repo's configured security-audit command (e.g. pip-audit) "
+                         "from <repo>/.claude/commands.json, in the same sandbox as run_tests "
+                         "(repo-root cwd, scrubbed env, argv-only, timeout). Takes no "
+                         "arguments. Returns 'NOT CONFIGURED' and runs nothing if unset; "
+                         "otherwise returns exit code + truncated output. Audited.",
              inputSchema={"type": "object", "properties": {}}),
         Tool(name="terminal.run",
-             description="Request a state-mutating command. Opens a human approval and "
-                         "BLOCKS until you approve/deny in the approvals UI, then runs "
-                         "it (argv-only, sandboxed) if approved.",
+             description="Request execution of an arbitrary (typically state-mutating) command "
+                         "that isn't one of the vetted run_tests/benchmarks/audit templates. "
+                         "This opens a human-approval request, surfaces the approvals web UI, "
+                         "and BLOCKS until an operator approves or denies (or it times out, "
+                         "~120s). On approval it runs in the SAME sandbox — repo-root cwd, "
+                         "scrubbed env, shell=False argv-only (no pipes/redirection/shell "
+                         "features), timeout — and returns who approved plus exit code and "
+                         "output; on denial/timeout nothing runs. Use only when a human is "
+                         "available to approve; the whole request is audited.",
              inputSchema={"type": "object",
-                          "properties": {"command": {"type": "string"}},
+                          "properties": {"command": {"type": "string",
+                                          "description": "The command line to request, e.g. "
+                                          "'npm install' or 'ruff format .'. Parsed with "
+                                          "shlex into an argv list and run WITHOUT a shell, so "
+                                          "pipes, redirects, '&&', globs and env-var expansion "
+                                          "are NOT interpreted."}},
                           "required": ["command"]}),
     ]
 

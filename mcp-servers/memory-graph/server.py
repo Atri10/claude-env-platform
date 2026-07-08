@@ -34,6 +34,11 @@ for p in (_HOME, _HOME / "memory"):
 from memory.memory_manager import (  # noqa: E402
     HALF_LIFE, VALID_KINDS, VALID_RELS, MemoryManager)
 from memory.memory_retriever import MemoryRetriever  # noqa: E402
+from lib.logging_setup import get_logger  # noqa: E402
+
+# stderr=True: MCP servers must never write to stdout (stdio protocol channel),
+# but stderr is safe and mirrors into logs/mcp-memory-graph.log for triage.
+_log = get_logger("mcp-memory-graph", stderr=True)
 
 try:
     sys.path.insert(0, str(_HOME))
@@ -42,8 +47,8 @@ try:
     from rag.config import get_embedder
     _embedder = get_embedder()
 except Exception as _emb_err:
-    sys.stderr.write(f"memory-graph: embedding model unavailable ({_emb_err}); "
-                     "nodes will be stored without embeddings\n")
+    _log.warning("embedding model unavailable (%s); nodes will be stored "
+                 "without embeddings", _emb_err)
     _embedder = None
 
 try:
@@ -70,26 +75,58 @@ _retr = MemoryRetriever(namespace=NS, session_id=SESSION_ID, actor="memory-mcp",
 async def list_tools() -> list[Tool]:
     tools = [
         Tool(name="memory.recall",
-             description="Recall memory by query: keyword seeds expanded through the "
-                         "graph, ranked by similarity and time-decayed confidence.",
+             description="Search the memory graph in THIS server's namespace: the query "
+                         "finds seed nodes (embedding similarity when available, else "
+                         "keyword), expands out through their graph edges, and returns the "
+                         "connected nodes as JSON ranked by relevance and time-decayed "
+                         "confidence (older/less-used memories score lower). Read-only; the "
+                         "read is audited. This is the primary way to pull prior decisions/"
+                         "context back into a session at the start of work. Isolated "
+                         "namespaces never surface another repo's memory. Returns [] when "
+                         "nothing matches.",
              inputSchema={"type": "object",
-                          "properties": {"query": {"type": "string"},
-                                         "depth": {"type": "integer"},
-                                         "top_k": {"type": "integer"}},
+                          "properties": {"query": {"type": "string",
+                                          "description": "What to recall, e.g. 'why did we "
+                                          "drop the psycopg dependency'. Matched semantically "
+                                          "if an embedder is loaded, otherwise by keyword."},
+                                         "depth": {"type": "integer",
+                                          "description": "How many graph hops to expand from "
+                                          "the seed nodes. Defaults to 2."},
+                                         "top_k": {"type": "integer",
+                                          "description": "Max nodes to return after ranking. "
+                                          "Defaults to 10."}},
                           "required": ["query"]}),
         Tool(name="memory.read",
-             description="Read a single memory node by id (touches access stats).",
+             description="Fetch one memory node by its exact id and return it as JSON, or "
+                         "'null' if no such node exists in this namespace. Reading touches "
+                         "the node's access stats (recency/use), which affects its future "
+                         "recall ranking and prune resistance. Use when memory.recall or "
+                         "memory.expand has already given you a node id and you want its full "
+                         "body. Read-only aside from the access-stat bump.",
              inputSchema={"type": "object",
-                          "properties": {"node_id": {"type": "string"}},
+                          "properties": {"node_id": {"type": "string",
+                                          "description": "Node id as returned by recall/"
+                                          "expand/write, e.g. 'mem-1a2b3c4d'."}},
                           "required": ["node_id"]}),
         Tool(name="memory.expand",
-             description="Walk the memory graph from seed node ids up to `depth` hops.",
+             description="Traverse the memory graph outward from one or more known node ids "
+                         "up to `depth` hops and return the connected subgraph as JSON. Use "
+                         "when you already have seed node ids (from recall/write) and want "
+                         "their neighbours/related memories, optionally restricted to certain "
+                         "edge relations. Read-only and namespace-scoped.",
              inputSchema={"type": "object",
                           "properties": {"seed_ids": {"type": "array",
-                                                      "items": {"type": "string"}},
-                                         "depth": {"type": "integer"},
+                                          "items": {"type": "string"},
+                                          "description": "Node ids to start from, e.g. "
+                                          "['mem-1a2b3c4d','mem-9f8e7d6c'] (required)."},
+                                         "depth": {"type": "integer",
+                                          "description": "Max hops to walk from each seed. "
+                                          "Defaults to 2."},
                                          "rels": {"type": "array",
-                                                  "items": {"type": "string"}}},
+                                          "items": {"type": "string"},
+                                          "description": "Optional filter: only traverse these "
+                                          "edge relations (e.g. ['DEPENDS_ON','SUPERSEDES']); "
+                                          "omit to follow all relation types."}},
                           "required": ["seed_ids"]}),
     ]
     if WRITE_ENABLED:
@@ -106,13 +143,31 @@ async def list_tools() -> list[Tool]:
                  inputSchema={"type": "object",
                               "properties": {
                                   "memory_type": {"type": "string",
-                                                  "enum": list(VALID_KINDS)},
+                                                  "enum": list(VALID_KINDS),
+                                                  "description": "Top-level memory category; "
+                                                  "must be consistent with node_kind (see the "
+                                                  "tool description's mapping)."},
                                   "node_kind": {"type": "string",
-                                                "enum": sorted(HALF_LIFE)},
-                                  "name": {"type": "string"},
-                                  "body": {"type": "object"},
-                                  "repo": {"type": "string"},
-                                  "confidence": {"type": "number"}},
+                                                "enum": sorted(HALF_LIFE),
+                                                "description": "Specific node kind, e.g. "
+                                                "'decision' (365-day half-life, never "
+                                                "auto-pruned) or 'investigation' (open item). "
+                                                "Must match the chosen memory_type."},
+                                  "name": {"type": "string",
+                                           "description": "Short human-readable title for the "
+                                           "node, e.g. 'Dropped psycopg for portability'."},
+                                  "body": {"type": "object",
+                                           "description": "Structured JSON payload with the "
+                                           "memory's content/details, e.g. {\"summary\": "
+                                           "\"...\", \"rationale\": \"...\"}."},
+                                  "repo": {"type": "string",
+                                           "description": "Optional originating repo name to "
+                                           "tag the node with; defaults to the server's "
+                                           "namespace context."},
+                                  "confidence": {"type": "number",
+                                                 "description": "Initial confidence 0.0-1.0 "
+                                                 "(feeds time-decayed recall ranking). "
+                                                 "Defaults to 1.0."}},
                               "required": ["memory_type", "node_kind", "name", "body"]}),
             Tool(name="memory.link",
                  description="Create a typed edge between two nodes in this "
@@ -122,11 +177,21 @@ async def list_tools() -> list[Tool]:
                              "(generic association), DEPENDS_ON, DECISION_ABOUT, "
                              "DISCOVERED_IN, SUPERSEDES, CONSOLIDATES.",
                  inputSchema={"type": "object",
-                              "properties": {"src": {"type": "string"},
-                                             "dst": {"type": "string"},
+                              "properties": {"src": {"type": "string",
+                                              "description": "Source node id, e.g. "
+                                              "'mem-1a2b3c4d'. Must already exist in this "
+                                              "namespace."},
+                                             "dst": {"type": "string",
+                                              "description": "Destination node id, e.g. "
+                                              "'mem-9f8e7d6c'. Must already exist in this "
+                                              "namespace."},
                                              "rel": {"type": "string",
-                                                     "enum": sorted(VALID_RELS)},
-                                             "weight": {"type": "number"}},
+                                                     "enum": sorted(VALID_RELS),
+                                              "description": "Edge relation type (see the "
+                                              "tool description); direction is src -> dst."},
+                                             "weight": {"type": "number",
+                                              "description": "Optional edge strength/weight. "
+                                              "Defaults to 1.0."}},
                               "required": ["src", "dst", "rel"]}),
         ]
     return tools
@@ -141,7 +206,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 try:
                     query_vec = _embedder.embed_query(arguments["query"])
                 except Exception:
-                    pass
+                    # embedding failure just drops recall to keyword-only; log it
+                    # so a broken embedder doesn't silently degrade every recall.
+                    _log.warning("query embedding failed; recall will be "
+                                 "keyword-only for this query", exc_info=True)
             rows = _retr.recall(arguments["query"],
                                 depth=int(arguments.get("depth", 2)),
                                 top_k=int(arguments.get("top_k", 10)),
