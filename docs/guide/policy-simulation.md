@@ -40,7 +40,7 @@ hardcoded constant.
 
 | Name | Type | Value | Effect |
 |---|---|---|---|
-| `GLOBAL_POLICY` | module constant (`security/policy_sim.py:36`) | `"~/.claude-env/config/global-policy.yaml"` | The global policy every `simulate` run merges against — same file `PolicyEngine.load()` defaults to. Not overridable from the CLI; if you need to simulate against a different global policy, edit this constant or call `simulate()` directly from Python. |
+| `GLOBAL_POLICY` | module constant (`security/policy_sim.py`) | `"~/.claude-env/config/global-policy.yaml"` | The global policy every `simulate` run merges against — same file `PolicyEngine.load()` defaults to. Not overridable from the CLI; if you need to simulate against a different global policy, edit this constant or call `simulate()` directly from Python. |
 
 ### CLI reference
 
@@ -89,7 +89,7 @@ non-zero exit code on drift also makes it usable as a CI gate.
 ### `_repo_files()` — git-first, capped rglob fallback
 
 ```python
-# security/policy_sim.py:39-51
+# security/policy_sim.py
 def _repo_files(root: Path) -> list[str]:
     """Committed files when it's a git repo, else a bounded rglob."""
     r = subprocess.run(["git", "-C", str(root), "ls-files"],
@@ -127,7 +127,7 @@ worth being precise about:
 ### `_engine_for_doc()` — building a `PolicyEngine` without a file on disk
 
 ```python
-# security/policy_sim.py:54-59
+# security/policy_sim.py
 def _engine_for_doc(repo_root: Path, repo_doc: dict) -> PolicyEngine:
     """Build an engine from an in-memory candidate doc (same path load() takes)."""
     gdoc = PolicyEngine._read_yaml(GLOBAL_POLICY)
@@ -153,7 +153,7 @@ change, only a repo-policy change; the global side is always today's on-disk
 ### `simulate()` — the diff loop
 
 ```python
-# security/policy_sim.py:62-90
+# security/policy_sim.py
 def simulate(repo_root: Path, candidate_path: Path) -> dict:
     current = PolicyEngine.load(repo_root, GLOBAL_POLICY)
     cdoc = yaml.safe_load(candidate_path.read_text()) or {}
@@ -207,14 +207,14 @@ The classification logic, read literally:
 `candidate_rule` in a `newly_blocked`/`newly_allowed` entry falls back from
 `cand.rule` to `cand.reason` (`cand.rule or cand.reason`) — because an `allow`
 `Decision` frequently has an empty `rule` string (e.g. `Decision("allow", "no
-blocking rule; tier default allow")` from `policy_engine.py:236` sets no `rule` at
+blocking rule; tier default allow")` from `policy_engine.py` sets no `rule` at
 all), so the display always has *something* non-empty to show.
 
 ![simulate() flow](../assets/guide/policy-simulation/simulate-flow.svg)
 
 ### The `simulate` output schema
 
-Verified directly against `security/policy_sim.py:86-90` — every key that exists,
+Verified directly against `security/policy_sim.py` — every key that exists,
 nothing invented:
 
 | Key | Type | Description |
@@ -231,7 +231,7 @@ nothing invented:
 ### `diff_policies()` — structural drift, no file tree involved
 
 ```python
-# security/policy_sim.py:93-126
+# security/policy_sim.py
 def diff_policies(a_path: Path, b_path: Path) -> dict:
     """Structural drift between two policy files (e.g. repo vs team baseline)."""
     a = yaml.safe_load(a_path.read_text()) or {}
@@ -259,7 +259,7 @@ including a dict, a scalar, or a missing key — it silently returns an empty
 that field rather than erroring.
 
 The six compared sections and the two scalar fields, exactly as coded
-(`security/policy_sim.py:108-124`):
+(`security/policy_sim.py`):
 
 | Compared field | Keys walked | Comparison |
 |---|---|---|

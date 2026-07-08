@@ -43,16 +43,16 @@ None of them talk to the network; all three read from the SQLite DB via
 
 | Key | Type | Default in repo | Effect |
 |---|---|---|---|
-| `warn_at` | float | `0.8` | Fraction of budget at which status becomes `"warning"` instead of `"ok"`. Read by `load_config()` (`observability/budgets.py:52`). |
+| `warn_at` | float | `0.8` | Fraction of budget at which status becomes `"warning"` instead of `"ok"`. Read by `load_config()` (`observability/budgets.py`). |
 | `monthly_usd.default` | float | `0` | Budget (USD) applied to any repo with no entry in `monthly_usd.repos`. `0` (or absent) means unlimited. |
 | `monthly_usd.repos` | map[str, float] | `{}` | Per-repo override, e.g. `payments: 150`. Commented-out examples are shipped in the template file but not active. |
 
 That's the entire schema — three keys, no nesting beyond one level. `load_config()`
-(`observability/budgets.py:47-54`) coerces everything to `float` defensively and
+(`observability/budgets.py`) coerces everything to `float` defensively and
 treats a missing/empty file the same as an all-defaults document:
 
 ```python
-# observability/budgets.py:47-54
+# observability/budgets.py
 def load_config() -> dict:
     p = _config_path()
     doc = yaml.safe_load(p.read_text()) if p.exists() else {}
@@ -63,7 +63,7 @@ def load_config() -> dict:
             "repos": {k: float(v) for k, v in (monthly.get("repos") or {}).items()}}
 ```
 
-`_config_path()` (`observability/budgets.py:39-44`) prefers the **deployed** copy at
+`_config_path()` (`observability/budgets.py`) prefers the **deployed** copy at
 `$CLAUDE_ENV_HOME/config/budgets.yaml` over the repo copy, falling back to the repo
 copy only if the deployed one doesn't exist — consistent with the platform-wide rule
 that config is read from `$CLAUDE_ENV_HOME`, not the source tree (see
@@ -101,12 +101,12 @@ best-effort and meant for a human at the machine, not an automated caller.
 
 There is no separate cost-tracking table or accumulator process. `budgets.py` does
 not compute cost itself — it only *reads* `est_cost_usd`, a column already populated
-per-session in `metrics_sessions` (`sql/001_schema.sql:172-180`) by whatever writes
+per-session in `metrics_sessions` (`sql/001_schema.sql`) by whatever writes
 session metrics (session ingestion). `budgets.py` is a pure aggregation + comparison
 step over that existing column:
 
 ```python
-# observability/budgets.py:57-65
+# observability/budgets.py
 def month_to_date_spend() -> list[dict]:
     month_start = datetime.now(timezone.utc).strftime("%Y-%m-01T00:00:00")
     return get_db().query(
@@ -124,14 +124,14 @@ def month_to_date_spend() -> list[dict]:
 
 ### Budget enforcement is a soft cap, not a hard block
 
-Verified directly from `evaluate()` (`observability/budgets.py:68-91`) and `main()`
-(`observability/budgets.py:107-135`): **hitting a budget never prevents an agent from
+Verified directly from `evaluate()` (`observability/budgets.py`) and `main()`
+(`observability/budgets.py`): **hitting a budget never prevents an agent from
 running.** There is no caller anywhere in the codebase that invokes `budgets.py`
 before allowing a session to proceed — it is a standalone CLI, not a hook. What
 actually happens when a cap is hit:
 
 ```python
-# observability/budgets.py:73-91
+# observability/budgets.py
 statuses, worst = [], "ok"
 for r in rows:
     budget = cfg["repos"].get(r["repo"], cfg["default"])
@@ -155,14 +155,14 @@ for r in rows:
   computed, so a repo with no configured budget can never warn or exceed.
   Note this means a *negative* budget in YAML is silently treated as unlimited too.
 - Only the **process exit code** changes: `main()` returns `1` only
-  `if result["overall"] == "EXCEEDED"` (`observability/budgets.py:135`) — `"warning"`
+  `if result["overall"] == "EXCEEDED"` (`observability/budgets.py`) — `"warning"`
   alone still exits `0`. This is what makes it CI-gateable *if* a caller chooses to
   check the exit code; nothing in this repo currently wires that check into a hook or
   pipeline.
 - On `warning` or `EXCEEDED` (and unless `--no-notify`), `_notify()` fires a macOS
   notification via `osascript`, wrapped in a bare `try/except Exception: pass` and a
   `sys.platform != "darwin"` early return — it is unconditionally best-effort and
-  never raises, on any platform (`observability/budgets.py:94-104`).
+  never raises, on any platform (`observability/budgets.py`).
 
 ![budgets.py evaluate() flow](../assets/guide/observability-budgets/budget-check-flow.svg)
 
@@ -185,7 +185,7 @@ output_tokens, spent_usd, budget_usd, pct, status`.
 
 ### The two signals and how they correlate
 
-`rag_chunk_feedback` (`sql/003_extensions.sql:21-31`) stores one row per event, not
+`rag_chunk_feedback` (`sql/003_extensions.sql`) stores one row per event, not
 per chunk — the same `chunk_id` accumulates many rows over time:
 
 | Signal | Written by | Meaning |
@@ -200,7 +200,7 @@ prior retrieval within some time window) lives in the ingestor, outside this fil
 scope — this doc doesn't cover that half.
 
 ```python
-# observability/feedback.py:48-62
+# observability/feedback.py
 def record_retrieved(repo: str, branch: str, query: str,
                      chunks: list[dict], session_id: str) -> None:
     """Record one 'retrieved' row per returned chunk. Never raises."""
@@ -223,24 +223,24 @@ list comprehension), and the whole function is wrapped in a bare
 `try/except Exception: pass` — feedback recording can never break or slow down a
 retrieval request, it can only silently fail to log one.
 
-`query_hash()` (`observability/feedback.py:44-45`) is `sha256(query)[:16]` — a
+`query_hash()` (`observability/feedback.py`) is `sha256(query)[:16]` — a
 truncated hash used only to group repeated identical queries in `rag_chunk_feedback`,
 not a security control.
 
 ### The reranking boost formula — verified exact
 
 The module docstring states the formula
-(`observability/feedback.py:17-18`), and the implementation matches it exactly, with
+(`observability/feedback.py`), and the implementation matches it exactly, with
 no additional scaling, smoothing, or normalization:
 
 ```python
-# observability/feedback.py:32-33
+# observability/feedback.py
 BOOST_UNIT = 0.05
 CAP = 20
 ```
 
 ```python
-# observability/feedback.py:65-75
+# observability/feedback.py
 def usage_boosts(repo: str, branch: str) -> dict[str, float]:
     """chunk_id -> boost, from historical 'used' signals. Never raises."""
     try:
@@ -272,7 +272,7 @@ reranking" by the retrieve pipeline — this file only computes the boost map, i
 not itself call into the reranker or retriever; how the boost is added to a
 reranked score is outside this file (see `rag/retrievers/` if you need that wiring).
 
-`boost_enabled()` (`observability/feedback.py:40-41`) gates this via
+`boost_enabled()` (`observability/feedback.py`) gates this via
 `CLAUDE_ENV_FEEDBACK_BOOST` — any value other than the case-insensitive string
 `"false"` (including unset, which defaults to `"true"`) leaves boosting on.
 
@@ -281,7 +281,7 @@ reranked score is outside this file (see `rag/retrievers/` if you need that wiri
 ### `stats()` — aggregate view for the dashboard/CLI
 
 ```python
-# observability/feedback.py:78-91
+# observability/feedback.py
 def stats(repo: str | None = None) -> dict:
     """Aggregate feedback stats for the dashboard / CLI."""
     db = get_db()
@@ -312,28 +312,28 @@ retrieval hot path.
 Both modes confirmed directly from the source — it is **terminal summary and
 Datasette, not a custom web UI**:
 
-- **`summary(window)`** (default subcommand, `observability/dashboard.py:46-115`)
+- **`summary(window)`** (default subcommand, `observability/dashboard.py`)
   prints six sections to stdout in this order: top-10 session costs, p50/p95/max
   latency by `metrics_latency.component`, mean top-1 retrieval quality by repo from
   `metrics_retrieval_quality`, the 10 most recent `policy_violations`, a
   severity/category breakdown of `security_events`, and any `human_approvals` rows
   with `decision='pending'` or `NULL`. It does not touch `rag_chunk_feedback` — the
   feedback stats above are not currently surfaced in this summary view.
-- **`serve(port)`** (`observability/dashboard.py:118-144`) shells out to
+- **`serve(port)`** (`observability/dashboard.py`) shells out to
   `python -m datasette <db> --port <port> --setting sql_time_limit_ms 5000 -o`,
   registering the port via `lib.services` so `claude-env services` can list it, and
   prints `dashboard (datasette) -> http://127.0.0.1:<port>`. If `datasette` isn't
   installed, `subprocess.run` raises `FileNotFoundError`, which is caught to print
   `"datasette not installed: pip install datasette"` and return exit code `1`. It
   requires the DB file to already exist (`_db_path()` check at
-  `observability/dashboard.py:120-122`) — it refuses to launch against a missing
+  `observability/dashboard.py`) — it refuses to launch against a missing
   database rather than creating one.
 
 The percentile helper is a simple nearest-rank calculation over an in-memory sorted
 list, not a streaming/approximate estimator:
 
 ```python
-# observability/dashboard.py:38-43
+# observability/dashboard.py
 def _pct(values: list[float], p: float) -> float:
     if not values:
         return 0.0
@@ -342,7 +342,7 @@ def _pct(values: list[float], p: float) -> float:
     return s[k]
 ```
 
-The `--window` filter (`observability/dashboard.py:51-53`) is deliberately
+The `--window` filter (`observability/dashboard.py`) is deliberately
 described in its own comment as "crude": it extracts digits from strings like `7d` or
 `24h` with `"".join(c for c in window if c.isdigit())`, defaulting to `30` if none are
 found, and picks `days` unless the string ends in `h` — `"7w"` would silently parse as

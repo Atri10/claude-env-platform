@@ -15,7 +15,7 @@
 </style>
 
 <text x="380" y="26" text-anchor="middle" class="t" fill="rgb(60,52,137)">boost = BOOST_UNIT * ln(1 + min(used_count, CAP))</text>
-<text x="380" y="44" text-anchor="middle" class="s" fill="rgb(95,94,90)">BOOST_UNIT = 0.05, CAP = 20 (observability/feedback.py:32-33)</text>
+<text x="380" y="44" text-anchor="middle" class="s" fill="rgb(95,94,90)">BOOST_UNIT = 0.05, CAP = 20 (observability/feedback.py)</text>
 
 <!-- axes -->
 <line x1="90" y1="400" x2="700" y2="400" class="axis" marker-end="url(#c1)"/>

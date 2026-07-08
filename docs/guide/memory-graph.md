@@ -4,8 +4,7 @@
 
 **Source:** [`memory/memory_manager.py`](../../memory/memory_manager.py) (181 lines),
 [`memory/memory_retriever.py`](../../memory/memory_retriever.py) (146 lines).
-**Schema:** [`sql/001_schema.sql`](../../sql/001_schema.sql) (`memory_nodes` / `memory_edges`,
-lines 209-242).
+**Schema:** [`sql/001_schema.sql`](../../sql/001_schema.sql) (`memory_nodes` / `memory_edges`).
 
 This doc covers CRUD + retrieval over the memory graph only. How Claude Code session
 transcripts become nodes automatically is `session-ingestion.md` (🔜); confidence-driven
@@ -31,7 +30,7 @@ persisted by `decay_all()`.
 
 ## Configuration reference
 
-### Node schema — `memory_nodes` (`sql/001_schema.sql:209-225`)
+### Node schema — `memory_nodes` (`sql/001_schema.sql`)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -49,7 +48,7 @@ persisted by `decay_all()`.
 | `superseded_by` | TEXT REFERENCES memory_nodes(node_id) | Set by `supersede()`; non-NULL means "don't surface this node" (filtered by default everywhere). |
 | `embedding` | BLOB | `struct.pack(f"<{len(vec)}f", *vec)` — little-endian float32 array, or NULL if no embedder is configured. |
 
-### Edge schema — `memory_edges` (`sql/001_schema.sql:231-239`)
+### Edge schema — `memory_edges` (`sql/001_schema.sql`)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -62,10 +61,10 @@ persisted by `decay_all()`.
 
 ### The `memory_type`/`node_kind` taxonomy (`VALID_KINDS`)
 
-`memory/memory_manager.py:40-52`:
+`memory/memory_manager.py`:
 
 ```python
-# memory/memory_manager.py:40-52
+# memory/memory_manager.py
 HALF_LIFE = {            # days
     "session": 30, "investigation": 30, "decision": 365,
     "entity": 180, "concept": 270, "architecture": 365,
@@ -91,7 +90,7 @@ VALID_KINDS = {
 `agent` is not a fourth kind namespace with its own kinds — it's a memory_type that
 accepts every kind that any other type accepts, distinguished instead by *namespace*
 convention (`agent:<id>`), per the module docstring
-(`memory/memory_manager.py:10-14`).
+(`memory/memory_manager.py`).
 
 ### `MemoryManager` — CRUD method signatures
 
@@ -122,10 +121,10 @@ convention (`agent:<id>`), per the module docstring
 
 ### Confidence decay — the actual formula
 
-`memory/memory_manager.py:83-84`:
+`memory/memory_manager.py`:
 
 ```python
-# memory/memory_manager.py:78-84
+# memory/memory_manager.py
 def _age_days(iso: str) -> float:
     t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
     return max(0.0, (datetime.now(timezone.utc) - t).total_seconds() / 86400)
@@ -148,18 +147,18 @@ details that matter:
   `half_life_days` were ever `0`; it has no effect at the real per-kind values (30-540).
 
 This single function is imported and reused (not reimplemented) in the retriever:
-`memory/memory_retriever.py:27` — `from memory.memory_manager import
+`memory/memory_retriever.py` — `from memory.memory_manager import
 effective_confidence` — so decay math lives in exactly one place.
 
 ![Confidence decay curves by node_kind half-life](../assets/guide/memory-graph/confidence-decay.svg)
 
 ### Namespace isolation
 
-`MemoryRetriever._ns_filter` (`memory/memory_retriever.py:48-53`) is the single choke
+`MemoryRetriever._ns_filter` (`memory/memory_retriever.py`) is the single choke
 point every read method calls through:
 
 ```python
-# memory/memory_retriever.py:48-53
+# memory/memory_retriever.py
 def _ns_filter(self, extra_ns: list[str] | None) -> tuple[str, list]:
     namespaces = [self.ns]
     if extra_ns and not self.isolated:
@@ -175,11 +174,11 @@ narrowed to the one allowed namespace.
 
 `expand()` is the interesting case, because a graph traversal can walk *out* of a
 namespace through an edge even if the seed node was in-scope. The docstring names this
-exact risk (`memory/memory_retriever.py:84-89`) and the SQL guards it at three points,
+exact risk (`memory/memory_retriever.py`) and the SQL guards it at three points,
 not one:
 
 ```python
-# memory/memory_retriever.py:100-112
+# memory/memory_retriever.py
 sql = f"""
 WITH RECURSIVE walk(node_id, hops) AS (
     SELECT node_id, 0 FROM memory_nodes
@@ -198,7 +197,7 @@ WHERE n.superseded_by IS NULL AND n.{nsf}
 The three `{nsf}` substitutions are the *same* `namespace IN (?,...)` fragment,
 applied to: (1) the seed selection, (2) the recursive step's destination-node join
 (`dn.{nsf}` — an edge is only followed if its **destination** is in-namespace), and
-(3) the final projection. `params` (`memory/memory_retriever.py:113-115`) supplies the
+(3) the final projection. `params` (`memory/memory_retriever.py`) supplies the
 namespace parameter list three times in the same order for the three placeholders.
 Because the guard is on the destination node at the join, not just the final
 projection, a same-namespace edge whose `dst` happens to be a different namespace's
@@ -210,7 +209,7 @@ filtered at the end; it's excluded during the walk itself.
 ### `recall()` — how ranking actually merges three sources
 
 ```python
-# memory/memory_retriever.py:119-132
+# memory/memory_retriever.py
 def recall(self, query: str, depth: int = 2, top_k: int = 10,
            query_vec: list[float] | None = None,
            extra_ns: list[str] | None = None) -> list[dict]:
@@ -244,7 +243,7 @@ themselves and always sort below any embedding-scored node with `sim > 0`.
 ### Kind-taxonomy enforcement — fail loud, not silent
 
 ```python
-# memory/memory_manager.py:96-104
+# memory/memory_manager.py
 def add_node(self, memory_type: str, node_kind: str, name: str,
              body: dict, repo: str | None = None,
              confidence: float = 1.0, embedding: bytes | None = None) -> str:
@@ -256,16 +255,16 @@ def add_node(self, memory_type: str, node_kind: str, name: str,
 ```
 
 This is a hard `raise`, not a fallback to a default `node_kind` — the module docstring
-is explicit about why (`memory/memory_manager.py:16-19`): allowing an ad hoc kind like
+is explicit about why (`memory/memory_manager.py`): allowing an ad hoc kind like
 `"issue"` would silently degrade that node to no `HALF_LIFE` entry and lose
 prune-protection. `InvalidMemoryKind` subclasses `ValueError`
-(`memory/memory_manager.py:55-56`) — callers that only catch `ValueError` still catch
+(`memory/memory_manager.py`) — callers that only catch `ValueError` still catch
 this correctly.
 
 ### Best-effort embedding — writes never fail on a missing model
 
 ```python
-# memory/memory_manager.py:63-75
+# memory/memory_manager.py
 def _embed_for(name: str, body: dict) -> bytes | None:
     try:
         import struct
@@ -280,7 +279,7 @@ def _embed_for(name: str, body: dict) -> bytes | None:
 A bare `except Exception` — any failure (no embedder configured, model load error,
 malformed body) results in `embedding=None`, not a raised error. `add_node` only calls
 this when the caller didn't already pass an `embedding` explicitly
-(`memory/memory_manager.py:107-108`). This is the mechanism that lets `embedding_recall`
+(`memory/memory_manager.py`). This is the mechanism that lets `embedding_recall`
 simply skip nodes with `embedding IS NOT NULL` filtering them out — a memory write with
 no RAG model configured is still a fully functional graph node, just invisible to
 embedding-based recall (keyword recall and graph expansion still find it).
@@ -291,7 +290,7 @@ embedding-based recall (keyword recall and graph expansion still find it).
 
 - **The confidence-decay formula is real exponential half-life, verified in code, not
   assumed:** `stored * 2 ** (-age_days / half_life_days)`
-  (`memory/memory_manager.py:83-84`). At `age_days == half_life_days`, effective
+  (`memory/memory_manager.py`). At `age_days == half_life_days`, effective
   confidence is exactly `stored * 0.5`.
 - **`get_node` is the one unaudited access path.** Every write (`add_node`,
   `add_edge`, `supersede`) calls `self.audit.memory_write`, and `list_nodes`/`recall`
@@ -310,7 +309,7 @@ embedding-based recall (keyword recall and graph expansion still find it).
   `updated_at` to now, which (per the point above) **restarts** the decay clock at the
   freshly-lowered value rather than continuing the original exponential curve from the
   original `updated_at`. This is why the module comment calls it "persist decayed
-  confidence so pruning thresholds are stable" (`memory/memory_manager.py:170-171`) —
+  confidence so pruning thresholds are stable" (`memory/memory_manager.py`) —
   it's a deliberate periodic snapshot for the pruner, not a no-op refresh.
 - **Namespace isolation is enforced by SQL parameterization at three join points, not
   a single post-hoc filter.** Verified directly against
@@ -341,7 +340,7 @@ embedding-based recall (keyword recall and graph expansion still find it).
   `CONSOLIDATES`) live in `MemoryManager.VALID_RELS`; `add_edge()` raises
   `InvalidMemoryRel` for anything else, and the `memory.link` MCP tool exposes the set
   as a JSON-Schema `enum` so a caller sees the vocabulary before writing. The schema
-  comment (`sql/001_schema.sql:236`) is kept in sync as documentation but does no
+  comment (`sql/001_schema.sql`) is kept in sync as documentation but does no
   enforcement itself. Note `CONSOLIDATES` — emitted by `memory_consolidator` — was
   historically missing from that comment; `VALID_RELS` includes it.
 - **A missing embedding model degrades gracefully, never fails a write.** `_embed_for`

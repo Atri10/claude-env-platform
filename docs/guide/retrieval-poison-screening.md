@@ -44,7 +44,7 @@ indirectly through `observability.feedback.boost_enabled()`.
 | `Retriever(actor=...)` | str | `"research-agent"` | Actor name recorded on the audit `retrieval` event. |
 | `query(text, top_k=40)` | int | `40` | Candidates pulled from `LanceStore.search()` before reranking. |
 | `query(text, top_n=8)` | int | `8` | Candidates kept after `reranker.rerank()`. |
-| `CLAUDE_ENV_FEEDBACK_BOOST` | env str | unset (`true`) | Read by `observability.feedback.boost_enabled()`, not by this file directly — `"false"` (case-insensitive) disables the feedback-boost re-sort entirely (`retrieve.py:73`). |
+| `CLAUDE_ENV_FEEDBACK_BOOST` | env str | unset (`true`) | Read by `observability.feedback.boost_enabled()`, not by this file directly — `"false"` (case-insensitive) disables the feedback-boost re-sort entirely (`retrieve.py`). |
 
 ---
 
@@ -53,7 +53,7 @@ indirectly through `observability.feedback.boost_enabled()`.
 ### Imports — what this file actually depends on
 
 ```python
-# rag/pipelines/retrieve.py:21-26
+# rag/pipelines/retrieve.py
 from rag.config import get_embedder, get_reranker           # noqa: E402
 from rag.retrievers.lance_store import LanceStore            # noqa: E402
 from audit.audit_logger import AuditLogger                   # noqa: E402
@@ -70,7 +70,7 @@ module docstring is easy to misread as claiming otherwise.
 ### `Retriever.query()` — the full pipeline
 
 ```python
-# rag/pipelines/retrieve.py:59-101
+# rag/pipelines/retrieve.py
 def query(self, text: str, top_k: int = 40, top_n: int = 8) -> list[dict]:
     t0 = time.perf_counter()
     qv = self.embedder.embed_query(text)
@@ -101,7 +101,7 @@ Read top to bottom:
 1. **Embed** the query text (`self.embedder`, chosen by `rag.config.get_embedder()` —
    model choice lives in config, per the platform invariant).
 2. **Hybrid search** `LanceStore.search()` for `top_k=40` candidates (vector + FTS
-   fusion, or vector-only fallback — see `lance_store.py:97-108`). Latency recorded.
+   fusion, or vector-only fallback — see `lance_store.py`). Latency recorded.
 3. **Rerank** to `top_n=8` with the cross-encoder. Latency recorded separately from
    search latency (two distinct `record_latency` calls, two distinct metric names).
 4. **Feedback boost** — gated by `boost_enabled() and ranked` (an empty result list
@@ -113,14 +113,14 @@ Read top to bottom:
    survive reranking.
 5. **Record** — `record_retrieved()` writes one `rag_chunk_feedback` row per chunk with
    `signal='retrieved'` (best-effort, swallows its own exceptions — see
-   `observability/feedback.py:48-62`).
+   `observability/feedback.py`).
 6. **Audit + quality metrics** (below).
 7. **Wrap** every chunk for injection safety (below) and return.
 
 ### Scoring order — `_relevance()`
 
 ```python
-# rag/pipelines/retrieve.py:32-46
+# rag/pipelines/retrieve.py
 def _relevance(c: dict) -> float:
     if c.get("rerank_score") is not None:
         return float(c["rerank_score"])
@@ -142,7 +142,7 @@ Priority order is reranked score first, then hybrid RRF score, then raw distance
 ### Audit event and quality metrics
 
 ```python
-# rag/pipelines/retrieve.py:82-93
+# rag/pipelines/retrieve.py
 scores = [_relevance(c) for c in ranked]
 self.audit.retrieval(
     repo=self.repo, branch=self.branch, query=text, top_k=top_k,
@@ -166,13 +166,13 @@ ternary — an empty `ranked` never raises here.
 ### Wrapping for injection safety
 
 ```python
-# rag/pipelines/retrieve.py:28-29
+# rag/pipelines/retrieve.py
 CHUNK_OPEN = "<retrieved_context source=\"{path}\" lines=\"{a}-{b}\">"
 CHUNK_CLOSE = "</retrieved_context>"
 ```
 
 ```python
-# rag/pipelines/retrieve.py:95-101
+# rag/pipelines/retrieve.py
 for c in ranked:
     c["wrapped"] = (CHUNK_OPEN.format(path=c.get("file_path", "?"),
                                       a=c.get("start_line", 0),
@@ -217,7 +217,7 @@ before and after wrapping.
   framing ("Wraps each returned chunk in injection-safe delimiters"), `retrieve.py`
   has no import of and no call to `security/detectors.py`'s `RagPoisonDetector`,
   `PromptInjectionDetector`, or `SecretDetector` (verified by reading the full import
-  list, `retrieve.py:21-26`). The only two other callers of `RagPoisonDetector` in the
+  list, `retrieve.py`). The only two other callers of `RagPoisonDetector` in the
   repo are `mcp-servers/lancedb-rag/server.py` and
   `mcp-servers/documentation/server.py` — poison scanning, where it exists, happens at
   indexing/fetch time in those servers, not at query time here. If you came looking
@@ -231,7 +231,7 @@ before and after wrapping.
 - **The feedback-boost formula and storage are not in this file.** `retrieve.py` only
   calls `usage_boosts()` and `record_retrieved()`; the `BOOST_UNIT * ln(1 + used_count)`
   math, the `CAP = 20` bound, and the `rag_chunk_feedback` table schema all live in
-  `observability/feedback.py:17-33,65-75`. Both feedback functions are documented as
+  `observability/feedback.py,65-75`. Both feedback functions are documented as
   "Never raises" and swallow exceptions internally — a feedback-store outage degrades
   retrieval to unboosted ranking, it does not fail the query.
 - **The boost can only reorder, never admit or exclude.** It runs after reranking has
@@ -247,12 +247,12 @@ before and after wrapping.
   / len(scores) if scores else None` all guard the zero-candidate case explicitly — an
   empty LanceDB table or a reranker that returns nothing produces a valid `Decision`-
   free empty list, not an exception.
-- **`sys.path` is mutated at import time.** `retrieve.py:20` inserts the repo root
+- **`sys.path` is mutated at import time.** `retrieve.py` inserts the repo root
   (`Path(__file__).resolve().parents[2]`) into `sys.path` before the `rag.*`/`audit.*`/
   `observability.*` imports, guarded with `# noqa: E402` — this file is written to be
   runnable both as `python rag/pipelines/retrieve.py <repo> <query>` and as an imported
   module.
-- **The CLI's printed score bypasses `_relevance()`.** `retrieve.py:111`
+- **The CLI's printed score bypasses `_relevance()`.** `retrieve.py`
   (`h.get('rerank_score', 0)`) prints raw `rerank_score` (defaulting to `0`, not
   `_relevance(h)`), so CLI output for a vector-only run without a working reranker
   will always show `0.00` even though the actual ranking used negated distance.
@@ -261,12 +261,12 @@ before and after wrapping.
 
 The only test file covering this module tests `_relevance()` exclusively (imported
 directly, `from rag.pipelines.retrieve import _relevance` —
-`tests/test_retrieve_ranking.py:12`); there is no test exercising `Retriever.query()`
+`tests/test_retrieve_ranking.py`); there is no test exercising `Retriever.query()`
 end to end (it requires a live LanceDB + embedder). The suite's own docstring frames
 it as a regression test:
 
 ```python
-# tests/test_retrieve_ranking.py:1-7
+# tests/test_retrieve_ranking.py
 """Coverage for the retrieval ranking score helper. Run: pytest tests/ -q
 
 Regression for the ranking bug: hybrid search returns `_relevance_score`
@@ -277,7 +277,7 @@ used `_distance` (lower=better) with reverse=True — inverting the order.
 ```
 
 ```python
-# tests/test_retrieve_ranking.py:24-28
+# tests/test_retrieve_ranking.py
 def test_distance_is_negated_so_nearer_is_higher():
     near = _relevance({"_distance": 0.1})
     far = _relevance({"_distance": 0.9})
@@ -286,7 +286,7 @@ def test_distance_is_negated_so_nearer_is_higher():
 ```
 
 ```python
-# tests/test_retrieve_ranking.py:36-45
+# tests/test_retrieve_ranking.py
 def test_ordering_matches_relevance_on_hybrid_path():
     # simulate feedback-boost re-sort input: hybrid candidates, no rerank_score
     cands = [
@@ -300,7 +300,7 @@ def test_ordering_matches_relevance_on_hybrid_path():
 ```
 
 This last test directly exercises the exact sort key used in `query()`'s feedback-boost
-step (`retrieve.py:78-79`), just with the `Retriever` object removed from the picture.
+step (`retrieve.py`), just with the `Retriever` object removed from the picture.
 
 ---
 

@@ -121,7 +121,7 @@ five times (six, counting `validate_features.py`'s slightly different two-argume
 `check(label, cond, detail="")`):
 
 ```python
-# validation/validate_installation.py:37-46
+# validation/validate_installation.py
 def check(label: str, cond: bool, soft: bool = False) -> None:
     global _failures, _warnings
     if cond:
@@ -148,7 +148,7 @@ any `from lib.db import ...` or other platform import runs, then applies the sch
 files directly:
 
 ```python
-# validation/validate_features.py:30-36, 77-82
+# validation/validate_features.py, 77-82
 _TMP = tempfile.mkdtemp(prefix="claude-env-features-")
 os.environ["CLAUDE_ENV_HOME"] = _TMP
 os.environ["CLAUDE_ENV_DSN"] = f"sqlite:///{_TMP}/state/test.db"
@@ -176,7 +176,7 @@ A comment explains why: the *deployed* copy at `$CLAUDE_ENV_HOME` is a mirror wi
 to have anything meaningful to analyze:
 
 ```python
-# validation/validate_features.py:51-56
+# validation/validate_features.py
 def _make_fixture() -> Path:
     """A tiny committed git repo so the repo-quality tools (policy-sim, test-impact,
     doc-drift, nightly analyst) run hermetically — independent of where this
@@ -204,15 +204,15 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
 
 - **Warnings never fail a script — except when they silently don't exist.**
   `validate_installation.py` and `validate_mcp.py` explicitly separate `_warnings`
-  from `_failures` and only `return 1` on `_failures` (`validation/validate_installation.py:164-169`,
-  `validation/validate_mcp.py:122-127`). `validate_security.py`, `validate_memory.py`,
+  from `_failures` and only `return 1` on `_failures` (`validation/validate_installation.py`,
+  `validation/validate_mcp.py`). `validate_security.py`, `validate_memory.py`,
   and `validate_agents.py` have no `soft` concept at all — every failed check in those
   three is fatal.
 - **`validate_features.py` is the only validator that never touches the real
   `$CLAUDE_ENV_HOME`.** It redirects `CLAUDE_ENV_HOME`/`CLAUDE_ENV_DSN` to a fresh
   `tempfile.mkdtemp()` before importing anything platform-related, specifically to
   avoid polluting the real audit ledger, memory graph, or settings
-  (`validation/validate_features.py:5-6, 30-34`).
+  (`validation/validate_features.py, 30-34`).
   `validate_memory.py` and `validate_security.py` instead protect the real
   environment by using disposable namespaces / reversible probes rather than a
   sandboxed DB — two different isolation strategies for the same underlying concern.
@@ -220,33 +220,33 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
   mirror, even though the config uses `${CLAUDE_ENV_HOME}`.** `_server_path()`
   strips everything up to `mcp-servers/` from the configured arg and re-joins it
   under `REPO`, specifically so this validator works from a source checkout
-  (`validation/validate_mcp.py:47-53`).
+  (`validation/validate_mcp.py`).
 - **The `mcp` package is optional for `validate_mcp.py`'s import checks but not for
   its config-shape checks.** If `import mcp` fails, every per-server "does it import
   and expose `server`" check downgrades to `WARN` instead of `FAIL`
-  (`validation/validate_mcp.py:99-119`); the JSON-shape and security-posture
+  (`validation/validate_mcp.py`); the JSON-shape and security-posture
   assertions earlier in the same script are unaffected and remain hard failures.
 - **`validate_features.py`'s plugin-manifest check is conditionally skipped, not
   soft-failed.** If `claude-plugin/` doesn't exist in the current tree (true for a
   deployed `$CLAUDE_ENV_HOME` mirror, since the plugin is a distribution artifact),
   the script prints a `SKIP` line and does not increment `_failures` at all — a third
   outcome distinct from both `PASS`/`FAIL` and the `WARN` used elsewhere
-  (`validation/validate_features.py:289-303`).
+  (`validation/validate_features.py`).
   The CLI-dispatcher-coverage check at the end of the same script is a static string
   scan of `bin/claude-env`'s source text for 15 literal quoted subcommand names, not
-  an actual invocation of each subcommand (`validation/validate_features.py:305-312`).
+  an actual invocation of each subcommand (`validation/validate_features.py`).
 - **`validate_agents.py` hardcodes the 10-specialist set as a Python literal**, not
   derived from the registry file:
   `{"architect", "backend", "frontend", "database", "devops", "security",
   "performance", "testing", "documentation", "research"}`
-  (`validation/validate_agents.py:35-36`). Adding an 11th specialist to
+  (`validation/validate_agents.py`). Adding an 11th specialist to
   `agent_registry.yaml` without also updating this set will make
   `"registry defines all 10 specialists"` and `"orchestrator can_spawn == specialists"`
   fail even though the registry itself is internally consistent.
 - **`validate_memory.py`'s decay check uses a fixed ancient timestamp, not "now minus
   N days."** It calls `effective_confidence(1.0, half_life=30,
   updated_at="2000-01-01T00:00:00Z")` and only asserts the result is `< 1.0`
-  (`validation/validate_memory.py:84-86`) — it doesn't assert a specific decayed
+  (`validation/validate_memory.py`) — it doesn't assert a specific decayed
   value, so it would still pass even if the half-life math changed, as long as *some*
   decay occurs over a 26-year gap.
 - **`rag` is a seventh `VALIDATORS` entry that structurally doesn't belong to this

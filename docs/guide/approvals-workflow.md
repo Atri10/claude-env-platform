@@ -40,7 +40,7 @@ never go through the gate at all — they run immediately if configured, or refu
 | `session_id` | str | caller-supplied | Passed straight through to the `AuditLogger` used for every write this gate makes. |
 | `repo` / `tier` | str / int \| None | caller-supplied | `tier` is the single biggest lever — `tier >= 2` gates *every* action regardless of anything else. |
 | `actor` | str | default `"orchestrator"` | Recorded on the underlying `AuditLogger`. |
-| `agents.<name>.requires_approval` | bool | `agent_registry.yaml` | If true, every action by that agent is gated. `infra` is the only agent with this set (`agent_registry.yaml:67`, comment: "every action gated"). |
+| `agents.<name>.requires_approval` | bool | `agent_registry.yaml` | If true, every action by that agent is gated. `infra` is the only agent with this set (`agent_registry.yaml`, comment: "every action gated"). |
 | `agents.<name>.write_paths` | list[glob] | `agent_registry.yaml` | Defines the agent's allowed write scope for `_within_scope()`. An agent with **no** `write_paths` key gates **every** write (`_within_scope` returns `False` when `scopes` is falsy). |
 | `agents.<name>.denied_tools` | list[glob] | `agent_registry.yaml` | `fnmatch`'d against `action`; a match is a hard-stop reason, not a silent deny — it still surfaces as a gated approval request rather than an outright rejection. |
 | `global_approval_gates` | list[str] | `agent_registry.yaml` (one entry: `"filesystem.write outside agent write_paths"`) | Loaded into `self.global_gates` but **not read anywhere in `evaluate()`** — see [Facts](#facts-invariants--edge-cases). |
@@ -64,7 +64,7 @@ never go through the gate at all — they run immediately if configured, or refu
 | `CLAUDE_ENV_APPROVAL_WAIT_S` | `120` (seconds) | How long `terminal.run` blocks polling for a decision before giving up and reporting "still pending." |
 | `CLAUDE_ENV_APPROVAL_PORT` | unset | Optional *preferred*-port hint passed to a freshly spawned `approvals_ui.py`; the actual port actually used is discovered from the service registry, not assumed. |
 | `CLAUDE_ENV_APPROVAL_AUTO_UI` | `"true"` | Set to anything else to skip auto-opening the browser UI (the approval still gets created and still blocks — this only skips the `open`/`xdg-open` step). |
-| `<repo>/.claude/commands.json` keys `run_tests`/`run_benchmarks`/`run_audit` | none (must be set explicitly) | The *only* way a command is "configured"; an unset key returns a `NOT CONFIGURED` directive and runs nothing — see `_run_configured` (`mcp-servers/terminal/server.py:214-223`). |
+| `<repo>/.claude/commands.json` keys `run_tests`/`run_benchmarks`/`run_audit` | none (must be set explicitly) | The *only* way a command is "configured"; an unset key returns a `NOT CONFIGURED` directive and runs nothing — see `_run_configured` (`mcp-servers/terminal/server.py`). |
 | `_ENV_ALLOW` (hardcoded, not env-configurable) | `{"PATH","HOME","LANG","LC_ALL","TMPDIR","VIRTUAL_ENV","PWD"}` | The complete environment allow-list passed to every subprocess; everything else (secrets, tokens) is stripped. |
 
 ---
@@ -104,7 +104,7 @@ Every condition is additive: `evaluate()` never short-circuits, it appends a rea
 string for each condition that matches, and gates iff `reasons` is non-empty.
 
 ```python
-# agents/orchestration/approval_gate.py:86-116
+# agents/orchestration/approval_gate.py
 def evaluate(self, agent: str, action: str,
              target: str | None = None) -> GateVerdict:
     reasons: list[str] = []
@@ -139,39 +139,39 @@ def evaluate(self, agent: str, action: str,
 ```
 
 The six conditions, verified against the code and their exact string constants
-(`approval_gate.py:49-54`):
+(`approval_gate.py`):
 
 1. **Registry flag** — `agents.<agent>.requires_approval: true`. Only `infra` has this
-   in the shipped `agent_registry.yaml` (line 67).
+   in the shipped `agent_registry.yaml`.
 2. **Tier threshold** — `self.tier is not None and self.tier >= 2`. This is
    unconditional: a tier-2 or tier-3 repo gates *every* action from *every* agent,
    independent of write scope or action type.
 3. **Out-of-scope write** — only checked `if self._is_write(action) and target is not
-   None`. `_is_write()` (`approval_gate.py:118-121`) is a substring test: `"write" in
+   None`. `_is_write()` (`approval_gate.py`) is a substring test: `"write" in
    a or "delete" in a or "create" in a or a.startswith("filesystem.write")`. Scope is
    `fnmatch`-based against `cfg["write_paths"]`, trying the pattern as-is, then with a
    trailing `/*` appended after stripping `/*`, then exact string equality
-   (`approval_gate.py:123-133`). **An agent with no `write_paths` key at all fails
+   (`approval_gate.py`). **An agent with no `write_paths` key at all fails
    scope for every write** — `_within_scope` returns `False` immediately when
-   `scopes` is falsy (line 126-127), so declaring no write scope is the same as
+   `scopes` is falsy, so declaring no write scope is the same as
    declaring an empty one.
 4. **State-mutating terminal command** — substring match against `action.lower()` for
    any of `"terminal.run"`, `"terminal.exec"`, `"terminal.deploy"`,
-   `"terminal.apply"` (`_STATE_MUTATING_TERMINAL`, line 49-51). Note this matches on
+   `"terminal.apply"` (`_STATE_MUTATING_TERMINAL`). Note this matches on
    the *action string itself*, independent of the terminal server's own internal
    gating — see [Facts](#facts-invariants--edge-cases) for how this can double-gate.
 5. **Git history rewrite** — substring match against `action.lower()` **or**
    `target.lower()` for any of `"git push"`, `"git commit --amend"`, `"git rebase"`,
    `"git reset --hard"`, `"git.push"`, `"git.amend"`, `"git.rebase"`
-   (`_GIT_REWRITE`, line 52-53). Plain `git commit` (no `--amend`) and `git checkout`
+   (`_GIT_REWRITE`). Plain `git commit` (no `--amend`) and `git checkout`
    are **not** in this list and do not trigger this condition.
 6. **Destructive memory operation** — substring match for `"memory.delete"`,
-   `"memory.prune"`, `"memory_pruner --apply"` (`_MEMORY_DESTRUCTIVE`, line 54).
+   `"memory.prune"`, `"memory_pruner --apply"` (`_MEMORY_DESTRUCTIVE`).
 
 A **seventh**, separate mechanism piggybacks on the same return value: any
 `cfg["denied_tools"]` pattern (`fnmatch`) that matches `action` also appends a reason
 — the code comment is explicit that this is deliberate: *"denied tools are a hard
-stop, surfaced as a gate with a deny reason"* (line 110) — i.e. a nominally "denied"
+stop, surfaced as a gate with a deny reason"* — i.e. a nominally "denied"
 tool doesn't hard-fail, it becomes a human-approval request like everything else.
 
 ![Gate decision flow](../assets/guide/approvals-workflow/gate-decision-flow.svg)
@@ -179,7 +179,7 @@ tool doesn't hard-fail, it becomes a human-approval request like everything else
 ### Lifecycle: `open()` → block → `resolve()`
 
 ```python
-# agents/orchestration/approval_gate.py:136-167
+# agents/orchestration/approval_gate.py
 def open(self, verdict: GateVerdict) -> str:
     """Persist a pending approval, return its request_id."""
     action_desc = f"{verdict.action} :: {'; '.join(verdict.reasons)}"
@@ -203,7 +203,7 @@ responsibility**; `ApprovalGate` has no wait loop of its own. The only caller in
 codebase that blocks is `terminal.run` (below), via its own `_await_decision` poll
 loop — `ApprovalGate.resolve()` is a thin wrapper that just writes the decision.
 
-`_notify()` (`approval_gate.py:147-162`) is macOS-only (`if sys.platform != "darwin":
+`_notify()` (`approval_gate.py`) is macOS-only (`if sys.platform != "darwin":
 return`), shells out to `osascript` with a 5s timeout, and swallows all exceptions —
 it is explicitly a "best-effort" nicety per its own docstring, never a dependency for
 correctness.
@@ -215,7 +215,7 @@ waiting caller. Its job is: render pending rows as cards, accept a POST, call
 `ApprovalGate.resolve()`, redirect back.
 
 ```python
-# agents/orchestration/approvals_ui.py:218-236
+# agents/orchestration/approvals_ui.py
 def do_POST(self):  # noqa: N802
     if self.path != "/resolve":
         self._send(404, "not found")
@@ -240,23 +240,23 @@ def do_POST(self):  # noqa: N802
 Key mechanics, all verified directly:
 
 - **Server class:** `http.server.ThreadingHTTPServer` (stdlib only — the module
-  docstring is explicit: *"no new dependencies"*, `approvals_ui.py:6-7`).
+  docstring is explicit: *"no new dependencies"*, `approvals_ui.py`).
 - **Bind address:** `lib.services.bind_http` is called with `args.port` (default
-  `8002`); `bind_http` (`lib/services.py:88-99`) tries the preferred port and falls
+  `8002`); `bind_http` (`lib/services.py`) tries the preferred port and falls
   back to an OS-assigned free port (`ThreadingHTTPServer((host, 0), ...)`) on
   `OSError`. `_HOST` in `lib/services.py` is the localhost bind — the module
   docstring states the posture explicitly: *"binds 127.0.0.1 only — never an external
-  interface"* (`approvals_ui.py:14`).
+  interface"* (`approvals_ui.py`).
 - **CSRF token:** `TOKEN = secrets.token_urlsafe(24)` generated once at module import
-  (line 44) — a fresh, unpredictable value every process start, embedded as a hidden
+  — a fresh, unpredictable value every process start, embedded as a hidden
   `<input type="hidden" name="token">` in every approve/deny form and checked with a
   strict `!=` comparison before any resolve happens.
 - **`decided_by` — OS user@host, not user input:** `_default_decider()`
-  (`approvals_ui.py:48-52`) computes `f"{getpass.getuser()}@{socket.gethostname()}"`
+  (`approvals_ui.py`) computes `f"{getpass.getuser()}@{socket.gethostname()}"`
   once at import into the module global `DECIDED_BY`. The UI never presents a text
   field for who is deciding — the docstring states this is deliberate: *"decided_by is
   recorded automatically as the OS user @ host (no name is asked for)"*
-  (`approvals_ui.py:16`). `--by` is the only override, intended for edge cases (e.g.
+  (`approvals_ui.py`). `--by` is the only override, intended for edge cases (e.g.
   running the UI under a shared service account).
 - **No blocking primitive in this file.** `approvals_ui.py` never waits for anything
   — `srv.serve_forever()` just runs the HTTP server. The "block until resolved"
@@ -273,7 +273,7 @@ Key mechanics, all verified directly:
 Four tools, two execution philosophies:
 
 ```python
-# mcp-servers/terminal/server.py:214-223
+# mcp-servers/terminal/server.py
 def _run_configured(cmds: dict, configured: set, kind: str) -> str:
     """Run a command only if the repo explicitly configured it; otherwise return
     a clear directive (never blindly run the toolchain-specific default)."""
@@ -288,14 +288,14 @@ def _run_configured(cmds: dict, configured: set, kind: str) -> str:
 
 `run_tests`/`run_benchmarks`/`run_audit` never touch `ApprovalGate` at all — they are
 gated only by whether the repo's `.claude/commands.json` explicitly set that key
-(`_load_commands`, `server.py:80-96`); an unconfigured command runs *nothing*, not a
+(`_load_commands`, `server.py`); an unconfigured command runs *nothing*, not a
 guessed default, specifically so a wrong-toolchain default (e.g. `pytest` on a Go
 repo) can never execute silently.
 
 `terminal.run` is the only tool that opens a real approval and blocks:
 
 ```python
-# mcp-servers/terminal/server.py:236-259
+# mcp-servers/terminal/server.py
 if name == "terminal.run":
     command = str(arguments.get("command", "")).strip()
     if not command:
@@ -327,7 +327,7 @@ what the command actually is.
 The blocking poll loop:
 
 ```python
-# mcp-servers/terminal/server.py:152-167
+# mcp-servers/terminal/server.py
 async def _await_decision(req_id: str) -> tuple[str, str | None]:
     """Block until the operator approves/denies this request (or we time out).
     Polls the human_approvals row the approvals UI updates in another process."""
@@ -359,7 +359,7 @@ Execution sandbox, shared by both the configured-command path and the
 `terminal.run`-approved path:
 
 ```python
-# mcp-servers/terminal/server.py:99-100, 170-188
+# mcp-servers/terminal/server.py, 170-188
 def _scrubbed_env() -> dict:
     return {k: v for k, v in os.environ.items() if k in _ENV_ALLOW}
 
@@ -389,11 +389,11 @@ def _run(template: str, kind: str) -> str:
   list directly. There is no `shell=True` anywhere in this file, so shell metacharacters
   (`;`, `|`, `&&`, backticks, `$()`) inside `command` are inert — they become literal
   argv tokens via `shlex`, not shell syntax. This is also why the docstring can say
-  "no pipes" (`server.py:16`): a `|` character has no special meaning to
+  "no pipes" (`server.py`): a `|` character has no special meaning to
   `subprocess.run(shell=False)`.
 - **Environment scrubbing:** `_scrubbed_env()` is an allow-list, not a deny-list —
   only `PATH, HOME, LANG, LC_ALL, TMPDIR, VIRTUAL_ENV, PWD` pass through
-  (`_ENV_ALLOW`, line 73); every other inherited variable (API keys, tokens, CI
+  (`_ENV_ALLOW`); every other inherited variable (API keys, tokens, CI
   secrets) is dropped before the subprocess is spawned.
 - **Timeout enforcement:** `subprocess.run(..., timeout=TIMEOUT_S)`
   (`TIMEOUT_S = int(os.environ.get("CLAUDE_ENV_CMD_TIMEOUT", "600"))`) raises
@@ -403,7 +403,7 @@ def _run(template: str, kind: str) -> str:
   `subprocess.run` kills the child on timeout).
 - **`cwd=str(REPO_ROOT)`** pins every command to the repo root resolved at server
   startup (`REPO_ROOT = Path(os.environ.get("CLAUDE_ENV_REPO_ROOT",
-  os.getcwd())).resolve()`, line 54) — there is no per-call cwd override.
+  os.getcwd())).resolve()`) — there is no per-call cwd override.
 - **Output truncation:** stdout is capped to the last 6000 characters, stderr to the
   last 2000, both audited in full result metadata only as `result_kind` (exit code or
   timeout), not the output body itself.
@@ -413,7 +413,7 @@ def _run(template: str, kind: str) -> str:
 ### `_open_approvals_ui()` — reuse-or-spawn, then open the real port
 
 ```python
-# mcp-servers/terminal/server.py:117-149
+# mcp-servers/terminal/server.py
 def _open_approvals_ui() -> None:
     if os.environ.get("CLAUDE_ENV_APPROVAL_AUTO_UI", "true").lower() != "true":
         return
@@ -463,19 +463,19 @@ the UI manually.
 ## Facts, invariants & edge cases
 
 - **`ApprovalGate` reads `global_approval_gates` but never checks it.**
-  `self.global_gates = reg.get("global_approval_gates", [])` (`approval_gate.py:79`)
+  `self.global_gates = reg.get("global_approval_gates", [])` (`approval_gate.py`)
   is assigned and never referenced again anywhere in the class. The one entry in the
   shipped registry, `"filesystem.write outside agent write_paths"`
-  (`agent_registry.yaml:116`), is effectively achieved anyway by trigger condition 3
+  (`agent_registry.yaml`), is effectively achieved anyway by trigger condition 3
   (out-of-scope write), but through a completely separate code path — the
   `global_approval_gates` list itself is dead configuration as of this reading.
 - **No `write_paths` key means every write by that agent gates.** `_within_scope`
   returns `False` immediately if `cfg.get("write_paths")` is falsy
-  (`approval_gate.py:126-127`) — an agent entry that simply omits `write_paths`
+  (`approval_gate.py`) — an agent entry that simply omits `write_paths`
   is *more* restrictive than one with an empty list in the same way (both are falsy),
   not more permissive.
 - **`terminal.run` bypasses `ApprovalGate` entirely.** It calls
-  `_audit.human_approval_request()` directly (`server.py:246-247`), not
+  `_audit.human_approval_request()` directly (`server.py`), not
   `ApprovalGate(...).evaluate()`/`.open()`. This means the `_STATE_MUTATING_TERMINAL`
   substring check inside `ApprovalGate.evaluate()` (which matches `"terminal.run"`)
   would be redundant if some *other* caller also ran `evaluate()` on a
@@ -487,7 +487,7 @@ the UI manually.
 - **`denied_tools` doesn't deny — it gates.** Despite the name, a
   `denied_tools` match doesn't stop the action outright; it appends a reason string
   and the action becomes an approvable request like any other gated action
-  (`approval_gate.py:110-113`, comment confirms this is deliberate).
+  (`approval_gate.py`, comment confirms this is deliberate).
 - **The approvals UI never blocks; the caller does.** All blocking in this workflow
   happens in `terminal.run`'s `_await_decision` poll loop, reading a row that a
   *separate process* (the UI's `do_POST` handler) updates. There is no IPC, socket,
@@ -503,7 +503,7 @@ the UI manually.
   besides `id`, `decision`, and `token`.
 - **A denied or timed-out `terminal.run` leaves no residual process.** Because the
   command only ever executes *after* `decision == "approved"` is observed
-  (`server.py:250-251`), there is nothing to kill on denial — the subprocess is never
+  (`server.py`), there is nothing to kill on denial — the subprocess is never
   started in the first place.
 - **Timeout is a soft state, not a terminal one.** A `"pending"` result from
   `_await_decision` after `_WAIT_S` doesn't cancel or expire the approval request —
@@ -513,13 +513,11 @@ the UI manually.
 - **`_repo_tier()` is a best-effort regex read, not a shared parser.** It scans
   `<repo>/.claude/repo-policy.yaml` line-by-line with `re.match(r"\s*tier\s*:\s*([0-3])\b", line)`
   rather than using a YAML loader or the `security/policy_engine.py` config loading
-  path (`server.py:103-114`) — it only needs the tier number for the approval record,
+  path (`server.py`) — it only needs the tier number for the approval record,
   and swallows any read error to `None`.
 - **Tests confirm the pure-helper behavior, not the DB/HTTP paths.** `tests/test_approvals_ui.py`
   covers only the four side-effect-free functions: `_command_of` (prefix stripping,
-  `test_approvals_ui.py:10-12`), `_tier_pill` (tier 0/3/`None` rendering,
-  lines 15-18), `_ago` (`None` → `""`, an old ISO timestamp → ends with `"d ago"`,
-  lines 21-23), and `_default_decider` (contains `"@"`, length > 2, lines 26-28). There
+  `test_approvals_ui.py`), `_tier_pill` (tier 0/3/`None` rendering), `_ago` (`None` → `""`, an old ISO timestamp → ends with `"d ago"`), and `_default_decider` (contains `"@"`, length > 2). There
   is no test in the repo exercising `do_POST`'s CSRF check, `ApprovalGate.evaluate()`'s
   six conditions, or `terminal.run`'s blocking loop as of this reading.
 
