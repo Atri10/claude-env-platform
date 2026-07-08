@@ -76,10 +76,10 @@ never go through the gate at all — they run immediately if configured, or refu
 claude-env approvals --list-open
 
 # Resolve one by ID from a terminal session, no web UI needed
-claude-env approvals --resolve <REQUEST_ID> --approve --by atriya
+claude-env approvals --resolve <REQUEST_ID> --approve --by John
 
 # ...or deny it, with the same flag shape
-claude-env approvals --resolve <REQUEST_ID> --deny --by atriya
+claude-env approvals --resolve <REQUEST_ID> --deny --by John
 
 # Launch the local approvals web UI on a specific port (default: 8002,
 # falls back to a free port automatically if that one's busy)

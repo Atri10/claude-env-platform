@@ -46,7 +46,7 @@ Plain JSON, written with `indent=2` and a trailing newline (`security/incident.p
 ```json
 {
   "ts": "2026-07-07T14:32:01Z",
-  "by": "atriya",
+  "by": "John",
   "reason": "suspected token leak"
 }
 ```
@@ -63,14 +63,14 @@ for human-facing output (`status`, the hook's denial message, the `off` audit ev
 
 ```bash
 # Arm the kill switch — every policy evaluation fails closed until lifted
-claude-env incident on --reason "suspected token leak" --by atriya
+claude-env incident on --reason "suspected token leak" --by John
 
 # Check whether it's currently active (exit code 1 = active, 0 = inactive —
 # safe to use directly in a shell conditional or monitoring check)
 claude-env incident status
 
 # Lift it once the situation is resolved
-claude-env incident off --by atriya
+claude-env incident off --by John
 ```
 
 `--reason` and `--by` are optional on `on` (defaulting to `"unspecified"` and
