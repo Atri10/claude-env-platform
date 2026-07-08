@@ -80,11 +80,11 @@ file shared by several subsystems, but `policy_engine.py` only ever reads `tier`
 
 ### `evaluate_path()` — the eight-step decision
 
-The module's own docstring states the intended order (`security/policy_engine.py:9-15`),
+The module's own docstring states the intended order (`security/policy_engine.py`),
 and the implementation follows it exactly:
 
 ```python
-# security/policy_engine.py:203-236
+# security/policy_engine.py
 def evaluate_path(self, path: str) -> Decision:
     # 0. incident mode: fail closed on everything until lifted
     if _incident_marker().exists():
@@ -147,7 +147,7 @@ The **`_check_deny` helper** implements the shared "paths → extensions → reg
 sub-order used identically for both global and repo policies:
 
 ```python
-# security/policy_engine.py:191-201
+# security/policy_engine.py
 def _check_deny(self, path: str, pol: CompiledPolicy, scope: str) -> Decision | None:
     m = self._match_paths(path, pol.deny_paths)
     if m:
@@ -169,7 +169,7 @@ Tiers aren't checked as a separate step at evaluation time — they're folded in
 `CompiledPolicy` once, when the engine is built:
 
 ```python
-# security/policy_engine.py:135-140
+# security/policy_engine.py
 trow = (tier_doc.get("tiers", {}) or {}).get(tier, {}) \
     or (tier_doc.get("tiers", {}) or {}).get(str(tier), {})
 deny_ext += list(trow.get("extra_deny_ext", []))
@@ -189,7 +189,7 @@ indistinguishable from anything written directly in `repo-policy.yaml`'s own
 ### Glob matching (`_glob_to_regex`)
 
 Globs are translated to anchored regex once, character by character
-(`security/policy_engine.py:52-80`), not matched with `fnmatch`:
+(`security/policy_engine.py`), not matched with `fnmatch`:
 
 | Glob token | Regex equivalent | Meaning |
 |---|---|---|
@@ -199,7 +199,7 @@ Globs are translated to anchored regex once, character by character
 | `?` | `[^/]` | One non-`/` character. |
 | `. ( ) { } + \| ^ $ \` | escaped literally | Regex metacharacters in a glob are treated as literal text. |
 
-Confirmed directly by `tests/test_policy_engine.py:16-21`:
+Confirmed directly by `tests/test_policy_engine.py`:
 
 ```python
 def test_glob_double_star():
@@ -213,7 +213,7 @@ def test_glob_double_star():
 ### Extension matching (`_match_ext`)
 
 ```python
-# security/policy_engine.py:181-189
+# security/policy_engine.py
 @staticmethod
 def _match_ext(path: str, exts: list[str]) -> str | None:
     suffix = Path(path).suffix
@@ -237,7 +237,7 @@ filename starts with it followed by a dot (`.env.local` matches `.env`,
 `scan_content()` on the bytes before returning them:
 
 ```python
-# security/policy_engine.py:239-259
+# security/policy_engine.py
 def scan_content(self, text: str) -> tuple[str, list[tuple[str, int]]]:
     if not (self.repo.content_scan_on or self.glob.content_scan_on):
         return text, []
@@ -289,20 +289,20 @@ the model from a deny-list to an allow-list.*
 
 - **Deny always wins, with one narrow exception.** The only rule that can make a
   would-be-denied path readable is `override_deny`, and even then content scanning
-  still runs on the bytes (`tests/test_policy_engine.py:68-73`,
+  still runs on the bytes (`tests/test_policy_engine.py`,
   `test_override_deny_does_not_bypass_content_scan`).
 - **Content-scan strictness cannot be downgraded by either side.** If *either* the
   global or the repo policy says `on_match: "block"`, the result is a block — a repo
   cannot soften a global block to a redact, and (symmetrically) a stricter repo
   setting overrides a looser global one. Verified directly by
   `test_content_block_not_downgraded_by_repo_redact`
-  (`tests/test_policy_engine.py:57-65`), which forces global=`block`/repo=`redact`
+  (`tests/test_policy_engine.py`), which forces global=`block`/repo=`redact`
   and asserts a full block still occurs.
 - **The self-protection deny list is global-only, by design.** Paths like
   `**/.claude/settings.json` and `**/.claude-env/**` are only in
   `global-policy.yaml`, never in the repo template — a repo policy can't re-enable
   editing its own guardrails, because the global deny list can't be overridden.
-  Covered by `test_blocks_guardrail_config` (`tests/test_policy_engine.py:33-39`),
+  Covered by `test_blocks_guardrail_config` (`tests/test_policy_engine.py`),
   which also checks an absolute-looking path
   (`Users/me/.claude-env/hooks/policy_hook.py`) blocks the same way.
 - **The engine is stateless and does zero caching.** `PolicyEngine.load()` reads and
@@ -311,14 +311,14 @@ the model from a deny-list to an allow-list.*
   `PolicyEngine.load()` (a new process, or an explicit reload by the caller) to take
   effect.
 - **A repo with no policy file is not the same as tier 3.** `PolicyEngine.load()`
-  (`security/policy_engine.py:166-167`) falls back to `{"tier": <global tier>, "repo":
+  (`security/policy_engine.py`) falls back to `{"tier": <global tier>, "repo":
   <dirname>}` if `.claude/repo-policy.yaml` is missing — i.e., **no repo-local allow
   or deny rules at all**, just the global tier's default (usually tier 1, default-allow).
   A missing policy file is a permissive fallback, not a restrictive one.
 - **`.sql` can be allowed and denied at the same time, on purpose.** The
   repo-policy template allow-lists `.sql` under `allow.extensions` with an inline
   comment noting tier ≥2's `extra_deny_ext` still blocks it
-  (`config/repo-policy.template.yaml:43`) — a live example of deny-wins in the config
+  (`config/repo-policy.template.yaml`) — a live example of deny-wins in the config
   itself, not just the code.
 - **Path normalization doesn't collapse `..`.** `evaluate_path()` strips leading `./`
   and `/` but never resolves `..` segments — `src/../secrets/x` is normalized only to
@@ -327,9 +327,9 @@ the model from a deny-list to an allow-list.*
   skips that step could be fooled. This module's docstring and comments don't call
   this out — it's only visible by reading `_normalize`'s actual behavior.
 - **The module docstring references `apply_tier_rules()`, which doesn't exist as a
-  separate function.** `global-policy.yaml:70`'s comment says tier behavior is
+  separate function.** `global-policy.yaml`'s comment says tier behavior is
   "consumed by `policy_engine.apply_tier_rules()`" — in the current code, that logic
-  is inlined directly into `_compile()` (lines 135-140), not a standalone function.
+  is inlined directly into `_compile()`, not a standalone function.
   Worth knowing if you go looking for it by name.
 - **Case-sensitive matching throughout.** Both glob and extension matching rely on
   plain Python string/regex comparison — `.ENV` does not match a `.env` deny rule on

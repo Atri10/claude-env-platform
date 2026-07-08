@@ -32,16 +32,16 @@ platform knowledge" — three subcommands, no config to understand.
 
 | Name | Kind | Default | Effect |
 |---|---|---|---|
-| `action` | positional arg | required | One of `on`, `off`, `status` (`security/incident.py:128`). |
-| `--reason` | CLI flag (`on` only) | `"unspecified"` | Free-text reason stored in the marker JSON and the audit event (`security/incident.py:129`). |
-| `--by` | CLI flag (`on`/`off`) | `$USER` env var, else `"operator"` | Actor recorded in the marker and as the audit actor / `decided_by` value (`security/incident.py:130`). |
-| `CLAUDE_ENV_HOME` | env var | `~/.claude-env` | Root the marker, archive, and (by extension) the DSN default live under (`security/incident.py:38`). |
-| `CLAUDE_ENV_DSN` | env var | `sqlite:///$CLAUDE_ENV_HOME/state/claude-env.db` | Read by `_snapshot_db()` to find the SQLite file to back up; non-`sqlite` DSNs skip the snapshot entirely (`security/incident.py:48-51`). |
+| `action` | positional arg | required | One of `on`, `off`, `status` (`security/incident.py`). |
+| `--reason` | CLI flag (`on` only) | `"unspecified"` | Free-text reason stored in the marker JSON and the audit event (`security/incident.py`). |
+| `--by` | CLI flag (`on`/`off`) | `$USER` env var, else `"operator"` | Actor recorded in the marker and as the audit actor / `decided_by` value (`security/incident.py`). |
+| `CLAUDE_ENV_HOME` | env var | `~/.claude-env` | Root the marker, archive, and (by extension) the DSN default live under (`security/incident.py`). |
+| `CLAUDE_ENV_DSN` | env var | `sqlite:///$CLAUDE_ENV_HOME/state/claude-env.db` | Read by `_snapshot_db()` to find the SQLite file to back up; non-`sqlite` DSNs skip the snapshot entirely (`security/incident.py`). |
 
 ### Marker file format
 
-Path: `$CLAUDE_ENV_HOME/state/INCIDENT` (constant `MARKER`, `security/incident.py:39`).
-Plain JSON, written with `indent=2` and a trailing newline (`security/incident.py:73-74`):
+Path: `$CLAUDE_ENV_HOME/state/INCIDENT` (constant `MARKER`, `security/incident.py`).
+Plain JSON, written with `indent=2` and a trailing newline (`security/incident.py`):
 
 ```json
 {
@@ -52,7 +52,7 @@ Plain JSON, written with `indent=2` and a trailing newline (`security/incident.p
 ```
 
 `ts` comes from `_now()`, which is `datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")`
-(`security/incident.py:42-43`) — always UTC, always that exact format. The file's *existence*
+(`security/incident.py`) — always UTC, always that exact format. The file's *existence*
 is the only thing any enforcement surface actually checks; its contents are read back only
 for human-facing output (`status`, the hook's denial message, the `off` audit event's
 `"was: ..."` detail).
@@ -87,7 +87,7 @@ their printed output, not branched on.
 ### `cmd_on()` — arming the switch
 
 ```python
-# security/incident.py:66-98
+# security/incident.py
 def cmd_on(reason: str, by: str) -> int:
     if MARKER.exists():
         print("incident mode is ALREADY active:")
@@ -132,10 +132,10 @@ Read top to bottom, arming does five things in a deliberate order:
    the approval-denial, snapshot, or audit-logging work below it. Every enforcement
    surface starts failing closed the instant this line completes, regardless of whether
    anything after it succeeds.
-3. **Deny every pending approval.** `ApprovalGate.list_open()` (`agents/orchestration/approval_gate.py:171-181`)
+3. **Deny every pending approval.** `ApprovalGate.list_open()` (`agents/orchestration/approval_gate.py`)
    returns pending rows from `human_approvals`; each is resolved via
    `AuditLogger.human_approval_resolve(request_id, "denied", decided_by="incident:<by>")`
-   (`audit/audit_logger.py:184-191`) — so the `decided_by` column is always prefixed
+   (`audit/audit_logger.py`) — so the `decided_by` column is always prefixed
    `incident:` for approvals killed this way, distinguishing them from a human clicking
    "deny" in the approvals UI.
 4. **Snapshot the database.** `_snapshot_db()` (below) runs next; its return value (a
@@ -148,14 +148,14 @@ Read top to bottom, arming does five things in a deliberate order:
 Steps 3-5 are wrapped in a single `try/except Exception`. If *any* of them raises — a
 missing `audit` package, a locked DB, whatever — the `except` block only prints a
 warning; **it does not touch or remove the marker.** The comment on
-`security/incident.py:96` states the intent directly: *"the marker is already in place —
+`security/incident.py` states the intent directly: *"the marker is already in place —
 enforcement holds even if bookkeeping fails."* Freezing the platform can never be rolled
 back by an internal error.
 
 ### `_snapshot_db()` — online, WAL-safe backup
 
 ```python
-# security/incident.py:46-63
+# security/incident.py
 def _snapshot_db() -> str | None:
     """Online WAL-safe SQLite backup. Returns archive path (None for non-sqlite)."""
     dsn = os.environ.get("CLAUDE_ENV_DSN",
@@ -190,7 +190,7 @@ rather than by this function itself.
 ### `cmd_off()` — lifting the switch
 
 ```python
-# security/incident.py:101-114
+# security/incident.py
 def cmd_off(by: str) -> int:
     if not MARKER.exists():
         print("incident mode is not active")
@@ -218,7 +218,7 @@ trail preserves who armed it and why even after the file is gone.
 ### `cmd_status()` and exit codes
 
 ```python
-# security/incident.py:117-123
+# security/incident.py
 def cmd_status() -> int:
     if MARKER.exists():
         print("incident mode: ACTIVE")
@@ -240,13 +240,13 @@ usable directly in a shell conditional or a monitoring check without parsing std
 environment variable independently — there's no shared import of a path constant:
 
 ```python
-# security/incident.py:38-39
+# security/incident.py
 HOME = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
 MARKER = HOME / "state" / "INCIDENT"
 ```
 
 ```python
-# security/policy_engine.py:47-49
+# security/policy_engine.py
 def _incident_marker() -> Path:
     return Path(os.environ.get("CLAUDE_ENV_HOME",
                                str(Path.home() / ".claude-env"))) / "state" / "INCIDENT"
@@ -255,7 +255,7 @@ def _incident_marker() -> Path:
 Both resolve to the identical path as long as `CLAUDE_ENV_HOME` (or its shared default)
 matches between the process that ran `incident on` and the process that later calls
 `evaluate_path()` — which is true in normal operation since both are deployed from the
-same `$CLAUDE_ENV_HOME`. `policy_engine.py`'s comment at lines 43-46 states plainly that
+same `$CLAUDE_ENV_HOME`. `policy_engine.py`'s comment states plainly that
 checking this one file "covers all enforcement surfaces at once: the filesystem-policy
 MCP server, the RAG indexer, and the Claude Code policy hook" — see
 [policy-engine.md's evaluate_path walkthrough](policy-engine.md#evaluate_path--the-eight-step-decision)
@@ -282,33 +282,33 @@ logging the lift, for the same reason.*
   inside one `try/except`, it's possible (if `audit.audit_logger` fails to import, say)
   for incident mode to be fully active while zero pending approvals were denied and no
   snapshot was taken — the only guarantee is the freeze itself, per the comment on
-  `security/incident.py:96`.
+  `security/incident.py`.
 - **`incident on` is idempotent by design, not by accident.** Calling it twice does not
   refresh the marker's timestamp or re-run the approval-denial/snapshot/audit steps a
   second time — `cmd_on` returns early and only echoes the existing marker
-  (`security/incident.py:67-70`). To capture a second wave of newly-created pending
+  (`security/incident.py`). To capture a second wave of newly-created pending
   approvals during a still-active incident, an operator must `off` then `on` again,
   which *does* re-run the full sequence (and re-snapshots the DB).
 - **PostgreSQL deployments get no automatic snapshot.** `_snapshot_db()` returns `None`
-  immediately for any DSN not starting with `sqlite` (`security/incident.py:50-51`); the
+  immediately for any DSN not starting with `sqlite` (`security/incident.py`); the
   inline comment points to a "RUNBOOK backup §" for `pg_dump`-based backups, which is an
   operational runbook reference, not something implemented in this file.
 - **Two independent copies of the incident check exist by design, not by DRY failure.**
   `policy_engine.py::_incident_marker()` and `hooks/policy_hook.py`'s `INCIDENT_MARKER`
-  constant (`hooks/policy_hook.py:61`) each resolve the same path independently and check
-  it as their literal first action — `policy_hook.py:432-440` calls this out as "step 1:
+  constant (`hooks/policy_hook.py`) each resolve the same path independently and check
+  it as their literal first action — `policy_hook.py` calls this out as "step 1:
   hard stop for every intercepted tool, including Bash," denying with a message that
   tells the operator to run `claude-env incident off` to lift it
-  (`hooks/policy_hook.py:438-439`). This means Bash calls are blocked by the hook's own
+  (`hooks/policy_hook.py`). This means Bash calls are blocked by the hook's own
   check even though `PolicyEngine.evaluate_path()` is never given a chance to run on
   them for that code path — both checks exist so neither enforcement surface depends on
   the other being wired correctly.
 - **Activation and lift severities are asymmetric on purpose.** Activation logs at
-  `"critical"`, lift at `"high"` (`security/incident.py:92-93` vs `:110-111`) — arming
+  `"critical"`, lift at `"high"` (`security/incident.py` vs `:110-111`) — arming
   the kill switch is treated as the more severe event to see in a compliance report.
 - **No test file exists for incident mode.** There is no `tests/test_incident.py` in the
   repo. The only executable verification is
-  [`validation/validate_features.py:120-130`](../../validation/validate_features.py),
+  [`validation/validate_features.py`](../../validation/validate_features.py),
   which shells out to `security/incident.py on`, asserts
   `PolicyEngine.load(REPO).evaluate_path("README.md")` returns `action == "block"` and
   `rule == "incident"`, then shells out to `off` and asserts a fresh `PolicyEngine.load()`
@@ -320,7 +320,7 @@ logging the lift, for the same reason.*
   describes it in the grouped `--help` output as *"Kill switch: freeze everything closed
   / lift (on|off|status)"* (`bin/claude-env:80`) — there is no separate argument parsing
   or wrapping logic in `bin/claude-env` itself; `incident.py`'s own `argparse` setup
-  (`security/incident.py:126-131`) handles `--reason`/`--by` directly.
+  (`security/incident.py`) handles `--reason`/`--by` directly.
 
 ---
 
@@ -330,7 +330,7 @@ logging the lift, for the same reason.*
   see its [evaluate_path walkthrough](policy-engine.md#evaluate_path--the-eight-step-decision)
   for the exact step-0 check and why it runs before path normalization.
 - [`native-tool-hooks.md`](native-tool-hooks.md) — the policy hook's own, independent
-  incident check for native Read/Write/Edit/Bash calls (`hooks/policy_hook.py:432-440`).
+  incident check for native Read/Write/Edit/Bash calls (`hooks/policy_hook.py`).
 - [`policy-simulation.md`](policy-simulation.md) — dry-running a candidate policy against
   `evaluate_path()`; unaffected by incident mode since simulation doesn't go through the
   live enforcement surfaces.

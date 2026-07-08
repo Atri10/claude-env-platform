@@ -6,7 +6,7 @@
 [`audit/session_replay.py`](../../audit/session_replay.py) (112 lines),
 [`audit/compliance_report.py`](../../audit/compliance_report.py) (163 lines).
 **Schema:** [`sql/001_schema.sql`](../../sql/001_schema.sql) (`audit_events` + typed
-projection tables, lines 25-onward).
+projection tables).
 
 This doc covers the three audit modules together because they form one pipeline:
 `audit_logger.py` is the only writer of the ledger, `session_replay.py` is a read-only
@@ -24,7 +24,7 @@ violation, and human approval in claude-env is written as one row in `audit_even
 hash-chained to the row before it — each row's `event_hash` is a function of its own
 payload *and* the previous row's hash, so altering or deleting any past row breaks
 every hash after it. The database itself refuses `UPDATE`/`DELETE` on the table
-(`sql/001_schema.sql:53-59`) as defense in depth; the logger never issues them either.
+(`sql/001_schema.sql`) as defense in depth; the logger never issues them either.
 `AuditLogger` is the single writer (typed helper methods per event kind);
 `session_replay.py` reconstructs one session's timeline for debugging "why did the
 agent do that?"; `compliance_report.py` aggregates across a time window/repo and
@@ -35,7 +35,7 @@ been tampered with.
 
 ## Configuration / interface reference
 
-### `audit_events` table (`sql/001_schema.sql:33-44`)
+### `audit_events` table (`sql/001_schema.sql`)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -51,9 +51,9 @@ been tampered with.
 | `event_hash` | `TEXT NOT NULL UNIQUE` | `sha256(prev_hash \|\| canonical_payload)`. |
 
 Indexes: `ix_audit_ts`, `ix_audit_type`, `ix_audit_session`, `ix_audit_repo`,
-`ix_audit_actor` — all on `audit_events` (`sql/001_schema.sql:45-49`).
+`ix_audit_actor` — all on `audit_events` (`sql/001_schema.sql`).
 
-Append-only guard, DB-level (`sql/001_schema.sql:53-59`):
+Append-only guard, DB-level (`sql/001_schema.sql`):
 
 ```sql
 CREATE TRIGGER IF NOT EXISTS audit_events_no_update
@@ -148,7 +148,7 @@ reconstruct it.
 ### Hash-chain construction — `_append()`
 
 ```python
-# audit/audit_logger.py:72-114
+# audit/audit_logger.py
 def _append(self, event_type: str, payload: dict,
             projection: tuple[str, dict] | None = None) -> int:
     """Append one chained event + optional typed projection, atomically."""
@@ -194,7 +194,7 @@ What actually gets hashed is **not** the caller's raw `payload` argument — it'
 deterministic:
 
 ```python
-# audit/audit_logger.py:54-59
+# audit/audit_logger.py
 def _canon(payload: dict) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -210,15 +210,15 @@ recompute (not just re-check) hashes.
 
 ### Why `_append` reads-then-inserts inside `BEGIN IMMEDIATE`
 
-`_WRITE_LOCK` (`audit/audit_logger.py:46`) is a plain `threading.Lock` — it only
+`_WRITE_LOCK` (`audit/audit_logger.py`) is a plain `threading.Lock` — it only
 serializes callers *within one process*. Across separate OS processes (e.g. two MCP
 servers each holding their own `AuditLogger`), that lock does nothing. The
 read-current-tip-then-insert sequence is therefore wrapped in `self.db.tx(immediate=True)`,
 which issues `BEGIN IMMEDIATE` instead of a lazy `BEGIN` on SQLite
-(`lib/db.py:94-114`):
+(`lib/db.py`):
 
 ```python
-# lib/db.py:97-103 (docstring)
+# lib/db.py (docstring)
 immediate=True acquires the SQLite write lock up front (BEGIN IMMEDIATE)
 instead of lazily on first write (plain BEGIN). Use this whenever a
 transaction reads state that must not change before it writes based on
@@ -236,7 +236,7 @@ vice versa).
 ### `verify_chain()` — recompute, don't just compare
 
 ```python
-# audit/audit_logger.py:194-205
+# audit/audit_logger.py
 def verify_chain(self) -> tuple[bool, int | None]:
     """Recompute the full chain. Returns (ok, first_broken_event_id|None)."""
     rows = self.db.query(
@@ -269,7 +269,7 @@ match, but only the earliest `event_id` is reported.
 focuses purely on reconstructing a human-readable timeline:
 
 ```python
-# audit/session_replay.py:60-74
+# audit/session_replay.py
 def replay(session_id: str) -> list[dict]:
     rows = get_db().query(
         "SELECT event_id, ts, event_type, actor, repo, payload_json "
@@ -294,7 +294,7 @@ A malformed `payload_json` row degrades to an empty `body` rather than raising, 
 corrupt row doesn't kill the whole replay.
 
 `_summarize()` is a pure dispatch table keyed on `event_type`
-(`audit/session_replay.py:27-49`) — e.g. for `tool_call` it prefers
+(`audit/session_replay.py`) — e.g. for `tool_call` it prefers
 `args["file_path"]`, then `args["path"]`, then `args["command"]`, then falls back to
 the first 60 characters of the JSON-dumped `args` dict; for anything it doesn't
 recognize it falls back to `json.dumps(body)[:100]`.
@@ -302,7 +302,7 @@ recognize it falls back to `json.dumps(body)[:100]`.
 ### `compliance_report.py` — proof of integrity is a live re-check, not a cached flag
 
 ```python
-# audit/compliance_report.py:52-59
+# audit/compliance_report.py
 chain_ok, broken_at = AuditLogger("report", actor="reporter").verify_chain()
 
 return {
@@ -314,7 +314,7 @@ return {
 ```
 
 Every report — markdown, JSON, or CSV — embeds this `chain` block, and the CLI's exit
-code is tied directly to it (`compliance_report.py:158`: `return 0 if
+code is tied directly to it (`compliance_report.py`: `return 0 if
 data["chain"]["verified"] else 1`), so a CI job or cron check can fail a build purely
 on `echo $?` without parsing output. Note `AuditLogger("report", actor="reporter")` is
 constructed only to call `verify_chain()` — its `session_id="report"` is never used to
@@ -327,7 +327,7 @@ flattening the `gather()` dict, making it the one format suitable for someone wh
 wants to independently re-verify the chain outside this codebase:
 
 ```python
-# audit/compliance_report.py:126-139
+# audit/compliance_report.py
 def render_csv(d: dict) -> str:
     """Flat CSV of the raw in-window ledger rows (evidence-grade export)."""
     db = get_db()
@@ -350,10 +350,10 @@ def render_csv(d: dict) -> str:
   hash only `body`.
 - **`GENESIS` is a real, literal string, not a sentinel object.** The very first row's
   `prev_hash` column contains the seven ASCII characters `GENESIS`
-  (`audit/audit_logger.py:47`); `verify_chain()` seeds its local `prev_hash` variable
+  (`audit/audit_logger.py`); `verify_chain()` seeds its local `prev_hash` variable
   with the same literal so the first row's check is not special-cased.
 - **`event_hash` has a `UNIQUE` constraint at the schema level**
-  (`sql/001_schema.sql:43`) — a second row that happened to hash identically (would
+  (`sql/001_schema.sql`) — a second row that happened to hash identically (would
   require either a SHA-256 collision or byte-identical envelopes chained from the same
   prior hash, which canonicalization with a timestamp field makes practically
   impossible) would fail the `INSERT` outright, inside the same transaction as the
@@ -361,7 +361,7 @@ def render_csv(d: dict) -> str:
 - **`human_approval_resolve` does not use the `_append(..., projection=...)` path for
   its projection.** It logs the event with no projection tuple, then issues a
   standalone `UPDATE human_approvals SET decision=...,decided_by=...,decided_at=... WHERE
-  request_id=?` (`audit/audit_logger.py:184-191`) — **outside** the `BEGIN IMMEDIATE`
+  request_id=?` (`audit/audit_logger.py`) — **outside** the `BEGIN IMMEDIATE`
   block that wrote the ledger row. This is the one write path in the module not
   covered by the same-transaction guarantee the module docstring advertises
   ("Typed projection tables ... are written in the SAME transaction so they cannot
@@ -369,7 +369,7 @@ def render_csv(d: dict) -> str:
   ledger row and a still-`pending` `human_approvals` row.
 - **`human_approvals` projection rows don't get a `ts` column.** `_append()` special-cases
   the table name: `if table != "human_approvals": cols["ts"] = ts`
-  (`audit/audit_logger.py:107-109`) — that table tracks `requested_at`/`decided_at`
+  (`audit/audit_logger.py`) — that table tracks `requested_at`/`decided_at`
   instead, set explicitly by `human_approval_request`/`human_approval_resolve`.
 - **`verify_chain()` takes no arguments and ignores instance state.** Calling it on
   any `AuditLogger` instance — regardless of that instance's `session_id`, `actor`, or
@@ -377,7 +377,7 @@ def render_csv(d: dict) -> str:
   why `compliance_report.py` can construct a throwaway `AuditLogger("report",
   actor="reporter")` purely to call the method.
 - **Dropping the table is the only way to erase history, and it's still detectable.**
-  Per the module docstring (`audit/audit_logger.py:15-17`): because `UPDATE`/`DELETE`
+  Per the module docstring (`audit/audit_logger.py`): because `UPDATE`/`DELETE`
   are trigger-blocked, the only way to alter history is to drop `audit_events`
   entirely — which resets the chain to start from `GENESIS` again with
   `total_events=0`, a discontinuity visible in every future `compliance_report.py`
@@ -387,14 +387,14 @@ def render_csv(d: dict) -> str:
   column in the schema, so `rfilter`/`rparams` (built from the `--repo` flag) are
   applied to `events_by_type`, `actors`, `policy_violations`, and `approvals`, but
   silently skipped for these two tables. The `[: None if not repo else None]` slice on
-  `top_tools` (`audit/compliance_report.py:70`) is a no-op either way — both branches
+  `top_tools` (`audit/compliance_report.py`) is a no-op either way — both branches
   of that ternary are `None`, so the slice never actually truncates anything.
 - **`chain.total_events` is not window-scoped.** Every other `gather()` field is
   filtered by `WHERE ts>=?`, but `total_events` is a plain `COUNT(*)` over the whole
   table — a `--window 24h` report's chain-integrity total still reflects the entire
   ledger's history, not just the last day.
 - **The module docstring's claim of "millisecond precision" is imprecise.** `_now()`
-  (`audit/audit_logger.py:50-51`) uses `strftime("%Y-%m-%dT%H:%M:%S.%fZ")`, and
+  (`audit/audit_logger.py`) uses `strftime("%Y-%m-%dT%H:%M:%S.%fZ")`, and
   Python's `%f` always renders six digits (microseconds), not three.
 - **No test file exists for this module as of this writing.** There is no
   `tests/test_audit_logger.py` (or similarly named file) in `tests/` — the smoke test

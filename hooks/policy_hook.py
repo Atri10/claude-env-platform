@@ -61,6 +61,12 @@ if str(_REPO) not in sys.path:
 INCIDENT_MARKER = HOME / "state" / "INCIDENT"
 FAIL_CLOSED = os.environ.get("CLAUDE_ENV_HOOK_FAIL_CLOSED", "").lower() == "true"
 
+from lib.logging_setup import get_logger  # noqa: E402
+
+# File-only (stdout is the hook's decision channel — must stay clean). The hook's
+# allow/ask/block decision must never depend on logging succeeding.
+_log = get_logger("hooks")
+
 # tool_input keys that carry a filesystem path, per native tool
 _PATH_KEYS = ("file_path", "path", "notebook_path")
 # tools whose tool_input carries content being written
@@ -378,7 +384,11 @@ def _inspect_bash(command: str, engine, root: Path, cwd: str
                     f"claude-env: command contains secret pattern(s) {hits} — confirm",
                     "")
     except Exception:
-        pass
+        # A failure here silently disables inline-secret screening for this
+        # command — worth a warning, but keep the original posture (fall through
+        # rather than hard-fail the hook on a detector import/regex error).
+        _log.warning("inline secret screening failed; command not screened",
+                     exc_info=True)
     return None
 
 
@@ -466,7 +476,11 @@ def main() -> int:
                             denied or bash_cmd[:200], reason, "block",
                             tier=engine.repo.tier)
                     except Exception:
-                        pass
+                        # auditing must never break the decision — the deny below
+                        # still fires. Log so a broken audit path is not silent.
+                        _log.error("failed to audit bash policy_violation "
+                                   "(decision still enforced): %s", reason,
+                                   exc_info=True)
                     _deny(reason)
                 else:
                     _ask(reason)
@@ -489,7 +503,11 @@ def main() -> int:
                         rel_cp, "control-plane write (guardrail self-modification)",
                         "block", tier=engine.repo.tier)
                 except Exception:
-                    pass
+                    # deny still fires below; just don't let an audit failure
+                    # hide a guardrail self-modification attempt.
+                    _log.error("failed to audit control-plane write block "
+                               "(decision still enforced): %s", rel_cp,
+                               exc_info=True)
                 _deny("blocked by claude-env: this is a governance control-plane file "
                       "(policy / settings / deployed platform config). A model may not "
                       "modify its own guardrails. A human operator edits these via the "
@@ -508,7 +526,10 @@ def main() -> int:
                         rel, decision.rule or decision.reason, "block",
                         tier=engine.repo.tier)
                 except Exception:
-                    pass  # auditing must never break the decision itself
+                    # auditing must never break the decision itself (deny fires
+                    # below); log so audit-write faults are diagnosable.
+                    _log.error("failed to audit path policy_violation "
+                               "(decision still enforced): %s", rel, exc_info=True)
                 _deny(f"blocked by claude-env policy ({decision.reason}: "
                       f"{decision.rule or rel})")
                 return 0
@@ -539,14 +560,22 @@ def main() -> int:
                             f"secret pattern in outgoing write: {hits}",
                             source=path_str or tool)
                     except Exception:
-                        pass
+                        # _ask still fires below; log the audit-write failure.
+                        _log.error("failed to audit secret-in-write security_event "
+                                   "(operator still prompted)", exc_info=True)
                     _ask(f"claude-env: content being written matches secret "
                          f"pattern(s) {hits} — confirm this write")
                     return 0
     except Exception as exc:  # engine/DB unavailable
         if FAIL_CLOSED:
+            _log.error("policy hook error; failing CLOSED (deny): %s", exc,
+                       exc_info=True)
             _deny(f"claude-env policy hook error (fail-closed): {exc}")
-        # fail-open: stay silent -> allow
+        # fail-open: allow, but never silently — a hook that errored and allowed
+        # is a governance-relevant event, so leave a trail even though the posture
+        # is deliberate.
+        _log.warning("policy hook error; failing OPEN (allow) for tool=%s path=%s: %s",
+                     tool, path_str or "-", exc, exc_info=True)
         return 0
 
     return 0  # allow

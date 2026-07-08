@@ -44,6 +44,9 @@ if str(_ROOT) not in sys.path:
 
 from audit.audit_logger import AuditLogger  # noqa: E402
 from lib.db import get_db  # noqa: E402
+from lib.logging_setup import get_logger  # noqa: E402
+
+_log = get_logger("agents")
 
 # Substrings that always indicate a state-mutating / dangerous action.
 _STATE_MUTATING_TERMINAL = (
@@ -159,7 +162,10 @@ class ApprovalGate:
                  f'"claude-env approval needed ({req_id})"'],
                 capture_output=True, timeout=5)
         except Exception:
-            pass
+            # desktop notification is best-effort; the approval still blocks in
+            # the UI regardless of whether the toast fires.
+            _log.debug("approval desktop notification failed for %s", req_id,
+                       exc_info=True)
 
     def resolve(self, request_id: str, approved: bool, decided_by: str) -> None:
         self.audit.human_approval_resolve(

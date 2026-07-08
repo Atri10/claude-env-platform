@@ -38,6 +38,9 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from rag.doc_drift import scan as doc_drift_scan   # noqa: E402
+from lib.logging_setup import get_logger           # noqa: E402
+
+_log = get_logger("agents")
 
 HOME = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
 _TODO = re.compile(r"(?i)\b(TODO|FIXME|HACK|XXX)\b[:\s](.{0,80})")
@@ -117,7 +120,9 @@ def size_hotspots(root: Path, files: list[str], top: int = 10) -> list[dict]:
                 sized.append({"file": f,
                               "lines": sum(1 for _ in (root / f).open(errors="ignore"))})
             except Exception:
-                pass
+                # unreadable/vanished file — skip it in the hotspot ranking.
+                _log.debug("could not size file %s for hotspot report", f,
+                           exc_info=True)
     sized.sort(key=lambda x: -x["lines"])
     return sized[:top]
 

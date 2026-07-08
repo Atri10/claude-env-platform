@@ -25,7 +25,7 @@ body along the way; `import` reads that file back in, additively, into a (possib
 different) namespace. It's how a senior engineer's accumulated decisions and
 conventions become a file that's reviewable, diffable, and shareable (repo, drive,
 chat) — and how a new teammate's first Claude Code session starts already knowing
-them, per the module docstring (`memory/memory_sync.py:6-10`).
+them, per the module docstring (`memory/memory_sync.py`).
 
 ---
 
@@ -45,7 +45,7 @@ python memory/memory_sync.py import --in team.jsonl
 python memory/memory_sync.py import --in team.jsonl --namespace proj-other
 ```
 
-(`memory/memory_sync.py:24-27`)
+(`memory/memory_sync.py`)
 
 ---
 
@@ -79,7 +79,7 @@ exported from. Re-running the same `import` command twice is safe — it's idemp
 One JSON object per line, three `kind`s, always meta first:
 
 ```python
-# memory/memory_sync.py:19-22 (module docstring)
+# memory/memory_sync.py (module docstring)
 {"kind":"meta", "namespace":..., "exported_at":..., "nodes":N, "edges":M}
 {"kind":"node", ...row...}
 {"kind":"edge", ...row...}
@@ -88,14 +88,14 @@ One JSON object per line, three `kind`s, always meta first:
 - **`meta`** — one line, written first. `namespace` is the *exported* namespace (not
   necessarily where it lands on import), plus a UTC timestamp and the node/edge
   counts. Purely informational — `import_ns()` skips `kind == "meta"` entirely
-  (`memory_sync.py:112-113`); it is never validated or used to cross-check counts.
+  (`memory_sync.py`); it is never validated or used to cross-check counts.
 - **`node`** — the full `memory_nodes` row as a dict, spread under `"kind":"node"`,
   with `embedding` popped off and `name`/`body_json` redacted (see below).
 - **`edge`** — the full `memory_edges` row as a dict, spread under `"kind":"edge"`,
   unredacted (edges only carry `src`, `dst`, `rel`, `weight` — no free text).
 
 `default=str` is passed to every `json.dumps` call for node/edge rows
-(`memory_sync.py:85,87`), so any non-JSON-native column value (e.g. a driver-specific
+(`memory_sync.py,87`), so any non-JSON-native column value (e.g. a driver-specific
 type from `lib/db.py`) is coerced to its string form rather than raising.
 
 ---
@@ -103,13 +103,13 @@ type from `lib/db.py`) is coerced to its string form rather than raising.
 ## Namespace scoping
 
 Both directions key off `memory_nodes.namespace` / `memory_edges.namespace`
-(`sql/001_schema.sql:211,233`) — there is no other identifier for "which team/repo
+(`sql/001_schema.sql,233`) — there is no other identifier for "which team/repo
 does this belong to."
 
 **Export** takes one namespace as a required argument and queries only that scope:
 
 ```python
-# memory/memory_sync.py:64-74
+# memory/memory_sync.py
 def export_ns(namespace: str, out_path: Path,
               include_superseded: bool = False) -> dict:
     db = get_db()
@@ -132,7 +132,7 @@ export, even though the edge row itself still exists in the source DB.
 **Import** resolves the *target* namespace per record, not per file:
 
 ```python
-# memory_sync.py:114
+# memory_sync.py
 ns = namespace_override or rec.get("namespace")
 ```
 
@@ -147,18 +147,18 @@ single `namespace` field would look inconsistent).
 ## Secret redaction on export
 
 Redaction is not reimplemented here — it delegates entirely to
-`SecretDetector.redact()` (`security/detectors.py:100-104`), constructed once per
+`SecretDetector.redact()` (`security/detectors.py`), constructed once per
 export run:
 
 ```python
-# memory_sync.py:67
+# memory_sync.py
 redact = SecretDetector(session_id="mem-sync").redact
 ```
 
 Two fields are redacted per node, `name` and `body_json`, but not the same way:
 
 ```python
-# memory_sync.py:81-85
+# memory_sync.py
 n = dict(n)
 n.pop("embedding", None)   # embeddings are model-specific; re-derive locally
 n["name"] = redact(n["name"])
@@ -173,7 +173,7 @@ ran against the raw serialized text. `_redact_json()` exists specifically to avo
 that:
 
 ```python
-# memory_sync.py:47-61
+# memory_sync.py
 def _redact_json(body_json: str, redact) -> str:
     """Redact secrets inside the PARSED values, not the raw escaped string —
     JSON escaping (\") would otherwise defeat the secret regexes."""
@@ -211,7 +211,7 @@ calls `.redact()`, it doesn't define or extend the pattern list.
 ## Import: additive, idempotent, referentially guarded
 
 ```python
-# memory_sync.py:115-132
+# memory_sync.py
 if kind == "node":
     if db.query_one("SELECT 1 FROM memory_nodes WHERE node_id=?",
                     (rec["node_id"],)):
@@ -241,14 +241,14 @@ if kind == "node":
   included in the export, or belongs to a different namespace), the reference is
   dropped to `None` rather than inserted as a dangling foreign key — required because
   `memory_nodes.superseded_by` has a `REFERENCES memory_nodes(node_id)` constraint
-  (`sql/001_schema.sql:223`).
+  (`sql/001_schema.sql`).
 - **Edges require both endpoints to already resolve** at insert time — either
   pre-existing in the DB or already inserted earlier in the same import pass (node
   lines are expected to precede the edges that reference them in the file, since
   export writes nodes before edges):
 
 ```python
-# memory_sync.py:138-144
+# memory_sync.py
 if not (db.query_one("SELECT 1 FROM memory_nodes WHERE node_id=?",
                      (rec["src"],)) and
         db.query_one("SELECT 1 FROM memory_nodes WHERE node_id=?",
@@ -260,7 +260,7 @@ if not (db.query_one("SELECT 1 FROM memory_nodes WHERE node_id=?",
   An edge whose `src` or `dst` never resolves (dropped node, wrong file order, hand
   edited file) is silently counted as skipped, not treated as an error.
 - **Column lists are explicit allowlists**, not `SELECT *`-derived:
-  `node_cols` (`memory_sync.py:99-102`) and `edge_cols` (`memory_sync.py:103`) name
+  `node_cols` (`memory_sync.py`) and `edge_cols` (`memory_sync.py`) name
   exactly the columns inserted. Any extra key in a JSONL record's node/edge dict
   (e.g. a stray `embedding` that wasn't stripped by a hand-crafted file) is silently
   ignored by `rec.get(c)` — it's never smuggled into the INSERT.
@@ -273,14 +273,14 @@ if not (db.query_one("SELECT 1 FROM memory_nodes WHERE node_id=?",
 ## Audit trail
 
 Both directions log through `AuditLogger.memory_write(namespace, memory_type,
-node_id, operation)` (`audit/audit_logger.py:152-158`), which appends to the
+node_id, operation)` (`audit/audit_logger.py`), which appends to the
 hash-chained `audit_events` ledger and a `memory_writes` projection in the same
 transaction:
 
 | Call site | When | `memory_type` | `node_id` | `operation` |
 |---|---|---|---|---|
-| `memory_sync.py:89-90` | once per `export_ns()` call | `None` — not passed as a real memory_type; passed positionally as `namespace, "export", None, ...` — **wait, see note below** | `None` | `"export:{N}n/{M}e"` |
-| `memory_sync.py:130-131` | once per imported node | `rec.get("memory_type", "?")` | `rec["node_id"]` | `"import"` |
+| `memory_sync.py` | once per `export_ns()` call | `None` — not passed as a real memory_type; passed positionally as `namespace, "export", None, ...` — **wait, see note below** | `None` | `"export:{N}n/{M}e"` |
+| `memory_sync.py` | once per imported node | `rec.get("memory_type", "?")` | `rec["node_id"]` | `"import"` |
 
 > Reading the export call site precisely: `AuditLogger(...).memory_write(namespace,
 > "export", None, f"export:{len(nodes)}n/{len(edges)}e")` — the positional arguments
@@ -314,7 +314,7 @@ audit row per node.*
   secrets pasted back in after export would import them unchecked — there's no
   defense-in-depth re-scan on the import path.
 - **`embedding` is always dropped on export, never restored on import.** `node_cols`
-  doesn't include `embedding` at all (`memory_sync.py:99-102`), so an imported node's
+  doesn't include `embedding` at all (`memory_sync.py`), so an imported node's
   `embedding` column is left at the SQLite default (`NULL`) after `INSERT`, matching
   the docstring's rationale that embeddings are model-specific and should be
   re-derived locally rather than transported.
@@ -338,7 +338,7 @@ audit row per node.*
   that's also idempotent-safe to resume — already-inserted `node_id`s will be skipped
   on a re-run).
 - **CLI flag name mismatch is intentional but easy to miss:** the `import` subcommand
-  parses `--in` but stores it as `args.infile` (`memory_sync.py:162`) — `dest="infile"`
+  parses `--in` but stores it as `args.infile` (`memory_sync.py`) — `dest="infile"`
   — so the file path on the command line is always `--in`, never `--infile`.
 
 ---

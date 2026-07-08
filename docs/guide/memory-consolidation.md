@@ -44,7 +44,7 @@ index or embeddings column beyond copying it into the archive line.
 | `PRUNE_FLOOR` | `0.1` | A node qualifies for pruning only if `effective_confidence(...) < 0.1`. |
 | `STALE_DAYS` | `60` | Combined with the floor via AND: the node must also be unaccessed (`last_access`) for 60+ days. |
 | `KEEP_SUPERSEDED` | `30` | A node with `superseded_by` set qualifies for pruning independently, once 30+ days have passed since its `updated_at` (i.e., since it was superseded/edited last). |
-| `PROTECTED_KINDS` | `{"decision", "architecture"}` | Checked against the row's `node_kind` column. Matching rows `continue` immediately (`memory_pruner.py:39-40`) — skipped before either prune condition is even evaluated, so a decision node can never be pruned no matter how low its confidence or how stale it is. |
+| `PROTECTED_KINDS` | `{"decision", "architecture"}` | Checked against the row's `node_kind` column. Matching rows `continue` immediately (`memory_pruner.py`) — skipped before either prune condition is even evaluated, so a decision node can never be pruned no matter how low its confidence or how stale it is. |
 | `ARCHIVE` | `Path.home() / ".claude-env/archive/memory"` | Directory holding one JSONL file per namespace, e.g. `~/.claude-env/archive/memory/proj-payments.jsonl`. Created with `mkdir(parents=True, exist_ok=True)` on every run, even dry-run. |
 
 ### CLI flags
@@ -54,7 +54,7 @@ index or embeddings column beyond copying it into the archive line.
 | `memory_consolidator.py` | `--namespace <ns>` | Run against one namespace. |
 | | `--all` | Run against every distinct namespace in `memory_nodes` (`SELECT DISTINCT namespace`). |
 | `memory_pruner.py` | `--namespace <ns>` / `--all` | Same as above. |
-| | `--apply` | Without it, the pruner **dry-runs**: it computes `to_prune` and reports the count but writes nothing and deletes nothing (`memory_pruner.py:43`, the archive-write/delete block is gated on `if apply and to_prune`). Dry-run is the default. |
+| | `--apply` | Without it, the pruner **dry-runs**: it computes `to_prune` and reports the count but writes nothing and deletes nothing (`memory_pruner.py`, the archive-write/delete block is gated on `if apply and to_prune`). Dry-run is the default. |
 
 Neither script takes a config file — all thresholds are hardcoded module constants, not
 read from `config/*.yaml`. Changing them means editing and redeploying the script (see
@@ -71,17 +71,17 @@ nightly memory-maintenance job rather than by hand:
 
 ```bash
 # Consolidate one namespace's low-confidence clusters
-~/.claude-env/venv/bin/python memory/memory_consolidator.py --namespace proj-payments
+~/.claude-env/venv/bin/python ~/.claude-env/memory/memory_consolidator.py --namespace proj-payments
 
 # Consolidate every namespace with memory
-~/.claude-env/venv/bin/python memory/memory_consolidator.py --all
+~/.claude-env/venv/bin/python ~/.claude-env/memory/memory_consolidator.py --all
 
 # Preview what the pruner would remove — the default, since --apply is required to
 # actually archive+delete anything
-~/.claude-env/venv/bin/python memory/memory_pruner.py --namespace proj-payments
+~/.claude-env/venv/bin/python ~/.claude-env/memory/memory_pruner.py --namespace proj-payments
 
 # Actually prune it, across every namespace
-~/.claude-env/venv/bin/python memory/memory_pruner.py --all --apply
+~/.claude-env/venv/bin/python ~/.claude-env/memory/memory_pruner.py --all --apply
 ```
 
 Both scripts print one JSON object per namespace to stdout (`{"namespace": ..., "clusters_consolidated": ...}`
@@ -97,7 +97,7 @@ exactly how many nodes would be affected before you commit to deleting anything.
 ### Consolidator: `_clusters()` — eligibility, adjacency, components, grouping
 
 ```python
-# memory/memory_consolidator.py:27-54
+# memory/memory_consolidator.py
 def _clusters(db, ns):
     """Find weakly-connected RELATES_TO clusters of eligible nodes."""
     nodes = db.query("SELECT node_id,memory_type,confidence,half_life_days,updated_at,name,body_json "
@@ -158,7 +158,7 @@ Read top to bottom:
 ### Consolidator: `consolidate_ns()` — building the summary node
 
 ```python
-# memory/memory_consolidator.py:56-70
+# memory/memory_consolidator.py
 def consolidate_ns(ns: str) -> dict:
     db = get_db(); mm = MemoryManager(ns, session_id="consolidator", actor="system")
     made = 0
@@ -180,7 +180,7 @@ def consolidate_ns(ns: str) -> dict:
   what `node_kind`s the source nodes actually had (they could be `entity`, `session`,
   `workflow`, anything valid for `mt`). Because `VALID_KINDS["semantic"]` includes
   `concept` but `VALID_KINDS["episodic"]`/`["procedural"]` do **not** (see
-  `memory_manager.py:47-52`), consolidating an `episodic` or `procedural` cluster calls
+  `memory_manager.py`), consolidating an `episodic` or `procedural` cluster calls
   `add_node("episodic", "concept", ...)`, which raises `InvalidMemoryKind` — see
   [Facts](#facts-invariants--edge-cases) below.
 - **The "consolidated" output** is a node whose `body_json` is
@@ -203,7 +203,7 @@ def consolidate_ns(ns: str) -> dict:
 ### Pruner: `prune_ns()` — selection, archive-then-delete, protection
 
 ```python
-# memory/memory_pruner.py:30-52
+# memory/memory_pruner.py
 def prune_ns(ns: str, apply: bool) -> dict:
     db = get_db(); audit = AuditLogger("pruner", actor="system")
     ARCHIVE.mkdir(parents=True, exist_ok=True)
@@ -254,7 +254,7 @@ def prune_ns(ns: str, apply: bool) -> dict:
    k in r if k != "embedding"}` — every column survives into the archive except the
    embedding vector (kept out to avoid bloating the JSONL with binary-derived floats).
    Path is `~/.claude-env/archive/memory/<namespace>.jsonl` (confirmed from the
-   `ARCHIVE` constant plus the `open()` call at line 44) — appended to across runs, one
+   `ARCHIVE` constant plus the `open()` call) — appended to across runs, one
    file per namespace, never rotated or truncated by this script.
 6. **Deletes are two statements, edges first:** `memory_edges` rows where the namespace
    matches and either `src` or `dst` is in the pruned id set, then `memory_nodes` rows
@@ -288,7 +288,7 @@ sourced entirely from reading `memory_consolidator.py` and `memory_pruner.py` di
   absolute, not just a floor/staleness override.
 - **Consolidating an `episodic` or `procedural` cluster will raise, not silently
   degrade.** `consolidate_ns()` always calls `mm.add_node(mt, "concept", ...)`. Per
-  `memory_manager.py:47-52`, `"concept"` is only valid under `memory_type="semantic"`
+  `memory_manager.py`, `"concept"` is only valid under `memory_type="semantic"`
   (and `"agent"`, which accepts any kind). If `_clusters()` ever returns a cluster with
   `mt == "episodic"` or `mt == "procedural"` (both plausible: `session`/`decision`/
   `investigation` nodes RELATES_TO-linked, or `workflow`/`convention`/`pattern` nodes
@@ -299,13 +299,13 @@ sourced entirely from reading `memory_consolidator.py` and `memory_pruner.py` di
   since same-type doesn't guarantee same-taxonomy-group compatibility with a
   hardcoded `"concept"` kind.
 - **The pruner's audit call hardcodes `memory_type="any"`.** `audit.memory_write(ns,
-  "any", i, "prune")` (`memory_pruner.py:51`) never reads the row's actual
+  "any", i, "prune")` (`memory_pruner.py`) never reads the row's actual
   `memory_type` column, even though the row (`r`) is right there in scope. Every prune
   audit row looks identical on that field regardless of what was actually deleted; the
   real type is only recoverable from the archive JSONL, not the audit log.
 - **The pruner's `DELETE` statements build the id list via f-string interpolation, not
   `?` placeholders.** `idlist = ",".join(f"'{i}'" for i in ids)` is spliced directly
-  into the SQL text for both `DELETE` statements (`memory_pruner.py:48-50`). This
+  into the SQL text for both `DELETE` statements (`memory_pruner.py`). This
   departs from the platform-wide SQL-portability convention (see the root
   `CLAUDE.md` invariant "Keep SQL portable (`?` placeholders...)"). It's not
   attacker-reachable in the current call path (`ids` come from `node_id`s the pruner

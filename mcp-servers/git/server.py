@@ -65,28 +65,60 @@ def _git(args: list[str]) -> str:
 async def list_tools() -> list[Tool]:
     return [
         Tool(name="git.log",
-             description="git log (read-only). Optional max_count and path.",
+             description="Read-only commit history via `git log --oneline --decorate` in the "
+                         "repo root, most-recent first. Use to review recent commits or the "
+                         "history touching one path. Does not mutate anything; state-changing "
+                         "git ops (push/reset/rebase/amend/force/config) are denied by this "
+                         "server. Runs with shell=False (argv only). Output is truncated to "
+                         "the last ~8k chars and the call is audited.",
              inputSchema={"type": "object",
-                          "properties": {"max_count": {"type": "integer"},
-                                         "path": {"type": "string"}}}),
+                          "properties": {"max_count": {"type": "integer",
+                                          "description": "Max commits to return (maps to "
+                                          "`-n`). Defaults to 30."},
+                                         "path": {"type": "string",
+                                          "description": "Optional repo-relative path to "
+                                          "limit history to, e.g. 'src/app.py'."}}}),
         Tool(name="git.diff",
-             description="git diff between refs or working tree (read-only).",
+             description="Read-only `git diff`. With no args, diffs the working tree against "
+                         "the index; pass ref_a (and optionally ref_b) to diff between commits/"
+                         "branches. Use to inspect uncommitted changes or compare two refs. "
+                         "Does not mutate; runs argv-only (shell=False). Output truncated to "
+                         "the last ~8k chars; the call is audited.",
              inputSchema={"type": "object",
-                          "properties": {"ref_a": {"type": "string"},
-                                         "ref_b": {"type": "string"},
-                                         "path": {"type": "string"}}}),
+                          "properties": {"ref_a": {"type": "string",
+                                          "description": "First ref to compare, e.g. 'HEAD', "
+                                          "'main', or a commit sha. Omit to diff the working "
+                                          "tree."},
+                                         "ref_b": {"type": "string",
+                                          "description": "Second ref to compare against ref_a, "
+                                          "e.g. 'feature-branch'. Optional."},
+                                         "path": {"type": "string",
+                                          "description": "Optional repo-relative path to limit "
+                                          "the diff to, e.g. 'src/app.py'."}}}),
         Tool(name="git.blame",
-             description="git blame for a file (read-only).",
+             description="Read-only `git blame` for one file: shows the commit and author "
+                         "responsible for each line. Use to find when/why a line changed. "
+                         "argv-only (shell=False); output truncated to ~8k chars; audited.",
              inputSchema={"type": "object",
-                          "properties": {"path": {"type": "string"}},
+                          "properties": {"path": {"type": "string",
+                                          "description": "Repo-relative file to blame, e.g. "
+                                          "'src/app.py' (required)."}},
                           "required": ["path"]}),
         Tool(name="git.status",
-             description="git status --porcelain (read-only).",
+             description="Read-only `git status --porcelain`: a compact, machine-readable list "
+                         "of changed/staged/untracked files (empty output means a clean tree). "
+                         "Takes no arguments. argv-only (shell=False); audited.",
              inputSchema={"type": "object", "properties": {}}),
         Tool(name="git.show",
-             description="git show a ref/object (read-only).",
+             description="Read-only `git show <ref>`: display a commit (message + diff) or the "
+                         "contents of an object at a ref. Use to inspect a specific commit or "
+                         "a file at a given revision. argv-only (shell=False); output "
+                         "truncated to ~8k chars; audited.",
              inputSchema={"type": "object",
-                          "properties": {"ref": {"type": "string"}},
+                          "properties": {"ref": {"type": "string",
+                                          "description": "Object/ref to show, e.g. a commit "
+                                          "sha, 'HEAD~1', a tag, or 'HEAD:path/to/file' for a "
+                                          "file at a revision (required)."}},
                           "required": ["ref"]}),
     ]
 

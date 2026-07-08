@@ -29,6 +29,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from lib.logging_setup import get_logger  # noqa: E402
+
+_log = get_logger("rag")
 
 # path-looking tokens with a code/config extension, optionally backticked.
 # (?<![$\w{/.-]) — not a $VAR/${VAR}, not the tail of an absolute or hyphenated
@@ -112,7 +115,10 @@ def scan(root: Path, semantic: bool = False) -> dict:
                     if sim < 0.25:
                         low_sim.append({"doc": md, "ref": rel, "similarity": round(sim, 3)})
                 except Exception:
-                    pass
+                    # per-reference similarity check is best-effort; skip this ref
+                    # on failure rather than abort the whole drift scan.
+                    _log.debug("semantic drift check failed for ref %s in %s",
+                               rel, md, exc_info=True)
 
     return {"repo": str(root), "docs_scanned": len(_md_files(root)),
             "reference_pairs": pairs,

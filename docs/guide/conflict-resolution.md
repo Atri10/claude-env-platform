@@ -26,7 +26,7 @@ to the audit ledger as a `medium`-severity security event.
 
 ## Interface reference
 
-### `Proposal` (dataclass, `conflict_resolver.py:58-77`)
+### `Proposal` (dataclass, `conflict_resolver.py`)
 
 | Field | Type | Default | Effect |
 |---|---|---|---|
@@ -40,7 +40,7 @@ to the audit ledger as a `medium`-severity security event.
 | `additive` | `bool` | `True` | `False` adds `+3` to `blast_radius`. |
 | `blast_radius` (property) | `int` | computed | `len(files)` plus the two penalties above; smaller is "safer." |
 
-### `Resolution` (dataclass, `conflict_resolver.py:80-85`)
+### `Resolution` (dataclass, `conflict_resolver.py`)
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -58,7 +58,7 @@ to the audit ledger as a `medium`-severity security event.
 | `_decide(proposals)` | `list[Proposal] -> Resolution` | The five-step ladder (see below). Private; not called directly by callers. |
 | `_same_target(proposals)` (static) | `list[Proposal] -> bool` | `True` if at least two proposals' `files` sets intersect. Requires ≥2 non-empty file sets; proposals with no `files` are ignored for this check. |
 
-### `_PRECEDENCE` table (`conflict_resolver.py:44-55`)
+### `_PRECEDENCE` table (`conflict_resolver.py`)
 
 | Agent | Weight |
 |---|---|
@@ -81,7 +81,7 @@ to the audit ledger as a `medium`-severity security event.
 ### `resolve()` — trivial cases plus audit wiring
 
 ```python
-# agents/orchestration/conflict_resolver.py:94-110
+# agents/orchestration/conflict_resolver.py
 def resolve(self, proposals: list[Proposal]) -> Resolution:
     if not proposals:
         return Resolution(None, [], "no proposals", escalate=False)
@@ -115,7 +115,7 @@ weight is only used later, in steps 3 and 4, for ranking among proposals that di
 **not** trigger a block.
 
 ```python
-# agents/orchestration/conflict_resolver.py:112-120
+# agents/orchestration/conflict_resolver.py
 def _decide(self, proposals: list[Proposal]) -> Resolution:
     # 1. security veto: any security block kills conflicting feature proposals
     sec_blocks = [p for p in proposals if p.is_security_block]
@@ -140,7 +140,7 @@ Two consequences worth being precise about:
 The remaining steps, read top to bottom:
 
 ```python
-# agents/orchestration/conflict_resolver.py:122-164
+# agents/orchestration/conflict_resolver.py
 # 2. policy / approval block wins over any feature proposal
 pol_blocks = [p for p in proposals if p.is_policy_block]
 if pol_blocks:
@@ -220,9 +220,9 @@ before it will pick a winner.*
 ## Facts, invariants & edge cases
 
 - **The security veto is a hard short-circuit, not a weighted vote.** Verified by
-  reading `_decide()` lines 113-120 directly: it filters on the boolean
+  reading `_decide()` directly: it filters on the boolean
   `is_security_block` and returns on the first match. The `security: 100` entry in
-  `_PRECEDENCE` (line 45) is never read by this branch — it only matters in steps 3
+  `_PRECEDENCE` is never read by this branch — it only matters in steps 3
   and 4, for ranking among proposals that were not already vetoed. If a `security`-
   agent proposal is submitted *without* `is_security_block=True`, it gets no special
   treatment beyond its precedence weight of 100 (which will usually still win step
@@ -237,16 +237,16 @@ before it will pick a winner.*
   the same batch, the security-flagged one wins and the policy-flagged one becomes
   a loser without step 2 ever running.
 - **The evidence step requires file overlap, not just presence of evidence.**
-  `_same_target()` (`conflict_resolver.py:166-172`) intersects `files` sets
+  `_same_target()` (`conflict_resolver.py`) intersects `files` sets
   pairwise against the first proposal's set; proposals with an empty `files` list
   are excluded from `sets` entirely and can never contribute to a match. Two
   evidenced/unevidenced proposals touching disjoint files skip step 3 and fall to
   step 4 or 5 instead.
 - **The precedence-gap threshold is a literal `10`, hardcoded.** Not configurable
   via any config file — this module has no YAML/JSON config surface at all, unlike
-  `policy_engine.py`. Changing the margin means editing `conflict_resolver.py:145`.
+  `policy_engine.py`. Changing the margin means editing `conflict_resolver.py`.
 - **`blast_radius` penalizes irreversible and non-additive changes independently
-  and additively** (`+5` and `+3`, `conflict_resolver.py:70-77`) — a destructive,
+  and additively** (`+5` and `+3`, `conflict_resolver.py`) — a destructive,
   non-additive, single-file change (`radius = 1 + 5 + 3 = 9`) can lose to a
   reversible, additive four-file change (`radius = 4`) in step 5.
 - **Escalation still picks `losers = proposals`, i.e. everyone, including implicitly
@@ -254,7 +254,7 @@ before it will pick a winner.*
   submitted proposal lands in `losers`.
 - **An escalated resolution is logged as `success=False` in the audit `agent_action`
   row**, even though `_decide()` didn't raise or error — `resolve()` computes
-  `success=not res.escalate` (`conflict_resolver.py:105`). Anyone reading the audit
+  `success=not res.escalate` (`conflict_resolver.py`). Anyone reading the audit
   ledger for failures will see conflict escalations mixed in with genuine
   action failures unless they also check the `[ESCALATED]` summary suffix.
 - **0 and 1 proposals never reach `_decide()` at all.** `resolve()` special-cases
@@ -265,8 +265,7 @@ before it will pick a winner.*
 - **Every call to `resolve()` writes at least one audit row**, via the
   `AuditLogger` constructed in `__init__` — this happens even for the trivial
   0- and 1-proposal returns, since those return *before* the `agent_action`/
-  `security_event` calls in `resolve()`... concretely: re-reading lines 94-110,
-  the 0- and 1-proposal early returns happen **before** the `self.audit.agent_action(...)`
+  `security_event` calls in `resolve()`... concretely: the 0- and 1-proposal early returns happen **before** the `self.audit.agent_action(...)`
   call, so **no audit row is written for trivial cases** — only conflicts that reach
   `_decide()` get logged. This is a correction worth flagging explicitly since it's
   easy to misread the method as "always audits."
@@ -275,7 +274,7 @@ before it will pick a winner.*
   itself (including all of `tests/`) returned no matches — there is currently no
   automated coverage of the five-step ladder, the security-veto short-circuit, or
   the escalation path. The `if __name__ == "__main__":` block at
-  `conflict_resolver.py:175-183` is the only runnable example in the repo, and it's
+  `conflict_resolver.py` is the only runnable example in the repo, and it's
   a manual demo, not a test.
 
 ---

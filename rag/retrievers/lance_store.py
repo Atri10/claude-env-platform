@@ -18,7 +18,13 @@ Hybrid search:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from lib.logging_setup import get_logger  # noqa: E402
+
+_log = get_logger("rag")
 
 try:
     import lancedb
@@ -70,7 +76,10 @@ class LanceStore:
         try:
             tbl.create_fts_index("text", replace=True)
         except Exception:
-            pass
+            # non-fatal: FTS index is an optimization; hybrid search degrades to
+            # vector-only without it. Log so a persistently missing index is visible.
+            _log.warning("FTS index creation failed for table %s; "
+                         "hybrid search will be vector-only", name, exc_info=True)
         return tbl
 
     def upsert(self, repo: str, branch: str, rows: list[dict]) -> int:
@@ -83,7 +92,10 @@ class LanceStore:
         try:
             tbl.delete(f"chunk_id IN ({id_list})")
         except Exception:
-            pass
+            # first upsert into a fresh table has nothing to delete; a real
+            # delete failure would surface as duplicate rows, so log it.
+            _log.debug("pre-upsert delete failed for %s/%s (%d ids); "
+                       "proceeding to add", repo, branch, len(ids), exc_info=True)
         tbl.add(rows)
         return len(rows)
 

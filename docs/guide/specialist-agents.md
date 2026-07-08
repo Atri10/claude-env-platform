@@ -36,12 +36,12 @@ script, not a test enforced by `pytest`.
 
 | Key | Type | Effect |
 |---|---|---|
-| `version` | int | Schema version; `1` (`agent_registry.yaml:7`). Not checked by any loader — purely documentary today. |
+| `version` | int | Schema version; `1` (`agent_registry.yaml`). Not checked by any loader — purely documentary today. |
 | `defaults` | mapping, YAML-anchored `&defaults` | Merged into every agent via YAML's `<<: *defaults` merge-key syntax — not a runtime default-filling step in Python. |
 | `agents` | mapping of name → agent config | 11 entries: `orchestrator` + 10 specialists. |
-| `global_approval_gates` | list[str] | Free-text descriptions of actions that always require approval, regardless of agent (`agent_registry.yaml:115-120`). **Not machine-checked against this list** — `approval_gate.py`'s `ApprovalGate.evaluate()` re-implements each of these five conditions in code (tier ≥2, state-mutating terminal, git rewrite, memory prune, out-of-scope write); this list is the human-readable index of that logic, not something the gate iterates over. |
+| `global_approval_gates` | list[str] | Free-text descriptions of actions that always require approval, regardless of agent (`agent_registry.yaml`). **Not machine-checked against this list** — `approval_gate.py`'s `ApprovalGate.evaluate()` re-implements each of these five conditions in code (tier ≥2, state-mutating terminal, git rewrite, memory prune, out-of-scope write); this list is the human-readable index of that logic, not something the gate iterates over. |
 
-### `defaults` anchor (`agent_registry.yaml:9-15`)
+### `defaults` anchor (`agent_registry.yaml`)
 
 ```yaml
 defaults: &defaults
@@ -67,23 +67,23 @@ practice, but it is not enforced by the YAML mechanism itself.
 
 | Field | Type | Present on | Effect |
 |---|---|---|---|
-| `prompt` | path str | all 11 | Path to the agent's system prompt under `agents/prompts/`. Verified to exist by `validate_agents.py:54-56`; all 11 files exist on disk. |
+| `prompt` | path str | all 11 | Path to the agent's system prompt under `agents/prompts/`. Verified to exist by `validate_agents.py`; all 11 files exist on disk. |
 | `role` | str | all 11 | One-line free-text description. Not read by any loader shown here — documentary. |
 | `allowed_tools` | list[str] | all 11 | Tool-id allow-list, dotted `server.tool` or `server.*` glob form (see [tool-id note](#tool-ids-are-documentary-glue-not-an-enforced-allow-list) below). |
-| `denied_tools` | list[str] | all 11 (via defaults or override) | Explicit deny list. `approval_gate.py` matches `action` against each pattern with `fnmatch.fnmatch` and, on a match, adds a reason to the verdict (`approval_gate.py:111-113`) — a "denial" surfaces as an approval requirement, not a hard block, at this layer. |
+| `denied_tools` | list[str] | all 11 (via defaults or override) | Explicit deny list. `approval_gate.py` matches `action` against each pattern with `fnmatch.fnmatch` and, on a match, adds a reason to the verdict (`approval_gate.py`) — a "denial" surfaces as an approval requirement, not a hard block, at this layer. |
 | `memory_access` | list[str] | all 11 (via defaults or override) | `["read"]`, `["read","write"]`, or `["none"]`. 4 of 11 agents (`orchestrator`, `architect`, `security`, `research`) override to `["read","write"]`; the rest keep the read-only default. |
 | `rag_access` | `"read"` \| `"none"` | all 11 (via defaults) | Every agent keeps the default `"read"`; none override it in the current file. |
-| `requires_approval` | bool | all 11 (via defaults or override) | Only `devops` overrides this to `true` — every devops action is approval-gated, with the inline comment `# every action gated` (`agent_registry.yaml:67`). |
-| `write_paths` | list[glob] | `backend`, `frontend`, `database`, `devops`, `testing`, `documentation` (6 of 11) | Repo-relative globs the agent may write inside. Read by both `task_router.py` (as a routing signal, via `fnmatch`) and `approval_gate.py` (as the scope check for write actions). Agents without this key (`orchestrator`, `architect`, `security`, `performance`, `research`) are treated by `ApprovalGate._within_scope()` as having **no writable scope at all** — any write action from them is automatically out-of-scope (`approval_gate.py:124-127`, `if not scopes: return False`). |
+| `requires_approval` | bool | all 11 (via defaults or override) | Only `devops` overrides this to `true` — every devops action is approval-gated, with the inline comment `# every action gated` (`agent_registry.yaml`). |
+| `write_paths` | list[glob] | `backend`, `frontend`, `database`, `devops`, `testing`, `documentation` (6 of 11) | Repo-relative globs the agent may write inside. Read by both `task_router.py` (as a routing signal, via `fnmatch`) and `approval_gate.py` (as the scope check for write actions). Agents without this key (`orchestrator`, `architect`, `security`, `performance`, `research`) are treated by `ApprovalGate._within_scope()` as having **no writable scope at all** — any write action from them is automatically out-of-scope (`approval_gate.py`, `if not scopes: return False`). |
 | `notes` | str | `database`, `security`, `testing` (3 of 11) | Free-text operational caveats (e.g. no live DB connections, no production fixtures). Documentary only — not read by any loader. |
-| `can_spawn` | list[str] | `orchestrator` only | The 10 specialist names the orchestrator may delegate to. Checked by `validate_agents.py:59-60` to equal the `SPECIALISTS` set exactly. |
-| `tier_limits.web_search_allowed_tiers` | list[int] | `research` only | `[0, 1]` — the inline comment states no external fetch for tier 2/3 repos (`agent_registry.yaml:111-112`). **Not read by `task_router.py` or `approval_gate.py`** — this is the only field in the file with no confirmed runtime consumer among the three loaders read for this doc; tier-gated fetch enforcement lives in the `documentation.fetch` tool path instead (see [OVERVIEW.md §5](../OVERVIEW.md#5-knowledge-and-search-shouldnt-leave-the-building)), not in this registry. |
+| `can_spawn` | list[str] | `orchestrator` only | The 10 specialist names the orchestrator may delegate to. Checked by `validate_agents.py` to equal the `SPECIALISTS` set exactly. |
+| `tier_limits.web_search_allowed_tiers` | list[int] | `research` only | `[0, 1]` — the inline comment states no external fetch for tier 2/3 repos (`agent_registry.yaml`). **Not read by `task_router.py` or `approval_gate.py`** — this is the only field in the file with no confirmed runtime consumer among the three loaders read for this doc; tier-gated fetch enforcement lives in the `documentation.fetch` tool path instead (see [OVERVIEW.md §5](../OVERVIEW.md#5-knowledge-and-search-shouldnt-leave-the-building)), not in this registry. |
 
 #### Tool ids are documentary glue, not an enforced allow-list
 
 `allowed_tools` values like `"lancedb.search"` or `"git.*"` are dotted `server.tool`
 identifiers matching entries in [`config/mcp-servers.json`](../../config/mcp-servers.json)
-(per the file header comment, `agent_registry.yaml:5`). Neither `task_router.py` nor
+(per the file header comment, `agent_registry.yaml`). Neither `task_router.py` nor
 `approval_gate.py` reads `allowed_tools` at all — only `write_paths`, `denied_tools`, and
 `requires_approval` are consumed at runtime by the two orchestration modules read for
 this doc. `allowed_tools` functions as a declared contract for whoever wires an agent's
@@ -111,7 +111,7 @@ registry loaders themselves gate on.
 | `research` | Library evaluation, RFC analysis, dependency research | `lancedb.search`, `filesystem.read`, `documentation.fetch`, `memory.read`, `memory.write` | *(none)* | `read`, `write` | `false` | Denies `filesystem.write`, `terminal.exec`, `terminal.exec_unrestricted`. Only agent with `tier_limits`. |
 
 `backend` and `testing` both declare `src/**` as a write path — this overlap is real in
-the file (`agent_registry.yaml:41` and `:91`) and is exactly the kind of ambiguity
+the file (`agent_registry.yaml` and `:91`) and is exactly the kind of ambiguity
 `task_router.py`'s intent-keyword scoring (not path matching alone) is meant to break;
 see [`task-routing.md`](task-routing.md).
 
@@ -149,24 +149,24 @@ There is no dedicated `AgentRegistry` class — three modules each open and pars
 independently with the standard library pattern:
 
 ```python
-# agents/orchestration/task_router.py:71-73
+# agents/orchestration/task_router.py
 def __init__(self, registry_path: str | Path):
     reg = yaml.safe_load(Path(registry_path).read_text())
     self.agents: dict = reg.get("agents", {})
 ```
 
 ```python
-# agents/orchestration/approval_gate.py:76-79
+# agents/orchestration/approval_gate.py
 self.registry_path = Path(registry_path)
 reg = yaml.safe_load(self.registry_path.read_text())
 self.agents: dict = reg.get("agents", {})
 self.global_gates: list[str] = reg.get("global_approval_gates", [])
 ```
 
-`agent_handoff.py:78` follows the identical one-line `yaml.safe_load(Path(registry_path).read_text())`
+`agent_handoff.py` follows the identical one-line `yaml.safe_load(Path(registry_path).read_text())`
 pattern. All three default their CLI `--registry` argument to
 `agents/agent_registry.yaml` resolved from the repo root (e.g.
-`approval_gate.py:199`, `task_router.py:133`), but all accept an explicit path — so a
+`approval_gate.py`, `task_router.py`), but all accept an explicit path — so a
 caller can point at a different registry file entirely; nothing hardcodes the filename
 beyond the CLI default.
 
@@ -176,14 +176,14 @@ decision time — `requires_approval`, `write_paths` (via `_within_scope`), and
 above, never iterated; the five conditions it documents are hand-coded checks in
 `evaluate()` (tier, state-mutating terminal keywords, git-rewrite keywords, memory
 destructive-op keywords, and out-of-scope write) that happen to correspond 1:1 with the
-five bullet points at `agent_registry.yaml:116-120`.
+five bullet points at `agent_registry.yaml`.
 
 `validate_agents.py` is the only script that treats the registry as something to
 validate rather than just consume — it re-parses the YAML itself (it does not import a
 shared loader either) and checks: the orchestrator and all 10 specialists are present,
 every `prompt` path resolves to a real file, `orchestrator.can_spawn` equals the
 specialist set exactly, and then exercises `TaskRouter` and `ApprovalGate` end-to-end
-against six representative routing cases and six approval scenarios (`validate_agents.py:35-96`).
+against six representative routing cases and six approval scenarios (`validate_agents.py`).
 
 ![Registry schema: defaults anchor merged into per-agent overrides](../assets/guide/specialist-agents/registry-schema.svg)
 
@@ -198,7 +198,7 @@ against six representative routing cases and six approval scenarios (`validate_a
   `tier_limits.web_search_allowed_tiers` below).
 - **`tier_limits.web_search_allowed_tiers` (research agent only) has no confirmed
   runtime reader among the three orchestration loaders.** It's documented intent
-  (`agent_registry.yaml:111-112`) but neither `TaskRouter` nor `ApprovalGate` reads
+  (`agent_registry.yaml`) but neither `TaskRouter` nor `ApprovalGate` reads
   `tier_limits`. Don't assume declaring a limit here enforces it — verify the actual
   enforcement point (likely the `documentation.fetch` tool / tier-gated fetch path)
   before relying on it.
@@ -209,7 +209,7 @@ against six representative routing cases and six approval scenarios (`validate_a
   consistent by convention, not enforced by YAML or by any loader.
 - **An agent with no `write_paths` key cannot pass a write-scope check at all.**
   `ApprovalGate._within_scope()` returns `False` immediately if `cfg.get("write_paths")`
-  is falsy (`approval_gate.py:125-127`) — `orchestrator`, `architect`, `security`,
+  is falsy (`approval_gate.py`) — `orchestrator`, `architect`, `security`,
   `performance`, and `research` are therefore always "out of scope" for any write
   action, which in turn always adds an approval reason via `evaluate()`'s scope check.
   This is presumably intentional (these five are meant to be read-only/advisory) but it
@@ -221,7 +221,7 @@ against six representative routing cases and six approval scenarios (`validate_a
 - **`global_approval_gates` is documentation, not executable policy.** `ApprovalGate`
   loads the list into `self.global_gates` but never iterates it in `evaluate()` — the
   five behaviors it names are separately hand-implemented as keyword/tier/scope checks.
-  If someone edits the five bullet points at `agent_registry.yaml:116-120` expecting
+  If someone edits the five bullet points at `agent_registry.yaml` expecting
   gate behavior to change, it won't; the corresponding Python in `approval_gate.py` has
   to change too.
 - **`tests/test_subagent_tools.py` does not test `agent_registry.yaml`.** It enforces a
@@ -229,7 +229,7 @@ against six representative routing cases and six approval scenarios (`validate_a
   definitions under `.claude/agents/*.md` (and the onboarding template's copies under
   `templates/repo-onboarding/.claude/agents/*.md`) must declare an explicit `tools:`
   frontmatter allow-list and must never include `Bash`, `Write`, `Edit`, or
-  `NotebookEdit` (`tests/test_subagent_tools.py:15,35-45`). This is the mechanism that
+  `NotebookEdit` (`tests/test_subagent_tools.py,35-45`). This is the mechanism that
   actually constrains the `code-reviewer` / `architecture-reviewer` / `governance-reviewer`
   subagents referenced in the platform's own `CLAUDE.md` — it's the enforcement layer for
   those three specific agents, not a generic check over every entry in this registry.
@@ -237,7 +237,7 @@ against six representative routing cases and six approval scenarios (`validate_a
   (a standalone script, not collected by `pytest`) is the only consistency check for
   this file.
 - **`backend` and `testing` overlap on `src/**` as a write path.** Both declare it
-  (`agent_registry.yaml:41`, `:91`); routing between them for a `src/**` target falls to
+  (`agent_registry.yaml`, `:91`); routing between them for a `src/**` target falls to
   `task_router.py`'s intent-keyword scoring, not the path match alone — see
   [`task-routing.md`](task-routing.md) for how the tie is broken.
 

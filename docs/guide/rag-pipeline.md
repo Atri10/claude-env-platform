@@ -38,12 +38,12 @@ configured — never hardcoded — in `config/rag.yaml` or an env var, resolved 
 Resolution order for every field (highest priority first): **1. environment
 variable → 2. `config/rag.yaml` → 3. built-in numeric fallback.** Model *paths*
 have no fallback — they default to `""` and the code fails loud rather than
-guessing (`rag/config.py:31-47`).
+guessing (`rag/config.py`).
 
 | Key | Env override | Type | Built-in fallback | Effect |
 |---|---|---|---|---|
 | `embedding.model_path` | `EMBED_MODEL_PATH` | str | `""` (none) | Path to a local GGUF embedding model. Empty means unconfigured; `get_embedder()` raises `RuntimeError` rather than picking a default. |
-| `embedding.model_name` | `EMBED_MODEL_NAME` | str | derived | Label stored in `rag_index_state.embed_model`. If unset, derived as `Path(model_path).stem` (`rag/config.py:136-137`); empty path → empty name. |
+| `embedding.model_name` | `EMBED_MODEL_NAME` | str | derived | Label stored in `rag_index_state.embed_model`. If unset, derived as `Path(model_path).stem` (`rag/config.py`); empty path → empty name. |
 | `embedding.document_prefix` | `EMBED_DOC_PREFIX` | str | `""` | Prepended verbatim to text before embedding a document (some models need a task prefix, e.g. nomic-embed-text's `"search_document: "`). |
 | `embedding.query_prefix` | `EMBED_QUERY_PREFIX` | str | `""` | Prepended verbatim to text before embedding a query. |
 | `embedding.n_ctx` | `EMBED_CTX` | int | `2048` | llama.cpp context window in tokens. |
@@ -51,9 +51,9 @@ guessing (`rag/config.py:31-47`).
 | `embedding.embedding_dim` | `EMBED_DIM` | int | `768` | Output vector dimension; must match the configured model. Changing it requires a full re-index (it's baked into the LanceDB table schema). |
 | `reranker.model_dir` | `RERANKER_DIR` | str | `""` (disabled) | Directory containing an ONNX cross-encoder (`model.onnx` + tokenizer files). Empty disables reranking; the pipeline falls back to fusion order. |
 | `RAG_CONFIG_YAML` | (this **is** the env var) | path | — | Explicit override for where `rag.yaml` itself is read from; see resolution order below. |
-| `LANCEDB_PATH` | (this **is** the env var) | path | `~/.claude-env/knowledge/lancedb` | Where LanceDB tables live on disk (`rag/retrievers/lance_store.py:30-31`). |
+| `LANCEDB_PATH` | (this **is** the env var) | path | `~/.claude-env/knowledge/lancedb` | Where LanceDB tables live on disk (`rag/retrievers/lance_store.py`). |
 
-Where `config/rag.yaml` itself is found (`_resolve_yaml_path`, `rag/config.py:50-69`):
+Where `config/rag.yaml` itself is found (`_resolve_yaml_path`, `rag/config.py`):
 
 1. `RAG_CONFIG_YAML` env var, if set (`~` and env vars expanded).
 2. `<repo_root>/config/rag.yaml` — one level up from `rag/config.py`, i.e. this
@@ -100,7 +100,7 @@ paying the cost of loading the embedding model.
 ## `rag/config.py` — the one place models get chosen
 
 ```python
-# rag/config.py:179-198
+# rag/config.py
 def get_embedder(cfg: RagConfig | None = None):
     global _EMBEDDER, _EMBEDDER_KEY
     from rag.embeddings.llama_embedder import LlamaEmbedder
@@ -117,22 +117,22 @@ def get_embedder(cfg: RagConfig | None = None):
     return _EMBEDDER
 ```
 
-`get_embedder()` and `get_reranker()` (`rag/config.py:179-205`) are the **only**
+`get_embedder()` and `get_reranker()` (`rag/config.py`) are the **only**
 sanctioned way to construct these classes — every caller (indexer, retriever,
 memory writes) goes through them, so a model swap is a one-line yaml/env change,
 never a code change. The embedder instance is cached at module level keyed by
-`model_path` (`_EMBEDDER` / `_EMBEDDER_KEY`, `rag/config.py:175-177`) because
+`model_path` (`_EMBEDDER` / `_EMBEDDER_KEY`, `rag/config.py`) because
 loading a GGUF file is expensive; `get_reranker()` has no such cache — it's cheap
 enough (or disabled) that `CrossEncoderReranker.__init__` runs fresh each call.
 `RagConfig.load()` itself is memoized too (`_CONFIG` singleton, `get_config()`,
-`rag/config.py:165-172`) and only re-reads yaml when called with `reload=True`.
+`rag/config.py`) and only re-reads yaml when called with `reload=True`.
 
 ---
 
 ## Chunking — `rag/chunkers/chunkers.py`
 
 One file, one function per file-type strategy, dispatched by extension in
-`chunk_file()` (`rag/chunkers/chunkers.py:212-230`):
+`chunk_file()` (`rag/chunkers/chunkers.py`):
 
 | Extension | Strategy | Function |
 |---|---|---|
@@ -140,7 +140,7 @@ One file, one function per file-type strategy, dispatched by extension in
 | `.py .js .ts .tsx .go .java .kt .cs .rs .c .h .cpp .hpp` | AST-aware (tree-sitter), falls back to window if parsing fails or no unit nodes found | `_chunk_code` |
 | anything else | Sliding window | `_split_window` (called directly with `TARGETS["fallback"]`) |
 
-Target/overlap token budgets (`TARGETS`, `rag/chunkers/chunkers.py:56-61`), in
+Target/overlap token budgets (`TARGETS`, `rag/chunkers/chunkers.py`), in
 `(target_tokens, overlap_tokens)`:
 
 | Strategy key | Target | Overlap |
@@ -151,12 +151,12 @@ Target/overlap token budgets (`TARGETS`, `rag/chunkers/chunkers.py:56-61`), in
 | `fallback` | 400 | 50 |
 
 Tokens are approximated as `len(text) // 4` (`approx_tokens`,
-`rag/chunkers/chunkers.py:85-86`) — there is no real tokenizer wired in.
+`rag/chunkers/chunkers.py`) — there is no real tokenizer wired in.
 
 ### AST-aware code chunking
 
 ```python
-# rag/chunkers/chunkers.py:37-54
+# rag/chunkers/chunkers.py
 def get_parser(lang: str):
     if _TSParser is None or _get_language is None:
         return None
@@ -170,33 +170,33 @@ def get_parser(lang: str):
 
 The module deliberately builds the parser from the stable core `tree_sitter.Parser`
 plus a grammar from `tree_sitter_language_pack`, rather than that pack's own
-`get_parser()` — the comment at `rag/chunkers/chunkers.py:40-45` explains the
+`get_parser()` — the comment at `rag/chunkers/chunkers.py` explains the
 pack's own parser has a divergent API (`parse()` rejects bytes, `root_node` is a
 method not a property) that would break the byte-offset walk below. Unsupported or
 failing languages cache as `None` and every later call for that language falls
 straight to window chunking — the cache means that failure is paid once per
 language, not once per file.
 
-`_chunk_code` (`rag/chunkers/chunkers.py:141-184`) walks the tree looking for
+`_chunk_code` (`rag/chunkers/chunkers.py`) walks the tree looking for
 per-language "unit" node types (`UNIT_NODES`, e.g. `{"function_definition",
 "class_definition"}` for Python) and does **not** descend into a node once it's
 captured as a unit — nested functions/methods become part of their parent's chunk
 text, not separate chunks. Two edge cases baked into `walk()`:
 
 - A unit larger than `1.5x` the code target (768 tokens) gets sub-windowed with
-  `_split_window` instead of kept whole (`rag/chunkers/chunkers.py:169-172`).
+  `_split_window` instead of kept whole (`rag/chunkers/chunkers.py`).
 - If the walk finds zero unit nodes at all (e.g. a config-ish file that happens to
   have a supported extension), the whole file falls back to window chunking
-  (`rag/chunkers/chunkers.py:181-183`) — same as if tree-sitter were unavailable.
+  (`rag/chunkers/chunkers.py`) — same as if tree-sitter were unavailable.
 
 `symbol_name` is extracted by scanning direct children for an
-`identifier`/`name`/`type_identifier` node (`name_of`, `rag/chunkers/chunkers.py:157-161`);
+`identifier`/`name`/`type_identifier` node (`name_of`, `rag/chunkers/chunkers.py`);
 if none is found the node's own type string is used as the name.
 
 ### Markdown sectioning
 
 ```python
-# rag/chunkers/chunkers.py:187-209
+# rag/chunkers/chunkers.py
 def _chunk_markdown(text: str) -> list[tuple[str, str, int, int, str]]:
     lines = text.splitlines()
     out, buf, header, start = [], [], "preamble", 0
@@ -233,7 +233,7 @@ multiple chunks — there's no overlap applied between these token-triggered spl
 ### Chunk identity and metadata
 
 ```python
-# rag/chunkers/chunkers.py:109-119
+# rag/chunkers/chunkers.py
 def _cid(repo: str, path: str, start: int, end: int) -> str:
     return hashlib.sha1(f"{repo}:{path}:{start}:{end}".encode()).hexdigest()
 
@@ -252,7 +252,7 @@ delete-then-add idempotent. `content_hash` (SHA-256 of the chunk text) is separa
 metadata, presumably for an indexer to skip re-embedding unchanged chunks — but
 `chunkers.py` itself never reads it back; that comparison, if it happens, lives in
 the indexer, not here. Empty/whitespace-only parts are dropped before becoming
-`Chunk`s (`if t.strip():`, `rag/chunkers/chunkers.py:227`).
+`Chunk`s (`if t.strip():`, `rag/chunkers/chunkers.py`).
 
 ---
 
@@ -265,7 +265,7 @@ vecs = emb.embed_documents(["def f(): ..."])
 qv   = emb.embed_query("how is jwt validated")
 ```
 
-Constructor signature (`rag/embeddings/llama_embedder.py:33-54`):
+Constructor signature (`rag/embeddings/llama_embedder.py`):
 
 ```python
 def __init__(self, model_path: str, model_name: str, embedding_dim: int,
@@ -282,7 +282,7 @@ this is a hard failure, not a silent no-op embedder. `n_threads` defaults to
 `os.cpu_count() or 8` when not given.
 
 ```python
-# rag/embeddings/llama_embedder.py:75-86
+# rag/embeddings/llama_embedder.py
 def _embed(self, text: str) -> list[float]:
     out = self.llm.create_embedding(text)
     vec = out["data"][0]["embedding"]
@@ -303,8 +303,8 @@ and a plain dot product are interchangeable downstream. `embed_documents` and
 `embed_query` differ only in which configured prefix
 (`self._doc_prefix`/`self._query_prefix`) gets prepended — the model itself is not
 inspected to decide whether a prefix is needed; that's a config decision, per the
-module's own docstring (`rag/embeddings/llama_embedder.py:15-18`). Two static
-helpers, `to_blob`/`from_blob` (`rag/embeddings/llama_embedder.py:89-96`), pack/unpack
+module's own docstring (`rag/embeddings/llama_embedder.py`). Two static
+helpers, `to_blob`/`from_blob` (`rag/embeddings/llama_embedder.py`), pack/unpack
 a vector as little-endian float32 — for storing raw vectors in a SQLite BLOB
 column if a caller needs that instead of LanceDB.
 
@@ -325,7 +325,7 @@ sets `self.ok = False` with `self._load_error` on any failure (missing
 tokenizer files):
 
 ```python
-# rag/rerankers/cross_encoder.py:39-53
+# rag/rerankers/cross_encoder.py
 if not model_dir:
     self._load_error = "reranker disabled (no model_dir configured)"
     return
@@ -343,7 +343,7 @@ except Exception as exc:
 ```
 
 `rerank(query, candidates, top_n=8, text_key="text")`
-(`rag/rerankers/cross_encoder.py:69-89`) is the one entry point:
+(`rag/rerankers/cross_encoder.py`) is the one entry point:
 
 - Empty candidates → `[]` immediately.
 - `not self.ok` → identity fallback: `candidates[:top_n]`, unchanged order — this
@@ -355,7 +355,7 @@ except Exception as exc:
   descending logit with `np.argsort(-logits)`, and returns the top `top_n`
   candidates each with an added `rerank_score` float field.
 
-`status()` (`rag/rerankers/cross_encoder.py:60-67`) returns `{ok, model_dir,
+`status()` (`rag/rerankers/cross_encoder.py`) returns `{ok, model_dir,
 model_name, error}` — `error` is `None` whenever `ok` is `True`, otherwise the
 caught exception's string. Per the module docstring, reranking improves top-3
 precision roughly 15-25% over fusion alone (a stated claim from the source
@@ -368,7 +368,7 @@ comments — not independently re-verified in this doc).
 ### Schema
 
 ```python
-# rag/retrievers/lance_store.py:47-63
+# rag/retrievers/lance_store.py
 def _schema(self) -> "pa.Schema":
     return pa.schema([
         pa.field("chunk_id", pa.string()),
@@ -396,7 +396,7 @@ out that a dimension change needs a full re-index.
 ### One table per (repo, branch)
 
 ```python
-# rag/retrievers/lance_store.py:34-36
+# rag/retrievers/lance_store.py
 def table_name(repo: str, branch: str) -> str:
     safe = lambda s: s.replace("/", "-").replace(" ", "_")
     return f"{safe(repo)}__{safe(branch)}"
@@ -404,7 +404,7 @@ def table_name(repo: str, branch: str) -> str:
 
 On disk this is `~/.claude-env/knowledge/lancedb/<repo-slug>__<branch>.lance/`
 (default `LANCE_PATH`, overridable via `LANCEDB_PATH`). `open()`
-(`rag/retrievers/lance_store.py:65-74`) creates the table with the schema above if
+(`rag/retrievers/lance_store.py`) creates the table with the schema above if
 it doesn't exist yet and immediately tries `tbl.create_fts_index("text",
 replace=True)`, swallowing any exception — so a LanceDB build without FTS support
 still works, just without hybrid search (see below).
@@ -412,7 +412,7 @@ still works, just without hybrid search (see below).
 ### Upsert, delete, count
 
 ```python
-# rag/retrievers/lance_store.py:76-88
+# rag/retrievers/lance_store.py
 def upsert(self, repo: str, branch: str, rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -431,16 +431,16 @@ def upsert(self, repo: str, branch: str, rows: list[dict]) -> int:
 LanceDB has no native upsert, so this is delete-by-id-list then add — idempotent
 because `chunk_id` is a deterministic hash of `(repo, path, start_line,
 end_line)` (see chunking section above). `delete_file()`
-(`rag/retrievers/lance_store.py:90-95`) removes all rows for a `file_path`,
+(`rag/retrievers/lance_store.py`) removes all rows for a `file_path`,
 escaping embedded single quotes (`replace("'", "''")`) so a real path like
 `docs/what's-new.md` doesn't break the generated SQL filter mid-run. `count()`
-(`rag/retrievers/lance_store.py:110-114`) returns `0` on any failure rather than
+(`rag/retrievers/lance_store.py`) returns `0` on any failure rather than
 raising.
 
 ### Hybrid search
 
 ```python
-# rag/retrievers/lance_store.py:97-108
+# rag/retrievers/lance_store.py
 def search(self, repo: str, branch: str, query_vector: list[float],
            query_text: str, top_k: int = 40) -> list[dict]:
     tbl = self.open(repo, branch)
@@ -457,7 +457,7 @@ def search(self, repo: str, branch: str, query_vector: list[float],
 
 The primary path asks LanceDB itself for `query_type="hybrid"` — dense cosine
 vector search fused with BM25-style full-text search via reciprocal-rank fusion,
-per the module docstring (`rag/retrievers/lance_store.py:13-16`). If that raises
+per the module docstring (`rag/retrievers/lance_store.py`). If that raises
 for any reason (most commonly: no FTS index exists because `create_fts_index`
 failed silently in `open()`), the `except` falls back to plain vector-only search
 with the same `top_k`. Either way, the raw `vector` field is stripped from every
@@ -494,13 +494,13 @@ fallback, except the model path itself, which has no fallback and fails loud via
 ## Facts, invariants & edge cases
 
 - **No model name or path is ever hardcoded.** `rag/config.py`'s own docstring
-  states this as a design rule (`rag/config.py:12`), and every constructor
+  states this as a design rule (`rag/config.py`), and every constructor
   (`LlamaEmbedder`, `CrossEncoderReranker`) only accepts paths/dirs passed in from
   config — grepping the embedder/reranker source for a literal model filename
   turns up none.
 - **An unconfigured embedding model fails loud, not silently.** `get_embedder()`
   raises `RuntimeError` with setup instructions if `embedding.model_path` is empty
-  (`rag/config.py:189-194`) — there is no default/example model shipped or assumed.
+  (`rag/config.py`) — there is no default/example model shipped or assumed.
 - **An unconfigured or broken reranker degrades gracefully instead.** Unlike the
   embedder, `CrossEncoderReranker` never raises on construction — `ok=False` plus
   identity-order passthrough in `rerank()` is the designed fallback, since
@@ -508,14 +508,14 @@ fallback, except the model path itself, which has no fallback and fails loud via
   config, not by error).
 - **The embedder instance is cached; the reranker is not.** `get_embedder()`
   memoizes on `model_path` because loading a GGUF is expensive
-  (`rag/config.py:175-198`); `get_reranker()` has no equivalent cache and
+  (`rag/config.py`); `get_reranker()` has no equivalent cache and
   reconstructs a `CrossEncoderReranker` (including re-loading the ONNX session)
   on every call — worth knowing if it's called per-query in a hot path.
 - **Vectors are always L2-normalized before storage or query**, so LanceDB's
-  cosine metric and a raw dot product agree (`rag/embeddings/llama_embedder.py:78-80`).
+  cosine metric and a raw dot product agree (`rag/embeddings/llama_embedder.py`).
 - **Changing `embedding_dim` requires a full re-index.** The dimension is fixed
   into the LanceDB `vector` field type at table-creation time
-  (`rag/retrievers/lance_store.py:50`); an existing table isn't migrated.
+  (`rag/retrievers/lance_store.py`); an existing table isn't migrated.
 - **`chunk_id` is a hash of `(repo, path, start_line, end_line)`, not of the text
   itself.** Two consequences: (1) upsert is idempotent across re-runs as long as
   line ranges are stable, and (2) if a file's content changes but chunk
@@ -526,19 +526,19 @@ fallback, except the model path itself, which has no fallback and fails loud via
 - **A large AST unit is sub-windowed, not truncated.** Any function/class over
   1.5x the 512-token code target (768 tokens) is split further with the same
   sliding-window logic used for the fallback path
-  (`rag/chunkers/chunkers.py:169-172`), rather than being embedded as one
+  (`rag/chunkers/chunkers.py`), rather than being embedded as one
   oversized chunk or cut off.
 - **tree-sitter parser failures are cached as `None` per language**, so a broken
   or unsupported grammar only pays the failed-import/build cost once, not per
-  file (`rag/chunkers/chunkers.py:47-54`).
+  file (`rag/chunkers/chunkers.py`).
 - **The pack's own `get_parser()` is deliberately not used.** The code builds
   `tree_sitter.Parser` + `tree_sitter_language_pack.get_language()` by hand because
   the pack's convenience `get_parser()` has an incompatible API for this module's
-  byte-offset walk (`rag/chunkers/chunkers.py:40-45`) — a maintenance trap if
+  byte-offset walk (`rag/chunkers/chunkers.py`) — a maintenance trap if
   "simplified" later without reading this comment.
 - **Nested functions don't get their own chunk.** `_chunk_code`'s `walk()` returns
   immediately after capturing a unit node and does not descend into its children
-  (`rag/chunkers/chunkers.py:176`), so an inner function is embedded only as part
+  (`rag/chunkers/chunkers.py`), so an inner function is embedded only as part
   of its enclosing function/class chunk.
 - **Markdown section overlap is defined but unused.** `TARGETS["markdown"]`
   unpacks an `overlap` value in `_chunk_markdown`, but unlike `_split_window`
@@ -546,7 +546,7 @@ fallback, except the model path itself, which has no fallback and fails loud via
   token-triggered mid-section flush — only heading boundaries get a clean
   section start.
 - **LanceDB has no native upsert; this module fakes one.** `upsert()` is
-  delete-by-id-list then `add()` (`rag/retrievers/lance_store.py:81-87`) — a
+  delete-by-id-list then `add()` (`rag/retrievers/lance_store.py`) — a
   crash between the delete and the add would leave rows missing until the next
   successful run; there is no transaction wrapping the two calls.
 - **Hybrid search silently degrades to vector-only.** Any exception from the
@@ -557,7 +557,7 @@ fallback, except the model path itself, which has no fallback and fails loud via
 - **File paths with single quotes are escaped for `delete_file()`**, specifically
   called out in the source comment as a real bug class (a path like
   `docs/what's-new.md` would otherwise break the generated filter and crash
-  indexing mid-run) — `rag/retrievers/lance_store.py:92-94`.
+  indexing mid-run) — `rag/retrievers/lance_store.py`.
 - **No test file exists for chunkers, embedder, reranker, or `LanceStore`.** The
   only RAG-adjacent test in `tests/` is `test_retrieve_ranking.py`, which covers
   `rag/pipelines/retrieve.py::_relevance` (the score-selection helper used after

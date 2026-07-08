@@ -39,7 +39,7 @@ paths the receiving agent needs into a `HandoffPacket`, records the transfer as 
 accumulates a float score from three independent signals:
 
 ```python
-# agents/orchestration/task_router.py:86-107
+# agents/orchestration/task_router.py
 for pat, w in _INTENT.get(agent, []):
     if re.search(pat, task_l):
         score += w
@@ -64,7 +64,7 @@ if not wants_write and agent in {"architect", "security",
     why.append("analysis task suits read-only specialist (+0.5)")
 ```
 
-1. **Intent keywords** (`_INTENT`, `task_router.py:39-55`) — a per-agent list of
+1. **Intent keywords** (`_INTENT`, `task_router.py`) — a per-agent list of
    `(regex, weight)` pairs, matched with `re.search` (case-insensitive via
    `task.lower()`, not an `re.I` flag) against the lowercased task string. Weights are
    `2` or `3` per pattern; an agent can match more than one pattern and accumulate both.
@@ -73,7 +73,7 @@ if not wants_write and agent in {"architect", "security",
    as-is and with a trailing `/*` appended after stripping `/*` — the agent gets a flat
    `+2.5`, and the loop `break`s (only the first matching `write_paths` entry counts,
    not one bonus per match).
-3. **Capability alignment** — `_WRITE_INTENT` (`task_router.py:59-60`) is a single regex
+3. **Capability alignment** — `_WRITE_INTENT` (`task_router.py`) is a single regex
    over verbs like `write|add|implement|create|edit|fix|refactor|build|update|author|
    generate|modify`. If the task matches it, `wants_write` is `True`; any agent **not**
    in `_WRITE_AGENTS` (`architect`, `security`, `performance`, `research` — note
@@ -88,7 +88,7 @@ final filter before an agent enters the ranked list only excludes agents that sc
 `0` on everything:
 
 ```python
-# agents/orchestration/task_router.py:109-114
+# agents/orchestration/task_router.py
 if score > 0:
     out.append(RoutingDecision(agent, round(score, 2),
                                "; ".join(why) or "weak match"))
@@ -103,7 +103,7 @@ agent, purely from the `target`-path bonus — see the fact below.
 ### `route()` and `needs_clarification()`
 
 ```python
-# agents/orchestration/task_router.py:116-126
+# agents/orchestration/task_router.py
 def route(self, task: str, target: str | None = None) -> RoutingDecision:
     ranked = self.rank(task, target)
     if not ranked:
@@ -118,7 +118,7 @@ def needs_clarification(self, task: str, target: str | None = None,
 ```
 
 - **Empty ranking falls back to `"orchestrator"`** with score `0.0` — the orchestrator
-  agent is explicitly excluded from scoring (`task_router.py:81-82`) but is the named
+  agent is explicitly excluded from scoring (`task_router.py`) but is the named
   fallback when nothing else scored above `0`.
 - **Ambiguity is a fixed absolute margin (`1.0`) between the top two scores**, not a
   ratio or a confidence threshold. `needs_clarification()` recomputes the full ranking
@@ -163,7 +163,7 @@ just seeing the single winner and guessing. `--target` and `--registry` default 
 ### `HandoffPacket` — the scoped context container
 
 ```python
-# agents/orchestration/agent_handoff.py:41-49
+# agents/orchestration/agent_handoff.py
 @dataclass
 class HandoffPacket:
     src: str
@@ -185,7 +185,7 @@ sender's own permissions.
 ### Context rendering wraps everything as DATA
 
 ```python
-# agents/orchestration/agent_handoff.py:51-72
+# agents/orchestration/agent_handoff.py
 @property
 def context(self) -> str:
     """Prompt-injectable, clearly delimited DATA block for the receiver."""
@@ -210,7 +210,7 @@ might contain adversarial text."
 ### `_validate()` — scope checking is advisory, not blocking
 
 ```python
-# agents/orchestration/agent_handoff.py:83-102
+# agents/orchestration/agent_handoff.py
 def _validate(self, src: str, dst: str, paths: list[str]) -> None:
     if src not in self.agents:
         raise ValueError(f"unknown source agent: {src}")
@@ -245,7 +245,7 @@ loop is skipped — no scope signal is emitted for agents that don't declare wri
 ### `handoff()` — build, validate, record, return
 
 ```python
-# agents/orchestration/agent_handoff.py:104-120
+# agents/orchestration/agent_handoff.py
 def handoff(self, src: str, dst: str, objective: str,
             artifacts: dict[str, str] | None = None,
             paths: list[str] | None = None, notes: str = "") -> HandoffPacket:
@@ -273,7 +273,7 @@ link to its own provenance row for later audit/session-replay lookups (see
 [`audit-ledger.md`](audit-ledger.md)).
 
 `HandoffHub.__init__` constructs its own `AuditLogger(session_id=session_id,
-actor="orchestrator", repo=repo, tier=tier)` (`agent_handoff.py:80-81`) — the actor
+actor="orchestrator", repo=repo, tier=tier)` (`agent_handoff.py`) — the actor
 recorded for every handoff and scope-violation event is always `"orchestrator"`,
 regardless of which agent is `src`.
 
@@ -290,35 +290,35 @@ regardless of which agent is `src`.
 - **Routing is pure regex + glob scoring, not ML and not a decision tree.** There is no
   model, no embedding similarity, no learned weight — `_INTENT` and `_WRITE_INTENT` are
   hand-written regexes with hand-picked integer/float weights
-  (`task_router.py:39-60`).
+  (`task_router.py`).
 - **`documentation` is a write agent, contrary to what its intent bucket might suggest.**
   `_WRITE_AGENTS = {"backend", "frontend", "database", "devops", "testing",
-  "documentation"}` (`task_router.py:58`) — a documentation task that also matches
+  "documentation"}` (`task_router.py`) — a documentation task that also matches
   `_WRITE_INTENT` (e.g. "write the README") does **not** get the read-only penalty,
   because `documentation` is in the write set.
 - **The `+2.5` path bonus does not require any intent-keyword match.** Because the
-  `if target:` block (`task_router.py:92-98`) runs independently of the intent loop
+  `if target:` block (`task_router.py`) runs independently of the intent loop
   above it, a task whose text matches no `_INTENT` pattern for an agent can still enter
   the ranked list purely because `target` falls under that agent's `write_paths` — the
   final `if score > 0` gate only excludes agents that scored on nothing at all, not
   agents that scored only on path.
 - **`needs_clarification()` always recomputes ranking from scratch** — it is not
   memoized against a prior `route()` call in the same request, so calling both back to
-  back (as the CLI's `_main()` does, `task_router.py:143-144`) runs `rank()` twice.
+  back (as the CLI's `_main()` does, `task_router.py`) runs `rank()` twice.
 - **Scope violations in `agent_handoff.py` are logged, never enforced.** A handoff whose
   `paths` fall entirely outside the destination agent's `write_paths` still succeeds
   and returns a normal `HandoffPacket` — the only effect is a low-severity
   `security_event`. Real enforcement of what the receiving agent can actually write
   happens later, at execution time, via the `PolicyEngine` and `ApprovalGate` — routing
   and handoff are advisory/observational layers, not gates (this matches the router's
-  own docstring: "Routing never grants permission," `task_router.py:11-12`). Nothing in
+  own docstring: "Routing never grants permission," `task_router.py`). Nothing in
   either module stops the receiver from *acting* on paths outside its declared scope.
 - **`notes` is the only field marked `treat-as="data"` in the rendered context.**
   `objective` and `artifacts` render as plain tags with no such marker — a consumer of
   `packet.context` that builds a receiver prompt needs its own logic to decide how much
   trust to extend to `objective` versus `notes`; the packet only flags the one field
   that's explicitly sender-authored free text.
-- **Both modules independently reimplement the same path-matching idiom** — `fnmatch.fnmatch(t, wp) or fnmatch.fnmatch(t, wp.rstrip("/*") + "/*")` appears verbatim in both `task_router.py:95` and `agent_handoff.py:95-96`. There is no shared helper; a change to one does not propagate to the other.
+- **Both modules independently reimplement the same path-matching idiom** — `fnmatch.fnmatch(t, wp) or fnmatch.fnmatch(t, wp.rstrip("/*") + "/*")` appears verbatim in both `task_router.py` and `agent_handoff.py`. There is no shared helper; a change to one does not propagate to the other.
 - **CLI entry points exist for both modules and are directly runnable** —
   `task_router.py`'s `_main()` supports `--all` to print the full ranking, and
   `agent_handoff.py`'s `__main__` block builds and prints a handoff packet's `.context`

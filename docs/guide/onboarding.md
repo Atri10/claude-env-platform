@@ -33,11 +33,11 @@ full plan without writing anything.
 
 | Flag / arg | Type | Default | Effect |
 |---|---|---|---|
-| `repo_root` (positional) | path | required | Resolved to an absolute path (`Path(...).resolve()`); the script exits `1` if it's not a directory (`scripts/register_repo.py:488-491`). |
-| `--repo-name` | str | directory name | Passed through `_slugify()` — lowercased, `[^a-z0-9._-]+` collapsed to a single `-`, leading/trailing `-`/`.` stripped, empty result falls back to `"repo"` (`scripts/register_repo.py:288-291`). Used for the RAG table and `proj-<slug>` memory namespace. |
-| `--tier` | `{0,1,2,3}` | existing policy's tier, else `1` | If omitted, `_detect_tier()` regex-reads `tier:` from an existing `.claude/repo-policy.yaml` (`scripts/register_repo.py:178-186`); interactively it's then re-prompted with that value as the default. |
+| `repo_root` (positional) | path | required | Resolved to an absolute path (`Path(...).resolve()`); the script exits `1` if it's not a directory (`scripts/register_repo.py`). |
+| `--repo-name` | str | directory name | Passed through `_slugify()` — lowercased, `[^a-z0-9._-]+` collapsed to a single `-`, leading/trailing `-`/`.` stripped, empty result falls back to `"repo"` (`scripts/register_repo.py`). Used for the RAG table and `proj-<slug>` memory namespace. |
+| `--tier` | `{0,1,2,3}` | existing policy's tier, else `1` | If omitted, `_detect_tier()` regex-reads `tier:` from an existing `.claude/repo-policy.yaml` (`scripts/register_repo.py`); interactively it's then re-prompted with that value as the default. |
 | `--description` | str | `""` | Free text; written into the generated policy's `description:` field (quotes replaced with `'` first). |
-| `--branch` | str | `git rev-parse --abbrev-ref HEAD`, else `"main"` | `_detect_branch()` shells out with a 10s timeout and swallows any exception (`scripts/register_repo.py:69-77`). |
+| `--branch` | str | `git rev-parse --abbrev-ref HEAD`, else `"main"` | `_detect_branch()` shells out with a 10s timeout and swallows any exception (`scripts/register_repo.py`). |
 | `--yes` / `-y` | flag | off | Forces non-interactive mode even on a TTY (see `_interactive()` below). |
 | `--dry-run` | flag | off | Every write-capable helper takes a `dry_run` bool and skips the actual `write_text`/`copy2`/`mkdir` call, but still computes and prints the status string. |
 | `--no-template` | flag | off | Skips `_install_template()` entirely (no `CLAUDE.md`/`.claude/skills`/`.claude/agents` install) — namespaces, policy, and MCP env are still provisioned. |
@@ -48,7 +48,7 @@ full plan without writing anything.
 ### Interactivity
 
 ```python
-# scripts/register_repo.py:300-301
+# scripts/register_repo.py
 def _interactive(no_prompt: bool) -> bool:
     return (not no_prompt) and sys.stdin.isatty() and sys.stdout.isatty()
 ```
@@ -56,7 +56,7 @@ def _interactive(no_prompt: bool) -> bool:
 Prompts only fire when **both** stdin and stdout are TTYs and `--yes` wasn't
 passed. In a script/CI context (piped stdin, or `--yes`), every value falls
 back silently to its detected default — `_prompt()` itself also treats an
-`EOFError` on `input()` as "use the default" (`scripts/register_repo.py:304-309`),
+`EOFError` on `input()` as "use the default" (`scripts/register_repo.py`),
 so even a stray interactive call in a non-TTY pipe degrades gracefully instead
 of crashing.
 
@@ -97,7 +97,7 @@ regardless of whether the repo has ever been onboarded before:
 ### 1. `.claude/repo-policy.yaml` — the isolation boundary
 
 ```python
-# scripts/register_repo.py:321-347
+# scripts/register_repo.py
 def _write_repo_policy(repo_root: str, slug: str, tier: str, description: str,
                        force: bool, dry_run: bool) -> str:
     dst = Path(repo_root) / ".claude" / "repo-policy.yaml"
@@ -122,8 +122,8 @@ def _write_repo_policy(repo_root: str, slug: str, tier: str, description: str,
 This confirms it **does** template from `config/repo-policy.template.yaml`
 (not generate YAML from scratch): it reads the template text and does four
 targeted string/regex substitutions — `EXAMPLE-REPO-SLUG` (which appears twice
-in the template: `repo: "EXAMPLE-REPO-SLUG"` at line 16 and
-`namespace: "proj-EXAMPLE-REPO-SLUG"` at line 157, both replaced by the same
+in the template: `repo: "EXAMPLE-REPO-SLUG"` and
+`namespace: "proj-EXAMPLE-REPO-SLUG"`, both replaced by the same
 `.replace()`), the top-level `tier:` line, the `description:` line, and — only
 for tier 2/3 — flips `isolated: false` to `isolated: true` under `memory:`.
 Everything else in the template (allow/deny paths, extensions, regex,
@@ -133,7 +133,7 @@ verbatim. An existing policy is never regenerated without `--force-policy`.
 ### 2. Namespaces — RAG table + memory namespace
 
 ```python
-# scripts/register_repo.py:294-297, 350-357
+# scripts/register_repo.py, 350-357
 def _table_name(slug: str, branch: str) -> str:
     """Mirror rag/retrievers/lance_store.table_name so we can report/pre-create."""
     safe = lambda s: s.replace("/", "-").replace(" ", "_")
@@ -150,7 +150,7 @@ The RAG table name is `<slug>__<branch>` (slashes/spaces sanitized), matching
 the naming `rag/retrievers/lance_store.py` uses independently — the comment
 flags this as a duplicated convention to keep in sync, not a shared function
 call. The memory namespace is just `f"proj-{slug}"`, computed inline in
-`main()` (`scripts/register_repo.py:512`) — there's no `_provision_storage`
+`main()` (`scripts/register_repo.py`) — there's no `_provision_storage`
 equivalent for memory because the memory namespace is created lazily on first
 write by the memory subsystem, not by this script.
 
@@ -176,7 +176,7 @@ add` has registered the servers at least once already.
 ### 4. Template install — `CLAUDE.md` + `.claude/`
 
 ```python
-# scripts/register_repo.py:195-231 (abridged)
+# scripts/register_repo.py (abridged)
 def _install_claude_md(repo_root, subs, dry_run) -> str:
     src = _TEMPLATE_DIR / "CLAUDE.md"
     managed = _fill(src.read_text(), subs)          # {{KEY}} substitution
@@ -196,10 +196,10 @@ def _install_claude_md(repo_root, subs, dry_run) -> str:
 
 `{{KEY}}` substitution (`_fill`, distinct from the `${VAR}` substitution used
 for MCP env) fills six placeholders built in `main()`
-(`scripts/register_repo.py:527-531`): `REPO_NAME`, `TIER`, `BRANCH`,
+(`scripts/register_repo.py`): `REPO_NAME`, `TIER`, `BRANCH`,
 `RAG_TABLE`, `MEMORY_NS`, and `MEMORY_ISOLATED` (the human string `"disabled
 (isolated)"` or `"allowed"`, not a boolean). The managed-block markers
-(`_BLOCK_BEGIN`/`_BLOCK_END`, lines 60-61) mean a repo's own hand-written
+(`_BLOCK_BEGIN`/`_BLOCK_END`) mean a repo's own hand-written
 `CLAUDE.md` content outside the block always survives a re-register — only
 the span between the markers is platform-owned and gets replaced verbatim on
 every run.
@@ -261,7 +261,7 @@ templates/repo-onboarding/
 
 That's **2 subagents** (`code-reviewer`, `architecture-reviewer`) and **5
 skills** — matching the docstring's list exactly
-(`scripts/register_repo.py:17-20`). `CLAUDE.md` itself, once filled, is an
+(`scripts/register_repo.py`). `CLAUDE.md` itself, once filled, is an
 MCP-first operating contract: §0 golden rules, §1 a mandatory tool-routing
 table (every filesystem/git/search/memory/command intent mapped to one MCP
 tool, native equivalents named as denied), §2 the approval workflow for
@@ -306,7 +306,7 @@ No test in this file exercises `_write_repo_policy`, `_install_claude_md`, or
   key in the template (allow/deny lists, `content_scan`, `rag.*`,
   `agent_permissions.*`) reaches the onboarded repo unedited — see the tier-2+
   `.sql` gotcha documented directly in the template
-  (`config/repo-policy.template.yaml:43`) and in
+  (`config/repo-policy.template.yaml`) and in
   [`policy-engine.md`](policy-engine.md#facts--invariants).
 - **`EXAMPLE-REPO-SLUG` is replaced everywhere in one pass**, which is why the
   template's `memory.namespace: "proj-EXAMPLE-REPO-SLUG"` and top-level
@@ -317,7 +317,7 @@ No test in this file exercises `_write_repo_policy`, `_install_claude_md`, or
   the same sanitized string.
   <br><br>
   **Reproducer** — `_slugify("My Cool Repo!!") == "my-cool-repo"`, but
-  `repo-policy.template.yaml` line 16 shows the raw `EXAMPLE-REPO-SLUG` string
+  `repo-policy.template.yaml` shows the raw `EXAMPLE-REPO-SLUG` string
   is replaced with that already-slugified value; nothing re-validates it after
   substitution.
 - **Isolation is not the default; tier drives it.** `_write_repo_policy` only

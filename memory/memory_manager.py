@@ -36,6 +36,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib.db import get_db                       # noqa: E402
 from audit.audit_logger import AuditLogger      # noqa: E402
+from lib.logging_setup import get_logger        # noqa: E402
+
+_log = get_logger("memory")
 
 HALF_LIFE = {            # days
     "session": 30, "investigation": 30, "decision": 365,
@@ -89,6 +92,11 @@ def _embed_for(name: str, body: dict) -> bytes | None:
         vec = get_embedder().embed_documents([text])[0]
         return struct.pack(f"<{len(vec)}f", *vec)
     except Exception:
+        # No model configured is expected (write proceeds without an embedding);
+        # a model that IS configured but errors here silently disables semantic
+        # recall for the node, so make it visible at debug.
+        _log.debug("node embedding unavailable; storing without embedding "
+                   "(semantic recall will miss this node)", exc_info=True)
         return None
 
 
