@@ -1,9 +1,16 @@
 # Task Routing & Handoff
 
+> ⚠ **SUPERSEDED (2026-07-09).** `task_router.py`, `agent_handoff.py`, and `agent_registry.yaml`
+> have been retired. Specialist agents now ship as native Claude Code `.claude/agents/*.md` files
+> in `templates/repo-onboarding/`. Routing is handled by Claude Code's native agent system —
+> the orchestrator agent routes multi-step tasks; single-area tasks go direct to specialists.
+> The handoff XML packet format (described below) survives in agent prompts.
+> This document is preserved for historical reference only.
+
 > Relates to: [OVERVIEW.md §6 — one generalist agent doing everything, badly](../OVERVIEW.md#6-one-generalist-agent-doing-everything-badly)
 
-**Source:** [`agents/orchestration/task_router.py`](../../agents/orchestration/task_router.py) (151 lines),
-[`agents/orchestration/agent_handoff.py`](../../agents/orchestration/agent_handoff.py) (137 lines).
+**Source (retired):** `agents/orchestration/task_router.py`,
+`agents/orchestration/agent_handoff.py`.
 
 This doc covers routing (deciding *which* specialist gets a task) and handoff
 (transferring work to that specialist with a scoped context packet). The specialist

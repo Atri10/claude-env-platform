@@ -59,9 +59,9 @@ Status legend: ✅ written · 🔜 planned (not yet written)
 
 | Doc | Source | Status |
 |---|---|---|
-| [specialist-agents.md](specialist-agents.md) | `agents/agent_registry.yaml` | ✅ |
-| [task-routing.md](task-routing.md) | `agents/orchestration/task_router.py`, `agents/orchestration/agent_handoff.py` | ✅ |
-| [conflict-resolution.md](conflict-resolution.md) | `agents/orchestration/conflict_resolver.py` | ✅ |
+| [specialist-agents.md](specialist-agents.md) | `templates/repo-onboarding/.claude/agents/` (11 native agents) | ✅ (supersedes `agent_registry.yaml`) |
+| [task-routing.md](task-routing.md) | orchestrator agent prompt — model routes natively | ✅ (supersedes `task_router.py`, `agent_handoff.py`) |
+| [conflict-resolution.md](conflict-resolution.md) | orchestrator agent prompt — synthesizes conflicts | ✅ (supersedes `conflict_resolver.py`) |
 
 ## 7. Operations — [OVERVIEW.md §7](../OVERVIEW.md#7-you-cant-tell-if-its-working-well-or-costing-too-much)
 
