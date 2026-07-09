@@ -392,14 +392,17 @@ def _install_post_commit(repo_root: str, dry_run: bool) -> str:
     return "installed"
 
 
-def _install_agents(repo_root: Path, dry_run: bool) -> str:
+def _install_agents(repo_root: str | Path, dry_run: bool) -> str:
     """Copy specialist agents from platform template into repo .claude/agents/.
 
     Merge-safe: existing files are never overwritten (the repo may have
     customised a specific agent).  Returns a human-readable summary line.
+
+    `repo_root` may be a str (as main() passes it) or a Path; coerced here so
+    the `/` path joins below work either way.
     """
     src_dir = _HERE / "templates" / "repo-onboarding" / ".claude" / "agents"
-    dst_dir = repo_root / ".claude" / "agents"
+    dst_dir = Path(repo_root) / ".claude" / "agents"
 
     agent_files = list(src_dir.glob("*.md"))
     if not agent_files:

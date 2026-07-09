@@ -31,6 +31,21 @@ def test_agent_install_copies_all_eleven_agents(tmp_path):
     assert "installed" in result.lower() or str(len(EXPECTED_AGENTS)) in result
 
 
+def test_agent_install_accepts_str_repo_root(tmp_path):
+    """Regression: main() passes repo_root as a str (str(Path(...).resolve())),
+    not a Path. _install_agents must handle both — it used to do `repo_root /
+    ".claude"` and crashed with TypeError on a str during real onboarding."""
+    _install_agents = _get_installer()
+    result = _install_agents(str(tmp_path), dry_run=False)   # str, as main() passes
+    installed = {p.stem for p in (tmp_path / ".claude" / "agents").glob("*.md")}
+    assert EXPECTED_AGENTS.issubset(installed), f"missing: {EXPECTED_AGENTS - installed}"
+    assert "installed" in result.lower()
+
+    # dry-run with a str must also not raise
+    result_dry = _install_agents(str(tmp_path / "other"), dry_run=True)
+    assert "would install" in result_dry.lower()
+
+
 def test_agent_install_is_merge_safe(tmp_path):
     _install_agents = _get_installer()
     dst = tmp_path / ".claude" / "agents"
