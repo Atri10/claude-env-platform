@@ -36,7 +36,7 @@ from pathlib import Path
 
 GLOBAL_SETTINGS = Path.home() / ".claude" / "settings.json"
 
-PRE_MATCHER = "Read|Write|Edit|NotebookEdit|Glob|Grep|Bash"
+PRE_MATCHER = "Read|Write|Edit|NotebookEdit|Glob|Grep|Bash|WebFetch|WebSearch"
 POST_MATCHER = "Write|Edit|NotebookEdit|Bash"
 # Portable, per-machine: the shell running the hook expands $CLAUDE_ENV_HOME.
 # Quoted so a home dir with spaces survives. Keep in sync with the legacy

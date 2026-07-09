@@ -22,13 +22,18 @@ posture layered on top.
 
 The MCP `filesystem-policy` server only governs traffic that goes through MCP tools.
 Claude Code's **native** tools — `Read`, `Write`, `Edit`, `NotebookEdit`, `Glob`,
-`Grep`, `Bash` — never touch an MCP server, so without these hooks an agent could
-bypass the entire policy layer just by using the built-in file tools instead. Two
-hooks close that gap:
+`Grep`, `Bash`, `WebFetch`, `WebSearch` — never touch an MCP server, so without these
+hooks an agent could bypass the entire policy layer just by using the built-in tools
+instead. Two hooks close that gap:
 
 - **`policy_hook.py`** runs on `PreToolUse` for every one of those tools. It extracts
   whatever path (or, for `Bash`, command string) the call touches, runs it through the
-  same `PolicyEngine`, and can `deny` or `ask` before the tool executes.
+  same `PolicyEngine`, and can `deny` or `ask` before the tool executes. It also
+  gates the native network tools (`WebFetch`/`WebSearch`) under the same egress rule
+  as Bash `curl`, and **confines reads to the onboarded repo** — a path resolving
+  outside the repo (a sibling repo, `~/.claude/*`) is hard-denied. Every denial
+  carries an operator-control signature so a model doesn't mistake it for injected
+  text and try to route around it.
 - **`audit_hook.py`** runs on `PostToolUse` for the mutating subset (`Write`, `Edit`,
   `NotebookEdit`, `Bash`) and writes a `native.<Tool>` row to the audit ledger. It never
   blocks anything — `PostToolUse` fires after the tool already ran.
@@ -61,7 +66,7 @@ environment variables read at import/run time, plus the wiring the installer wri
 
 | Installer constant / flag | Value | Effect |
 |---|---|---|
-| `PRE_MATCHER` (`hooks/install_hooks.py`) | `"Read\|Write\|Edit\|NotebookEdit\|Glob\|Grep\|Bash"` | Which tools trigger `policy_hook.py` on `PreToolUse`. |
+| `PRE_MATCHER` (`hooks/install_hooks.py`) | `"Read\|Write\|Edit\|NotebookEdit\|Glob\|Grep\|Bash\|WebFetch\|WebSearch"` | Which tools trigger `policy_hook.py` on `PreToolUse`. `WebFetch`/`WebSearch` were added (2026-07-09) so the network-egress rule covers the **native** web tools, not just Bash `curl`/`wget` — otherwise a model whose shell egress is denied could reach the network by switching to `WebFetch`. If you widen the tools the hook must govern, widen this matcher too, or Claude Code never routes the new tool to the hook. |
 | `POST_MATCHER` (`hooks/install_hooks.py`) | `"Write\|Edit\|NotebookEdit\|Bash"` | Which tools trigger `audit_hook.py` on `PostToolUse`. Note `Read`/`Glob`/`Grep` are **not** in this matcher at all — `audit_hook.py`'s own `_MUTATING` filter is a second, redundant layer of the same restriction. |
 | `PRE_CMD` / `POST_CMD` | `"$CLAUDE_ENV_HOME/venv/bin/python" "$CLAUDE_ENV_HOME/hooks/{policy,audit}_hook.py"` | The portable hook command written into `settings.json`. Uses the literal env var (shell-expanded per machine) so the committed file works on any bootstrapped teammate. |
 | `--repo <path>` (default: cwd) | resolves to `<path>/.claude/settings.json` | The default target — repo-local governance. |
@@ -378,22 +383,49 @@ Putting it together, in the order the real code checks them (`hooks/policy_hook.
 
 1. Parse stdin JSON; malformed input returns `0` immediately (nothing to decide on).
 2. Incident marker check — hard deny everything if present.
-3. Extract `path_str` / `bash_cmd`; bail early (allow) if neither applies.
-4. `PolicyEngine.load(root)` where `root` is found by walking up from `cwd` looking
-   for `.claude/repo-policy.yaml` or `.git` (`_repo_root`, `hooks/policy_hook.py`).
-5. If `Bash`: run `_inspect_bash()`; a `deny` also writes a `policy_violation` audit
-   row before printing the JSON decision.
-6. If a mutating native tool with a path: control-plane guard.
-7. If any tool with a path: `PolicyEngine.evaluate_path()`; a block also writes a
-   `policy_violation` row.
-8. If a mutating native tool with a path, in an onboarded repo: MCP-first redirect.
-9. If a mutating native tool: scan write content for secret patterns; a hit writes a
-   `security_event` row (regardless of whether the operator later says yes) and
-   returns `ask`.
-10. Otherwise: allow, silently — no stdout at all.
+3. **Network-tool gate (`WebFetch`/`WebSearch`, `_NET_TOOLS`)**: split by risk, per
+   tier. `WebFetch` retrieves an arbitrary URL and can POST a body (a data-exfil
+   vector like Bash `curl`) → `deny` at tier ≥ 2, `ask` at tier ≤ 1. `WebSearch`
+   sends only a query string and cannot ship file contents out → allow (silent) at
+   tier ≤ 1, and `ask` at tier ≥ 2 (controlled rather than hard-denied — a search
+   still can't run unobserved on a sensitive repo, but it isn't impossible).
+   Unlike the general fail-open posture, if the tier can't be resolved the gate
+   **never silently allows**: it denies under `CLAUDE_ENV_HOOK_FAIL_CLOSED`, else
+   asks — egress is a hard invariant. Returns before any path logic.
 
-All of steps 4-9 run inside one `try`/`except`; see [fail-open vs fail-closed](#facts-invariants--edge-cases)
-below for what happens if any of them raises.
+   | Tool | tier ≤ 1 | tier ≥ 2 |
+   |---|---|---|
+   | `WebFetch` | ask | deny |
+   | `WebSearch` | allow | ask |
+4. Extract `path_str` / `bash_cmd`; bail early (allow) if neither applies.
+5. `PolicyEngine.load(root)` where `root` is found by walking up from `cwd` looking
+   for `.claude/repo-policy.yaml` or `.git` (`_repo_root`, `hooks/policy_hook.py`).
+6. **Read confinement (`_out_of_repo_read`)**: for a native path tool, and for each
+   file candidate a Bash command touches, a path that resolves **outside the
+   onboarded repo root** is hard-denied (+ `policy_violation` row) — with only the
+   session scratchpad (`claude-<uid>` subtree) exempted. This closes the gap where
+   in-repo-only allow rules plus name-based global deny globs let reads reach sibling
+   repos, `~/.claude/projects/*`, `~/.claude/settings.json`, etc. Only active in
+   onboarded repos (those with a `repo-policy.yaml`), which define the scope.
+7. If `Bash`: run `_inspect_bash()`; a `deny` also writes a `policy_violation` audit
+   row before printing the JSON decision.
+8. If a mutating native tool with a path: control-plane guard.
+9. If any tool with a path: `PolicyEngine.evaluate_path()`; a block also writes a
+   `policy_violation` row.
+10. If a mutating native tool with a path, in an onboarded repo: MCP-first redirect.
+11. If a mutating native tool: scan write content for secret patterns; a hit writes a
+    `security_event` row (regardless of whether the operator later says yes) and
+    returns `ask`.
+12. Otherwise: allow, silently — no stdout at all.
+
+Every `deny`/`ask` reason is prefixed with a stable operator-control **signature**
+(`SIGNATURE`, `hooks/policy_hook.py`) via `_deny`/`_ask` — so a model reading the
+reason can tell it apart from prompt-injected text and stop rather than trying to
+route around a control it mistook for session content.
+
+All of steps 5-11 run inside one `try`/`except`; see [fail-open vs fail-closed](#facts-invariants--edge-cases)
+below for what happens if any of them raises. (Step 3's net-tool gate has its own
+never-silently-allow handling described above.)
 
 ![PreToolUse decision flow](../assets/guide/native-tool-hooks/pretooluse-flow.svg)
 
