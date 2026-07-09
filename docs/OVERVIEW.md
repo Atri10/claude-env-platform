@@ -224,31 +224,34 @@ specialized work and a large, unnecessary attack surface — the documentation t
 the database migration have very different risk profiles, but a generalist agent
 treats them the same.
 
-**What solves it:** **specialist agents**, each with a narrow, explicit scope, plus
-**task routing/handoff** and **conflict resolution** to coordinate them.
+**What solves it:** **specialist agents**, each with a narrow, explicit scope declared
+in its own prompt, installed natively into every onboarded repo.
 
-**How it works.** Instead of one agent, claude-env defines specialists (architect,
-backend, database, devops, documentation, frontend, performance, research, security,
-testing) plus an orchestrator, each with its own registry entry defining exactly which
-tools it can use, which paths it can write to, and whether its actions require human
-approval. An orchestrator decomposes a task and routes each piece to the right
-specialist, handing off only the scoped context that specialist actually needs — not
-the whole session history. When specialists disagree, a conflict resolver reconciles
-the outcome, with one deliberate rule: the security specialist's objection wins,
-regardless of how the other votes fall.
+**How it works.** Instead of one agent, onboarding installs eleven native Claude Code
+`.claude/agents/*.md` files into the repo (architect, backend, database, devops,
+documentation, frontend, performance, research, security, testing, plus an
+orchestrator) — each declaring its own tool grant, write scope, and approval
+requirements directly in its prompt frontmatter and body. There is no central
+registry: Claude Code's own routing decides which specialist handles a request, and
+the orchestrator activates for tasks that span more than one area, decomposing the
+work and running independent specialists in parallel. Handoff between agents uses a
+structured, data-not-instructions context packet documented in each agent's prompt.
+Conflicts between specialist outputs are synthesized by the orchestrator directly:
+it names the conflict, favors the more conservative option, and flags it to the human
+when it's material — the security agent's finding is treated as the default tie-break.
 
 **Example.**
-> You ask for "a new API endpoint, with tests and docs." The orchestrator splits this
-> into three handoffs: backend writes the endpoint, testing writes the tests,
-> documentation updates the docs — each only sees the slice of context relevant to its
-> part. Separately, the performance specialist proposes caching some data in a way the
-> security specialist flags as unsafe; the conflict resolver sides with security,
-> regardless of which suggestion seemed more efficient.
+> You ask for "a new API endpoint, with tests and docs." The orchestrator recognizes
+> this spans multiple areas, decomposes it, and runs the `backend`, `testing`, and
+> `documentation` agents — each seeing only the slice of context relevant to its part.
+> Separately, the `performance` agent proposes caching some data in a way the
+> `security` agent flags as unsafe; the orchestrator surfaces the conflict and defaults
+> to the security agent's recommendation, explaining why.
 
-*Implemented in [`agents/agent_registry.yaml`](../agents/agent_registry.yaml),
-[`agents/orchestration/task_router.py`](../agents/orchestration/task_router.py),
-[`agents/orchestration/agent_handoff.py`](../agents/orchestration/agent_handoff.py),
-[`agents/orchestration/conflict_resolver.py`](../agents/orchestration/conflict_resolver.py).*
+*Implemented in [`templates/repo-onboarding/.claude/agents/`](../templates/repo-onboarding/.claude/agents/)
+(the eleven agent prompts) and [`agents/orchestration/approval_gate.py`](../agents/orchestration/approval_gate.py)
++ [`approvals_ui.py`](../agents/orchestration/approvals_ui.py) (the human approval flow,
+independent of agent routing).*
 
 ---
 

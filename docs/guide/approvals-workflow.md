@@ -17,16 +17,28 @@ through (`AuditLogger`, hash-chained `human_approvals` rows) is covered in
 
 ## What it does (30-second version)
 
-`ApprovalGate.evaluate()` looks at a proposed `(agent, action, target)` and returns a
-`GateVerdict` — a list of reasons an action needs a human, or an empty list meaning
-"proceed automatically." If any reason fired, `gate.open()` writes a `pending` row to
-`human_approvals` (via `AuditLogger`, so it's hash-chained like everything else),
-fires a best-effort macOS notification, and the caller opens
-`approvals_ui.py` — a stdlib-only localhost web page listing every pending request as
-a card with one-click Approve/Deny. The only MCP tool that currently calls this whole
-chain and blocks a live tool call on it is `terminal.run` in
-`mcp-servers/terminal/server.py`; `terminal.run_tests`/`run_benchmarks`/`run_audit`
-never go through the gate at all — they run immediately if configured, or refuse if not.
+> **Correction (2026-07-09):** the walkthrough below describes `ApprovalGate.evaluate()`
+> as the entry point, but **no live caller invokes it**. `mcp-servers/terminal/server.py`
+> calls `AuditLogger.human_approval_request()` directly — it never imports
+> `ApprovalGate` at all. `evaluate()` and its registry-driven checks (`requires_approval`,
+> `write_paths`, `denied_tools`, `global_approval_gates`) are a holdover from the retired
+> `agents/agent_registry.yaml` design; specialist agents now declare their own scope in
+> `.claude/agents/*.md` frontmatter instead. `ApprovalGate.__init__`'s `registry_path` is
+> now **optional** (previously it unconditionally loaded the now-deleted registry file,
+> which crashed every real caller — `approvals_ui.py` and `approval_gate.py --resolve`
+> — until fixed). The **live** path is: `terminal/server.py` opens a `human_approvals`
+> row directly → `approvals_ui.py`'s Approve/Deny POST calls `ApprovalGate(session_id=...).resolve()`
+> with no registry. The `evaluate()` walkthrough further down is retained as documentation
+> of dead code still present in the module, not as the active flow.
+
+`mcp-servers/terminal/server.py` opens a `pending` row in `human_approvals` directly
+(via `AuditLogger.human_approval_request()`, hash-chained like everything else) for
+any state-mutating command routed through `terminal.run`, fires a best-effort macOS
+notification, and opens `approvals_ui.py` — a stdlib-only localhost web page listing
+every pending request as a card with one-click Approve/Deny. Approve/Deny calls
+`ApprovalGate(session_id=...).resolve()`, which writes the resolution via the same
+`AuditLogger`. `terminal.run_tests`/`run_benchmarks`/`run_audit` never go through this
+flow at all — they run immediately if configured, or refuse if not.
 
 ---
 
@@ -36,14 +48,14 @@ never go through the gate at all — they run immediately if configured, or refu
 
 | Input | Type | Source | Effect |
 |---|---|---|---|
-| `registry_path` | path | `agents/agent_registry.yaml` by default (`_ROOT / "agents" / "agent_registry.yaml"`) | Parsed once at construction into `self.agents` (dict) and `self.global_gates` (list, read but never checked against — see [Facts](#facts-invariants--edge-cases)). |
+| `registry_path` | path \| `None` | `None` by default (was `agents/agent_registry.yaml`, now deleted) | Optional. `None` unless the caller explicitly wants to use `evaluate()` — `open()`/`resolve()`/`list_open()`/`list_recent()` (the live path) never need it. Passing a path parses it into `self.agents`/`self.global_gates` for `evaluate()` to read. |
 | `session_id` | str | caller-supplied | Passed straight through to the `AuditLogger` used for every write this gate makes. |
-| `repo` / `tier` | str / int \| None | caller-supplied | `tier` is the single biggest lever — `tier >= 2` gates *every* action regardless of anything else. |
+| `repo` / `tier` | str / int \| None | caller-supplied | `tier` is the single biggest lever *for `evaluate()`* — `tier >= 2` gates *every* action regardless of anything else. Irrelevant to the live `open()`/`resolve()` path. |
 | `actor` | str | default `"orchestrator"` | Recorded on the underlying `AuditLogger`. |
-| `agents.<name>.requires_approval` | bool | `agent_registry.yaml` | If true, every action by that agent is gated. `infra` is the only agent with this set (`agent_registry.yaml`, comment: "every action gated"). |
-| `agents.<name>.write_paths` | list[glob] | `agent_registry.yaml` | Defines the agent's allowed write scope for `_within_scope()`. An agent with **no** `write_paths` key gates **every** write (`_within_scope` returns `False` when `scopes` is falsy). |
-| `agents.<name>.denied_tools` | list[glob] | `agent_registry.yaml` | `fnmatch`'d against `action`; a match is a hard-stop reason, not a silent deny — it still surfaces as a gated approval request rather than an outright rejection. |
-| `global_approval_gates` | list[str] | `agent_registry.yaml` (one entry: `"filesystem.write outside agent write_paths"`) | Loaded into `self.global_gates` but **not read anywhere in `evaluate()`** — see [Facts](#facts-invariants--edge-cases). |
+| `agents.<name>.requires_approval` | bool | caller-supplied registry (dead: no live caller passes one) | Only read by `evaluate()`. If a registry is supplied and true, every action by that agent is gated. |
+| `agents.<name>.write_paths` | list[glob] | caller-supplied registry (dead) | Only read by `evaluate()`, for `_within_scope()`. An agent with **no** `write_paths` key gates **every** write (`_within_scope` returns `False` when `scopes` is falsy). |
+| `agents.<name>.denied_tools` | list[glob] | caller-supplied registry (dead) | Only read by `evaluate()`. `fnmatch`'d against `action`; a match is a hard-stop reason, not a silent deny — it still surfaces as a gated approval request rather than an outright rejection. |
+| `global_approval_gates` | list[str] | caller-supplied registry (dead) | Loaded into `self.global_gates` if a registry is supplied, but **not read anywhere in `evaluate()`** either — see [Facts](#facts-invariants--edge-cases). |
 
 ### `approvals_ui.py` runtime knobs
 
@@ -141,8 +153,9 @@ def evaluate(self, agent: str, action: str,
 The six conditions, verified against the code and their exact string constants
 (`approval_gate.py`):
 
-1. **Registry flag** — `agents.<agent>.requires_approval: true`. Only `infra` has this
-   in the shipped `agent_registry.yaml`.
+1. **Registry flag** — `agents.<agent>.requires_approval: true`, if a registry was
+   passed to `__init__` (dead in practice: no live caller passes one; the retired
+   `agent_registry.yaml` set this only on the `devops` agent).
 2. **Tier threshold** — `self.tier is not None and self.tier >= 2`. This is
    unconditional: a tier-2 or tier-3 repo gates *every* action from *every* agent,
    independent of write scope or action type.
@@ -464,19 +477,24 @@ the UI manually.
 
 - **`ApprovalGate` reads `global_approval_gates` but never checks it.**
   `self.global_gates = reg.get("global_approval_gates", [])` (`approval_gate.py`)
-  is assigned and never referenced again anywhere in the class. The one entry in the
-  shipped registry, `"filesystem.write outside agent write_paths"`
-  (`agent_registry.yaml`), is effectively achieved anyway by trigger condition 3
-  (out-of-scope write), but through a completely separate code path — the
-  `global_approval_gates` list itself is dead configuration as of this reading.
+  is assigned and never referenced again anywhere in the class — dead even when a
+  registry is supplied. The retired `agent_registry.yaml`'s one entry,
+  `"filesystem.write outside agent write_paths"`, was effectively achieved anyway
+  by trigger condition 3 (out-of-scope write), through a completely separate code
+  path.
 - **No `write_paths` key means every write by that agent gates** — see trigger
   condition 3 above; omitting the key is equally as restrictive as an empty list.
-- **`terminal.run` bypasses `ApprovalGate` entirely** — see above; it calls
-  `_audit.human_approval_request()` directly, not `evaluate()`/`.open()`.
-  `ApprovalGate` and the terminal server's gating are two independent enforcement
-  points that happen to agree on this one case, not one calling the other.
-  `agents/orchestration/task_router.py`/`agent_handoff.py` (not covered by this doc)
-  would be the place to check if `evaluate()` is wired in elsewhere.
+  (Moot in practice now — no live caller supplies a registry at all.)
+- **`terminal.run` bypasses `ApprovalGate.evaluate()` entirely, and always has.**
+  It calls `_audit.human_approval_request()` directly, never `evaluate()`. Confirmed
+  (2026-07-09): `agents/orchestration/task_router.py` and `agent_handoff.py` — the
+  only other places that might have wired `evaluate()` in — were deleted when the
+  agent-registry design was retired in favor of native `.claude/agents/*.md` files,
+  and neither ever called `evaluate()` either. `evaluate()` has had zero live callers
+  since this module was written; `ApprovalGate.__init__` still crashed on every real
+  caller (`approvals_ui.py`, `approval_gate.py --resolve`) until `registry_path` was
+  made optional, because the constructor loaded the registry unconditionally even
+  though only the dead `evaluate()` path needed it.
 - **`denied_tools` doesn't deny — it gates** — see the seventh mechanism above; a
   match becomes an approvable request like any other gated action, not an outright
   rejection.

@@ -42,7 +42,6 @@ if str(_ROOT) not in sys.path:
 from agents.orchestration.approval_gate import ApprovalGate   # noqa: E402
 
 TOKEN = secrets.token_urlsafe(24)
-REGISTRY = _ROOT / "agents" / "agent_registry.yaml"
 
 
 def _default_decider() -> str:
@@ -227,8 +226,9 @@ class Handler(BaseHTTPRequestHandler):
         rid = form.get("id", [""])[0]
         decision = form.get("decision", [""])[0]
         if rid and decision in ("approve", "deny"):
-            gate = ApprovalGate(REGISTRY, session_id="approvals-ui",
-                                actor="approvals-ui")
+            # resolve() never needs a registry (only evaluate() does — see
+            # approval_gate.py's module docstring); no registry_path here.
+            gate = ApprovalGate(session_id="approvals-ui", actor="approvals-ui")
             gate.resolve(rid, approved=(decision == "approve"),
                          decided_by=DECIDED_BY)          # OS user@host, auto-recorded
         self.send_response(303)

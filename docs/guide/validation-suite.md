@@ -6,14 +6,23 @@
 **Source:** [`validation/validate_installation.py`](../../validation/validate_installation.py) (174 lines),
 [`validation/validate_security.py`](../../validation/validate_security.py) (123 lines),
 [`validation/validate_memory.py`](../../validation/validate_memory.py) (107 lines),
-[`validation/validate_agents.py`](../../validation/validate_agents.py) (124 lines),
 [`validation/validate_mcp.py`](../../validation/validate_mcp.py) (132 lines),
 [`validation/validate_features.py`](../../validation/validate_features.py) (324 lines).
 **Invoked by:** [`bin/claude-env`](../../bin/claude-env) (`validate` command).
 
-This doc covers everything under `validation/` only. A seventh validator target,
+This doc covers everything under `validation/` only. A sixth validator target,
 `rag` → [`rag/validate_rag.py`](../../rag/validate_rag.py), is dispatched the same way
 by the CLI but lives outside `validation/` and isn't covered here.
+
+> **Removed (2026-07-09):** `validate_agents.py` validated `agents/agent_registry.yaml`,
+> `agents/orchestration/task_router.py`, and `agents/orchestration/conflict_resolver.py`
+> — all deleted when the agent-registry design was retired in favor of native
+> `.claude/agents/*.md` files (installed per-repo by onboarding; Claude Code routes to
+> them natively, no registry or router). The validator crashed on its first line
+> (`FileNotFoundError` reading the deleted registry) and was removed along with the
+> `agents` entry in `bin/claude-env`'s `VALIDATORS` list. There is no replacement
+> validator — the agent `.md` files are covered by
+> `tests/test_onboard_agents.py`/`test_subagent_tools.py` instead.
 
 ---
 
@@ -34,8 +43,8 @@ than mocks.
 ## Invocation
 
 ```python
-# bin/claude-env:51
-VALIDATORS = ["installation", "security", "rag", "memory", "agents", "mcp", "features"]
+# bin/claude-env:50
+VALIDATORS = ["installation", "security", "rag", "memory", "mcp", "features"]
 ```
 
 ```python
@@ -68,7 +77,7 @@ dispatch and exit-code aggregation.
 ## How to use it
 
 ```bash
-# Full sweep — run all 7 validators after a platform upgrade or bootstrap.py re-mirror
+# Full sweep — run all 6 validators after a platform upgrade or bootstrap.py re-mirror
 claude-env validate all
 
 # Run just one validator, e.g. after a policy change to config/global-policy
@@ -84,13 +93,13 @@ claude-env validate rag ~/code/some-onboarded-repo
 ```
 
 `claude-env validate` with no argument is shorthand for `validate all`. Every other
-validator name (`installation`, `security`, `memory`, `agents`, `mcp`, `features`)
-takes no CLI flags of its own — the scripts behind them are fixed end-to-end checks,
-not configurable — so `rag`'s `<repo_root> [query]` positional args are a real
-exception to the pattern, not just a documentation gap. Exit code is `0` only if
-every validator run in the batch passed; for `validate all` it's the bitwise OR of
-each validator's own exit code, so a single failing validator among the seven makes
-the whole sweep report nonzero.
+validator name (`installation`, `security`, `memory`, `mcp`, `features`) takes no CLI
+flags of its own — the scripts behind them are fixed end-to-end checks, not
+configurable — so `rag`'s `<repo_root> [query]` positional args are a real exception
+to the pattern, not just a documentation gap. Exit code is `0` only if every validator
+run in the batch passed; for `validate all` it's the bitwise OR of each validator's
+own exit code, so a single failing validator among the six makes the whole sweep
+report nonzero.
 
 ---
 
@@ -101,7 +110,6 @@ the whole sweep report nonzero.
 | `validate_installation.py` | `main()` only (no helper functions besides `check()`): Python ≥3.13; `$CLAUDE_ENV_HOME/venv/` exists and its `python`/`pip` run; required dirs (`state`, `knowledge/lancedb`, `models`, `config`, `archive`, `logs`); DB reachable via `lib.db.get_db()` and all 15 expected tables present; `import yaml` (hard-required); soft-checks `lancedb`, `onnxruntime`, `mcp`, `llama_cpp`; RAG embedding-model file presence and reranker load via `rag.config.get_config()`; `AuditLogger(...).verify_chain()`. | Printed `PASS/WARN/FAIL` per line to stdout; exit `1` if `_failures > 0`, else `0` (warnings alone don't fail it — see [Facts](#facts-invariants--edge-cases)). |
 | `validate_security.py` | `main()` only: `PolicyEngine.evaluate_path()` must `block` a known-bad set (`.env`, `secrets/key.pem`, `deploy/id_rsa`, `backups/dump.sql`, etc.) and `allow` a known-good set (`src/app.py`, `docs/adr/0001.md`, ...); `scan_content()` flags + redacts/blocks a planted AWS key; `PromptInjectionDetector.scan()` flags a classic injection and leaves a benign prompt unblocked; `SecretDetector.scan()` flags a planted credential; `RagPoisonDetector.scan_chunk()` flags an instruction-laden chunk; direct `UPDATE`/`DELETE` on `audit_events` must raise (DB trigger). | Same PASS/FAIL-per-line + exit `1`/`0` pattern; no soft warnings in this script — every check is hard. |
 | `validate_memory.py` | `main()` only, all against a throwaway `test:<uuid>` namespace: `add_node`/`get_node` round-trip; `add_edge` + `MemoryRetriever.expand()` reaches the linked node; `keyword_recall()` finds a node by name; `supersede()` creates a new node and marks the old one's `superseded_by`; an `isolated=True` retriever's `keyword_recall(..., extra_ns=[other_ns])` returns nothing from a different namespace; `effective_confidence()` decays a 1.0-confidence, 26-year-old node below 1.0; `memory_validator.validate_ns(ns, repair=False)` reports zero dangling edges. | Exit `1`/`0`; a `memory_validator` import/run exception is itself turned into a `FAIL` line rather than crashing the script. |
-| `validate_agents.py` | `main()` only: `agent_registry.yaml` parses and defines `orchestrator` + all 10 named specialists (`architect`, `backend`, `frontend`, `database`, `devops`, `security`, `performance`, `testing`, `documentation`, `research`); every agent's `prompt` path exists on disk; `orchestrator.can_spawn` equals the specialist set exactly; `TaskRouter.route()` sends 6 representative tasks to the expected specialist; `ApprovalGate.evaluate()` requires approval for tier-2 writes, devops actions unconditionally, out-of-scope writes, state-mutating terminal commands, git history rewrites, and memory prune, but *not* for an in-scope tier-0 backend edit; `ConflictResolver.resolve()` gives a security veto (`is_security_block=True`) precedence and marks a genuine two-agent stalemate `escalate=True`. | Exit `1`/`0`; no soft warnings. |
 | `validate_mcp.py` | `main()` only: `config/mcp-servers.json` parses and declares all 7 expected servers; `startup_order` values are unique and `filesystem-policy` has the minimum; every non-optional server's `server.py` file exists (`jetbrains` is IDE-provided, skipped); `filesystem-policy.security.{enforces_policy_engine,content_scan}`; `lancedb-rag.security.{read_only,wraps_results_as_data}`; `terminal.security.allowlist_only` and `"terminal.exec_unrestricted"` present in its `denies` list; `memory-graph.security.namespace_isolation`; `documentation.security.external_fetch_tiers == [0, 1]`; each server module can be `importlib`-loaded and exposes a `server` attribute (soft-checked — skipped/WARN if the `mcp` package isn't installed). | Exit `1`/`0`; the import-and-expose-`server` checks are the only soft (`WARN`, non-fatal) checks in this script. |
 | `validate_features.py` | One `main()` plus a `_make_fixture()` helper that builds a tiny real git repo (`src/engine.py`, matching test, a doc referencing both a real and a missing file) so repo-quality tools have something realistic to scan. Runs entirely inside a freshly created temp `$CLAUDE_ENV_HOME` + SQLite DB (set via env vars **before** any platform import, since `get_db()` is a singleton) so it never touches the real ledger/memory/settings. Exercises, as subprocess or in-process calls: `hooks/policy_hook.py` (deny/allow/ask-on-secret decisions), `hooks/install_hooks.py --dry-run`; `security/incident.py on/off` + `PolicyEngine` block/restore; `memory/session_ingestor.ingest()` (session-node creation, retrieval→edit "used" signal via `observability.feedback`, re-run dedup); `audit/compliance_report.py` and `audit/session_replay.py --list`; `memory/memory_sync.py export/import` (secret redaction, same-DB idempotent skip, cross-namespace remap on import); `security/policy_sim.py simulate` against a candidate policy; `observability/budgets.py` (exceeded-budget exit code 1); `rag/test_impact.py`, `rag/doc_drift.py`, `rag/context_pack.py`, `agents/analysts/nightly_analyst.py` against the fixture repo; `agents/orchestration/approvals_ui._pending_html()`; `rag/pipelines/know.py`; `claude-plugin/` manifest JSON validity (skipped with a printed `SKIP` line if the plugin dir is absent, e.g. in a deployed mirror); and a static string-scan of `bin/claude-env`'s source confirming 15 named CLI subcommands are present. | Exit `1`/`0`; the plugin-manifest check degrades to a printed `SKIP` (not `WARN`/`FAIL`) rather than failing when `claude-plugin/` doesn't exist in the current tree. |
 
@@ -134,11 +142,11 @@ def check(label: str, cond: bool, soft: bool = False) -> None:
         print(f"{RED}FAIL{RESET} {label}")
 ```
 
-`validate_security.py`, `validate_memory.py`, and `validate_agents.py` use a stripped
-two-color (`GREEN`/`RED`) variant with no `soft` parameter at all — every check in
-those three scripts is hard-fail. Only `validate_installation.py`, `validate_mcp.py`,
-and (implicitly, via printed `SKIP` lines rather than a `soft` flag)
-`validate_features.py` have a non-fatal outcome.
+`validate_security.py` and `validate_memory.py` use a stripped two-color
+(`GREEN`/`RED`) variant with no `soft` parameter at all — every check in those two
+scripts is hard-fail. Only `validate_installation.py`, `validate_mcp.py`, and
+(implicitly, via printed `SKIP` lines rather than a `soft` flag) `validate_features.py`
+have a non-fatal outcome.
 
 ### `validate_features.py` isolates itself before importing platform code
 
@@ -205,9 +213,8 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
 - **Warnings never fail a script — except when they silently don't exist.**
   `validate_installation.py` and `validate_mcp.py` explicitly separate `_warnings`
   from `_failures` and only `return 1` on `_failures` (`validation/validate_installation.py`,
-  `validation/validate_mcp.py`). `validate_security.py`, `validate_memory.py`,
-  and `validate_agents.py` have no `soft` concept at all — every failed check in those
-  three is fatal.
+  `validation/validate_mcp.py`). `validate_security.py` and `validate_memory.py`
+  have no `soft` concept at all — every failed check in those two is fatal.
 - **`validate_features.py` is the only validator that never touches the real
   `$CLAUDE_ENV_HOME`** — see [`validate_features.py` isolates itself before
   importing platform code](#validate_featurespy-isolates-itself-before-importing-platform-code)
@@ -226,25 +233,17 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
   soft-failed** — a third outcome distinct from both `PASS`/`FAIL` and `WARN` (see the
   [reference table row](#reference-table--one-row-per-validator) above for the exact
   condition and the CLI-dispatcher-coverage check's static-scan caveat).
-- **`validate_agents.py` hardcodes the 10-specialist set as a Python literal**, not
-  derived from the registry file:
-  `{"architect", "backend", "frontend", "database", "devops", "security",
-  "performance", "testing", "documentation", "research"}`
-  (`validation/validate_agents.py`). Adding an 11th specialist to
-  `agent_registry.yaml` without also updating this set will make
-  `"registry defines all 10 specialists"` and `"orchestrator can_spawn == specialists"`
-  fail even though the registry itself is internally consistent.
 - **`validate_memory.py`'s decay check uses a fixed ancient timestamp, not "now minus
   N days."** It calls `effective_confidence(1.0, half_life=30,
   updated_at="2000-01-01T00:00:00Z")` and only asserts the result is `< 1.0`
   (`validation/validate_memory.py`) — it doesn't assert a specific decayed
   value, so it would still pass even if the half-life math changed, as long as *some*
   decay occurs over a 26-year gap.
-- **`rag` is a seventh `VALIDATORS` entry that structurally doesn't belong to this
+- **`rag` is a sixth `VALIDATORS` entry that structurally doesn't belong to this
   directory** — its script lives at `rag/validate_rag.py`, not
   `validation/validate_rag.py` (`bin/claude-env:141-142` special-cases the path); see
   the note at the top of this doc.
-- **None of the six scripts import each other or share a base module** beyond
+- **None of the five `validation/` scripts import each other or share a base module** beyond
   standard library and the platform modules they're testing — each is a fully
   standalone `if __name__ == "__main__"` entry point, confirmed by re-reading every
   file's imports; the duplicated `check()`/color-constant boilerplate is a real,
@@ -264,7 +263,7 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
 - [`memory-sync.md`](memory-sync.md) — `memory_sync.py` export/import/redaction,
   exercised by `validate_features.py`.
 - [`approvals-workflow.md`](approvals-workflow.md) — `ApprovalGate` and the approvals
-  UI internals, exercised by `validate_agents.py` and `validate_features.py`.
+  UI internals, exercised by `validate_features.py`.
 - [`audit-ledger.md`](audit-ledger.md) — the append-only trigger `validate_security.py`
   fires directly, and `compliance_report.py`/`session_replay.py` exercised by
   `validate_features.py`.
