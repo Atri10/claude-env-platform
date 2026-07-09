@@ -94,11 +94,13 @@ def test_websearch_allowed_on_low_tier():
     assert _decision(payload) == "allow"
 
 
-def test_websearch_denied_on_tier2():
+def test_websearch_asked_on_tier2():
+    # WebSearch is a query string, not a file-exfil vector, so at tier 2+ it is
+    # controlled (operator confirms each) rather than hard-denied like WebFetch.
     d = _repo(tier=2)
     payload = {"tool_name": "WebSearch", "cwd": d,
                "tool_input": {"query": "latest go version"}}
-    assert _decision(payload) == "deny"
+    assert _decision(payload) == "ask"
 
 
 def test_net_tool_never_silently_allowed_when_policy_unavailable(monkeypatch):

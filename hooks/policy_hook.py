@@ -576,16 +576,24 @@ def main() -> int:
             else:
                 _ask(f"network tool {tool}: could not verify repo tier — confirm egress")
             return 0
-        if tier >= 2:
-            _deny(f"native network tool {tool} is not permitted in a tier-{tier} "
-                  f"repo (no network egress) — route through an approved channel")
-        elif tool in _NET_FETCH_TOOLS:
-            # WebFetch can carry a body off-machine -> operator confirms each one
-            _ask(f"{tool} performs network egress (an outbound request that may "
-                 f"carry data) — confirm")
+        if tool in _NET_FETCH_TOOLS:
+            # WebFetch retrieves an arbitrary URL and can POST a body — a data
+            # exfil vector. Hard-deny at tier>=2 (no egress there); ask at tier<=1.
+            if tier >= 2:
+                _deny(f"native network tool {tool} is not permitted in a tier-{tier} "
+                      f"repo (no network egress) — route through an approved channel")
+            else:
+                _ask(f"{tool} performs network egress (an outbound request that may "
+                     f"carry data) — confirm")
         else:
-            # WebSearch sends only a query string; allow on tier<=1 (silent)
-            return 0
+            # WebSearch sends only a query string (no file-exfil vector), so it is
+            # not a hard-deny even on sensitive repos: allow silently at tier<=1,
+            # and ASK at tier>=2 so a search still can't run unobserved there.
+            if tier >= 2:
+                _ask(f"{tool} sends a search query off-machine — confirm "
+                     f"(tier-{tier} repo)")
+            else:
+                return 0
         return 0
 
     # 2. collect the path (if any) this tool call touches
