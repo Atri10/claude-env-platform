@@ -162,20 +162,38 @@ pass namespaces by hand. Do not read or write another repo's namespace.
 
 Onboarding installs these under `.claude/`. Reach for them by name:
 
-- **Skill `principled-engineering`** — the principal-engineer operating manual
-  (decoupling, simplicity, security-by-default, testability). Load it for any
-  design or implementation task of real size.
-- **Skill `solid-design`** — SOLID applied, with smells and refactorings.
-- **Skill `design-patterns`** — pattern selection: when to use, when NOT to,
-  and the lighter alternative.
-- **Skill `code-review`** — structured review methodology.
-- **Skill `architecture-review`** — boundary/coupling/dependency review.
-- **Subagent `code-reviewer`** — read-only reviewer for diffs.
+### Engineering process skills
+- **Skill `principled-engineering`** — the principal-engineer operating manual:
+  decoupling, simplicity, security-by-default, testability, definition of done.
+  Load it for any design or implementation task of real size.
+- **Skill `tdd`** — Test-Driven Development: red-green-refactor loop, what to
+  test, test pyramid, writing tests that survive refactors.
+- **Skill `debugging`** — hypothesis-driven debugging: reproduce first, bisect,
+  verify — never guess. Includes the `git bisect` procedure.
+- **Skill `refactoring`** — safe refactoring procedure: characterisation tests
+  first, Martin Fowler catalog applied, small steps, always green.
+- **Skill `git-workflow`** — commit discipline, branch strategy, PR hygiene,
+  meaningful commit messages, squash vs merge vs rebase.
+
+### Design skills
+- **Skill `solid-design`** — SOLID applied concretely: smell per principle,
+  decision trees, quick-reference decision tree.
+- **Skill `design-patterns`** — pattern selection and rejection: problem → pattern
+  → when NOT to → lighter alternative. Patterns by symptom lookup table.
+- **Skill `api-design`** — REST API design: naming, HTTP semantics, error
+  contracts, idempotency, pagination, versioning, auth boundaries.
+- **Skill `architecture-review`** — boundary/coupling/dependency direction
+  review at the system level. Use when moving a boundary or adding a dependency.
+
+### Review skills
+- **Skill `code-review`** — structured diff review: pre-flight checklist,
+  priority-ordered review sequence, output format, verdict.
+- **Subagent `code-reviewer`** — read-only reviewer for diffs and PRs.
 - **Subagent `architecture-reviewer`** — read-only design/ADR reviewer.
 
-Both subagents are **read-only by tool grant** (`Read`/`Grep`/`Glob` — no shell, no write): they
-review the diff/files the caller provides. That's a hard limit from their `tools:` allow-list, not
-a promise in their prompt.
+Both subagents are **read-only by tool grant** (`Read`/`Grep`/`Glob` — no
+shell, no write). That is a hard limit from their `tools:` allow-list, not a
+promise in their prompt.
 
 ## 6. Specialist agents — the squad available in this repo
 
