@@ -12,6 +12,12 @@ This document gets you from a clean machine to a governed, RAG-indexed repositor
 (config tables, decision-logic walkthroughs, diagrams), see the
 [technical guide](docs/guide/README.md).
 
+**The path to a working setup is five steps, in order:** bootstrap the platform once per
+machine, install a local embedding model, then onboard each repository you want governed
+(onboarding also builds its search index). Every step below is one command — each shows
+the exact directory to run it from and the exact output to expect, so you can go through
+it once, top to bottom, without guessing.
+
 ---
 
 ## Table of contents
@@ -19,25 +25,24 @@ This document gets you from a clean machine to a governed, RAG-indexed repositor
 **Get running**
 
 1. [What you get](#1-what-you-get)
-2. [Quick start](#2-quick-start)
-3. [Prerequisites](#3-prerequisites)
-4. [Step 1 — Bootstrap the platform](#4-step-1--bootstrap-the-platform)
-5. [Step 2 — Install local models](#5-step-2--install-local-models)
-6. [Step 3 — Onboard a repository](#6-step-3--onboard-a-repository)
-7. [Step 4 — Verify everything works](#7-step-4--verify-everything-works)
+2. [Prerequisites](#2-prerequisites)
+3. [Step 1 — Bootstrap the platform](#3-step-1--bootstrap-the-platform)
+4. [Step 2 — Install local models](#4-step-2--install-local-models)
+5. [Step 3 — Onboard a repository](#5-step-3--onboard-a-repository)
+6. [Step 4 — Verify everything works](#6-step-4--verify-everything-works)
 
 **Reference**
 
-8. [repo-policy.yaml reference](#8-repo-policyyaml-reference)
-9. [Architecture — where to read more](#9-architecture--where-to-read-more)
-10. [On-disk layout](#10-on-disk-layout)
-11. [Everyday operations](#11-everyday-operations)
-12. [CLI command reference](#12-cli-command-reference)
-13. [Troubleshooting](#13-troubleshooting)
-14. [Appendix A — JetBrains integration](#appendix-a--jetbrains-integration)
-15. [Appendix B — PostgreSQL migration](#appendix-b--postgresql-migration)
-16. [Appendix C — Plugin distribution](#appendix-c--plugin-distribution)
-17. [License & use](#license--use)
+7. [repo-policy.yaml reference](#7-repo-policyyaml-reference)
+8. [Architecture — where to read more](#8-architecture--where-to-read-more)
+9. [On-disk layout](#9-on-disk-layout)
+10. [Everyday operations](#10-everyday-operations)
+11. [CLI command reference](#11-cli-command-reference)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Appendix A — JetBrains integration](#appendix-a--jetbrains-integration)
+14. [Appendix B — PostgreSQL migration](#appendix-b--postgresql-migration)
+15. [Appendix C — Plugin distribution](#appendix-c--plugin-distribution)
+16. [License & use](#license--use)
 
 ---
 
@@ -62,55 +67,7 @@ Everything runs through a single Python virtual environment at `$CLAUDE_ENV_HOME
 
 ---
 
-## 2. Quick start
-
-The whole path from a clean machine to a governed, indexed repository, in order. Each
-step links to its full section below if you need more detail or hit a snag.
-
-**1. Bootstrap the platform** ([full detail](#4-step-1--bootstrap-the-platform)):
-
-```bash
-python3 bootstrap.py --with-brew
-chmod 700 ~/.claude-env
-
-echo 'export CLAUDE_ENV_HOME="$HOME/.claude-env"' >> ~/.zshrc
-echo 'export PATH="$CLAUDE_ENV_HOME/bin:$PATH"'   >> ~/.zshrc
-source ~/.zshrc
-```
-
-**2. Install the embedding model** — required before indexing ([full detail](#5-step-2--install-local-models)):
-
-```bash
-mkdir -p ~/.claude-env/models
-~/.claude-env/venv/bin/pip install huggingface-hub
-
-hf download nomic-ai/nomic-embed-text-v1.5-GGUF \
-  nomic-embed-text-v1.5.Q8_0.gguf --local-dir ~/.claude-env/models
-```
-
-Then point `~/.claude-env/config/rag.yaml` at the downloaded file — the exact YAML is
-in [§5a](#5a-embedding-model-required).
-
-**3. Onboard your repository** ([full detail](#6-step-3--onboard-a-repository)):
-
-```bash
-claude-env onboard /absolute/path/to/your/repo
-```
-
-**4. Restart Claude Code, then verify** ([full detail](#7-step-4--verify-everything-works)):
-
-```bash
-claude-env validate installation
-claude-env validate rag /absolute/path/to/your/repo "some query about your codebase"
-```
-
-> [!TIP]
-> If any step fails, jump to that section — each one below has the full command,
-> expected output, and what to do if it doesn't match.
-
----
-
-## 3. Prerequisites
+## 2. Prerequisites
 
 Run these checks before you start. All commands are read-only.
 
@@ -126,9 +83,11 @@ Run these checks before you start. All commands are read-only.
 
 ---
 
-## 4. Step 1 — Bootstrap the platform
+## 3. Step 1 — Bootstrap the platform
 
-Run **once** per machine, from this repo's checkout:
+Run **once** per machine.
+
+> Run from: this repo's checkout (e.g. `~/Downloads/claude-env-platform`) — `cd` there first.
 
 ```bash
 python3 bootstrap.py --with-brew
@@ -147,7 +106,9 @@ This single command:
    `~/.claude-env/`.
 8. Writes and verifies the first ("genesis") audit event.
 
-Then lock down the store and add the CLI to your shell:
+Then lock down the store and add the CLI to your shell.
+
+> Run from: anywhere.
 
 ```bash
 chmod 700 ~/.claude-env
@@ -157,7 +118,7 @@ echo 'export PATH="$CLAUDE_ENV_HOME/bin:$PATH"'   >> ~/.zshrc
 source ~/.zshrc
 ```
 
-**Verify:**
+**Verify** (run from: anywhere):
 
 ```bash
 ~/.claude-env/venv/bin/python --version   # must print 3.13 or newer
@@ -165,7 +126,7 @@ claude-env validate installation
 ```
 
 This should be green except model warnings, until you complete
-[Step 2 — Install local models](#5-step-2--install-local-models) below.
+[Step 2 — Install local models](#4-step-2--install-local-models) below.
 
 **Useful flags for `bootstrap.py`:**
 
@@ -178,14 +139,14 @@ This should be green except model warnings, until you complete
 
 ---
 
-## 5. Step 2 — Install local models
+## 4. Step 2 — Install local models
 
 **Required before indexing.** The code ships with no model — you download one and point
 `config/rag.yaml` at it. The models below are suggestions; any GGUF embedding model and
 any ONNX cross-encoder work. **Never use a symlink** — point the config straight at the
-real file.
+real file. All commands in this section run from anywhere.
 
-### 5a. Embedding model (required)
+### 4a. Embedding model (required)
 
 **1. Download the model:**
 
@@ -200,9 +161,9 @@ hf download nomic-ai/nomic-embed-text-v1.5-GGUF \
 
 This creates `~/.claude-env/models/nomic-embed-text-v1.5.Q8_0.gguf`.
 
-**2. Point the deployed config at it.** Edit
+**2. Point the deployed config at it.** Edit the file at
 `~/.claude-env/config/rag.yaml` — this is the copy the servers actually read, not the
-repo's copy:
+repo's copy — so it looks like this:
 
 ```yaml
 # ~/.claude-env/config/rag.yaml
@@ -224,9 +185,10 @@ Suggested (not required) settings: 768-dim GGUF at `Q8_0` quantization (`Q4`/`Q5
 recall); context window 2048; chunk sizes 512 tokens for code, 384 for markdown, 256 for
 sections, ~12% overlap.
 
-### 5b. Reranker (optional)
+### 4b. Reranker (optional)
 
 Improves result ordering; RAG works without it (degrades gracefully to fusion order).
+Commands in this section also run from anywhere.
 
 **1. Download the ONNX cross-encoder:**
 
@@ -246,7 +208,8 @@ mv ~/.claude-env/models/reranker-onnx/onnx/model_qint8_arm64.onnx \
    ~/.claude-env/models/reranker-onnx/model.onnx
 ```
 
-**3. Point the deployed config at the directory:**
+**3. Point the deployed config at the directory** — edit
+`~/.claude-env/config/rag.yaml`:
 
 ```yaml
 # ~/.claude-env/config/rag.yaml
@@ -261,7 +224,7 @@ claude-env validate installation
 # "reranker loads + runs" should show PASS (WARN means disabled/absent — RAG still works)
 ```
 
-### 5c. Choosing / swapping models (no code changes)
+### 4c. Choosing / swapping models (no code changes)
 
 Resolution order: **environment variable > `config/rag.yaml` > numeric fallback.**
 
@@ -285,25 +248,27 @@ file present" and "reranker loads + runs" lines) or in Python:
 > [!WARNING]
 > **Vectors from different models/dimensions are not comparable.** After swapping the
 > embedding model, drop the affected LanceDB tables and re-index — see
-> [Troubleshooting: "Removing a repo's RAG index"](#13-troubleshooting). Gate the swap
+> [Troubleshooting: "Removing a repo's RAG index"](#12-troubleshooting). Gate the swap
 > with `claude-env rag-bench` (recall@k + MRR) before rolling it out.
 
 > [!IMPORTANT]
 > **Always edit the deployed config, not the repo's.** The servers and tools read
-> `~/.claude-env/config/rag.yaml`, which is what [§5a](#5a-embedding-model-required)/[§5b](#5b-reranker-optional)
+> `~/.claude-env/config/rag.yaml`, which is what [§4a](#4a-embedding-model-required)/[§4b](#4b-reranker-optional)
 > above edit directly. If you instead edit this repo's `config/rag.yaml`, re-run
 > `python3 bootstrap.py --no-deps` to sync the deployed copy.
 
 ---
 
-## 6. Step 3 — Onboard a repository
+## 5. Step 3 — Onboard a repository
 
 Onboarding is the one command that turns a plain repo into a governed one: an isolated
 policy, RAG index, memory namespace, and a governance `CLAUDE.md` all get provisioned
 together.
 
 **1. Run onboarding**, pointing at the repo's absolute path — interactive is recommended
-the first time:
+the first time.
+
+> Run from: anywhere — `claude-env` resolves its own venv regardless of your current directory.
 
 ```bash
 claude-env onboard /absolute/path/to/repo
@@ -376,6 +341,8 @@ regenerates from the template on the next onboard.
 
 Onboarding can build the first index for you, or you can run each step explicitly.
 
+> Run from: anywhere.
+
 **1. Preview what would be indexed** (no model load — fast):
 
 ```bash
@@ -413,6 +380,10 @@ chmod +x /absolute/path/to/repo/.git/hooks/post-commit
 
 Onboarding installs this automatically. To (re)install or preview it manually:
 
+> Run from: the repo's root directory — without `--repo`, `claude-env hooks` targets
+> `<current directory>/.claude/settings.json`. Pass `--repo /path/to/repo` to target a
+> different repo without `cd`-ing into it.
+
 ```bash
 claude-env hooks              # (re)install into THIS repo's .claude/settings.json
 claude-env hooks --dry-run    # preview the resulting settings.json, write nothing
@@ -434,7 +405,7 @@ decision logic is documented in
 
 ---
 
-## 7. Step 4 — Verify everything works
+## 6. Step 4 — Verify everything works
 
 After restarting Claude Code, confirm each server by asking Claude to use it:
 
@@ -447,13 +418,13 @@ After restarting Claude Code, confirm each server by asking Claude to use it:
 | `terminal` | "run the tests" | Runs the configured tests, or opens a gated approval. |
 | `documentation` | "search docs for X" | Local doc matches. |
 
-**Full install health check:**
+**Full install health check** (run from: anywhere):
 
 ```bash
 claude-env validate installation
 ```
 
-**Confirm RAG returns ranked results:**
+**Confirm RAG returns ranked results** (run from: anywhere):
 
 ```bash
 claude-env validate rag /absolute/path/to/repo "some real query"
@@ -466,10 +437,10 @@ claude-env validate rag /absolute/path/to/repo "some real query"
 
 ---
 
-## 8. repo-policy.yaml reference
+## 7. repo-policy.yaml reference
 
 Lives at `<repo>/.claude/repo-policy.yaml`; created by
-[onboarding](#6-step-3--onboard-a-repository). Deny always wins over allow; at tier 3
+[onboarding](#5-step-3--onboard-a-repository). Deny always wins over allow; at tier 3
 the allow list is authoritative — anything not explicitly allowed is denied.
 
 ```yaml
@@ -515,7 +486,7 @@ claude-env policy-sim simulate /repo --candidate new-policy.yaml
 
 ---
 
-## 9. Architecture — where to read more
+## 8. Architecture — where to read more
 
 This README covers installation and day-to-day operation. For everything else:
 
@@ -533,7 +504,7 @@ tier-gated documentation fetch. Nothing else about the design lives in this file
 
 ---
 
-## 10. On-disk layout
+## 9. On-disk layout
 
 `$CLAUDE_ENV_HOME` (default `~/.claude-env/`) after bootstrap:
 
@@ -553,7 +524,7 @@ kept-current version used when developing the platform itself.
 
 ---
 
-## 11. Everyday operations
+## 10. Everyday operations
 
 ### Memory maintenance
 
@@ -584,7 +555,7 @@ Governance has two enforcement layers:
   records the OS `user@host` automatically. On approve, the command runs in the same
   sandbox (argv-only, no shell/pipes, scrubbed env, repo-root cwd, timeout).
 - **Hard-deny (no gate)** — `git push`/`amend`/`rebase`/`reset --hard`, and the
-  native-tool hooks ([§6](#extend-governance-to-native-tools-readwriteeditbash)) simply
+  native-tool hooks ([§5](#extend-governance-to-native-tools-readwriteeditbash)) simply
   refuse rather than opening an approval.
 
 A gate opens when any of:
@@ -780,7 +751,7 @@ Run any piece manually: `claude-env ingest-sessions` (parse new transcripts) ·
 
 ---
 
-## 12. CLI command reference
+## 11. CLI command reference
 
 `claude-env <command>` dispatches through the venv Python automatically. Run
 `claude-env` (or `claude-env help`) for a grouped overview, `claude-env help <command>`
@@ -809,7 +780,7 @@ for a one-line summary, and `claude-env <command> --help` for a command's full o
 
 ---
 
-## 13. Troubleshooting
+## 12. Troubleshooting
 
 | Symptom | Likely cause | Action |
 |---|---|---|
@@ -943,8 +914,8 @@ claude --plugin-dir /path/to/claude-env/claude-plugin
 ```
 
 > [!NOTE]
-> The platform must still be [bootstrapped](#4-step-1--bootstrap-the-platform) and
-> [models configured](#5-step-2--install-local-models) on each machine — the plugin is
+> The platform must still be [bootstrapped](#3-step-1--bootstrap-the-platform) and
+> [models configured](#4-step-2--install-local-models) on each machine — the plugin is
 > only the wiring/distribution layer. See `claude-plugin/README.md`. Without the plugin
 > system, [`claude-env hooks`](#extend-governance-to-native-tools-readwriteeditbash)
 > achieves the same wiring.

@@ -190,7 +190,7 @@ def get_embedder(cfg: RagConfig | None = None):
         raise RuntimeError(
             "No embedding model configured. Set `embedding.model_path` in "
             "config/rag.yaml (or the EMBED_MODEL_PATH env var) to point at a local "
-            "model file. See README §5 'Install local models' for download "
+            "model file. See README §4 'Install local models' for download "
             "instructions and suggested models.")
     if _EMBEDDER is None or _EMBEDDER_KEY != cfg.embedding.model_path:
         _EMBEDDER = LlamaEmbedder.from_config(cfg.embedding)
