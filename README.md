@@ -67,31 +67,46 @@ Everything runs through a single Python virtual environment at `$CLAUDE_ENV_HOME
 The whole path from a clean machine to a governed, indexed repository, in order. Each
 step links to its full section below if you need more detail or hit a snag.
 
+**1. Bootstrap the platform** ([full detail](#4-step-1--bootstrap-the-platform)):
+
 ```bash
-# 1. Bootstrap the platform (§4)
 python3 bootstrap.py --with-brew
 chmod 700 ~/.claude-env
+
 echo 'export CLAUDE_ENV_HOME="$HOME/.claude-env"' >> ~/.zshrc
 echo 'export PATH="$CLAUDE_ENV_HOME/bin:$PATH"'   >> ~/.zshrc
 source ~/.zshrc
+```
 
-# 2. Install the embedding model — required before indexing (§5)
+**2. Install the embedding model** — required before indexing ([full detail](#5-step-2--install-local-models)):
+
+```bash
 mkdir -p ~/.claude-env/models
 ~/.claude-env/venv/bin/pip install huggingface-hub
+
 hf download nomic-ai/nomic-embed-text-v1.5-GGUF \
   nomic-embed-text-v1.5.Q8_0.gguf --local-dir ~/.claude-env/models
-# then point ~/.claude-env/config/rag.yaml at it — see §5 for the exact YAML
+```
 
-# 3. Onboard your repository (§6)
+Then point `~/.claude-env/config/rag.yaml` at the downloaded file — the exact YAML is
+in [§5a](#5a-embedding-model-required).
+
+**3. Onboard your repository** ([full detail](#6-step-3--onboard-a-repository)):
+
+```bash
 claude-env onboard /absolute/path/to/your/repo
+```
 
-# 4. Restart Claude Code, then verify (§7)
+**4. Restart Claude Code, then verify** ([full detail](#7-step-4--verify-everything-works)):
+
+```bash
 claude-env validate installation
 claude-env validate rag /absolute/path/to/your/repo "some query about your codebase"
 ```
 
-If any step fails, jump to that section — each one below has the full command,
-expected output, and what to do if it doesn't match.
+> [!TIP]
+> If any step fails, jump to that section — each one below has the full command,
+> expected output, and what to do if it doesn't match.
 
 ---
 
@@ -146,8 +161,11 @@ source ~/.zshrc
 
 ```bash
 ~/.claude-env/venv/bin/python --version   # must print 3.13 or newer
-claude-env validate installation          # green except model warnings, until §5
+claude-env validate installation
 ```
+
+This should be green except model warnings, until you complete
+[Step 2 — Install local models](#5-step-2--install-local-models) below.
 
 **Useful flags for `bootstrap.py`:**
 
@@ -264,15 +282,17 @@ file present" and "reranker loads + runs" lines) or in Python:
 # ok: True means reranking is live
 ```
 
+> [!WARNING]
 > **Vectors from different models/dimensions are not comparable.** After swapping the
 > embedding model, drop the affected LanceDB tables and re-index — see
 > [Troubleshooting: "Removing a repo's RAG index"](#13-troubleshooting). Gate the swap
 > with `claude-env rag-bench` (recall@k + MRR) before rolling it out.
 
+> [!IMPORTANT]
 > **Always edit the deployed config, not the repo's.** The servers and tools read
-> `~/.claude-env/config/rag.yaml`, which is what §5a/5b above edit directly. If you
-> instead edit this repo's `config/rag.yaml`, re-run `python3 bootstrap.py --no-deps` to
-> sync the deployed copy.
+> `~/.claude-env/config/rag.yaml`, which is what [§5a](#5a-embedding-model-required)/[§5b](#5b-reranker-optional)
+> above edit directly. If you instead edit this repo's `config/rag.yaml`, re-run
+> `python3 bootstrap.py --no-deps` to sync the deployed copy.
 
 ---
 
@@ -282,11 +302,17 @@ Onboarding is the one command that turns a plain repo into a governed one: an is
 policy, RAG index, memory namespace, and a governance `CLAUDE.md` all get provisioned
 together.
 
-**1. Run onboarding**, pointing at the repo's absolute path:
+**1. Run onboarding**, pointing at the repo's absolute path — interactive is recommended
+the first time:
 
 ```bash
-claude-env onboard /absolute/path/to/repo        # interactive (recommended)
-claude-env onboard /absolute/path/to/repo --yes  # non-interactive; accept detected defaults
+claude-env onboard /absolute/path/to/repo
+```
+
+Or non-interactively, accepting all detected defaults:
+
+```bash
+claude-env onboard /absolute/path/to/repo --yes
 ```
 
 **2. Answer the prompts** (each has a detected default — press Enter to accept it):
@@ -348,17 +374,32 @@ regenerates from the template on the next onboard.
 
 ### Index the repository
 
-Onboarding can build the first index for you, or you can run it explicitly:
+Onboarding can build the first index for you, or you can run each step explicitly.
+
+**1. Preview what would be indexed** (no model load — fast):
 
 ```bash
-claude-env scan  /absolute/path/to/repo                       # preview allowed vs blocked (no model load)
-claude-env index /absolute/path/to/repo                       # full RAG index (live progress bar)
-claude-env validate rag /absolute/path/to/repo "auth token validation"   # expect 3-8 ranked results
+claude-env scan /absolute/path/to/repo
 ```
 
 `scan` should list only secrets/generated files as blocked — if something you need is
-blocked, adjust `.claude/repo-policy.yaml` and re-run. Empty RAG results usually mean the
-index is empty (re-run `index`) or the slug/branch don't match the LanceDB table name.
+blocked, adjust `.claude/repo-policy.yaml` and re-run this step.
+
+**2. Build the full index** (live progress bar):
+
+```bash
+claude-env index /absolute/path/to/repo
+```
+
+**3. Verify it's searchable:**
+
+```bash
+claude-env validate rag /absolute/path/to/repo "auth token validation"
+# expect 3-8 ranked results
+```
+
+Empty results usually mean the index is empty (re-run step 2) or the slug/branch don't
+match the LanceDB table name.
 
 **Keep the index current automatically** — install the post-commit hook so every commit
 triggers a background incremental re-index:
@@ -376,8 +417,11 @@ Onboarding installs this automatically. To (re)install or preview it manually:
 claude-env hooks              # (re)install into THIS repo's .claude/settings.json
 claude-env hooks --dry-run    # preview the resulting settings.json, write nothing
 claude-env hooks --global     # machine-wide install instead (legacy; opt-in)
+```
 
-# uninstall (mirrors whichever target is in effect)
+To remove them again (mirrors whichever target is in effect):
+
+```bash
 claude-env hooks --uninstall
 claude-env hooks --uninstall --global
 ```
@@ -403,22 +447,30 @@ After restarting Claude Code, confirm each server by asking Claude to use it:
 | `terminal` | "run the tests" | Runs the configured tests, or opens a gated approval. |
 | `documentation` | "search docs for X" | Local doc matches. |
 
+**Full install health check:**
+
 ```bash
-claude-env validate installation                                  # full install health check
-claude-env validate rag /absolute/path/to/repo "some real query"   # RAG returns ranked results
+claude-env validate installation
 ```
 
-`fatal: not a git repository`, or empty RAG results with a real index present, almost
-always mean a missing/wrong `env` block in `~/.claude.json` — re-run
-`claude-env onboard /absolute/path/to/repo` and restart Claude Code.
+**Confirm RAG returns ranked results:**
+
+```bash
+claude-env validate rag /absolute/path/to/repo "some real query"
+```
+
+> [!NOTE]
+> `fatal: not a git repository`, or empty RAG results with a real index present, almost
+> always mean a missing/wrong `env` block in `~/.claude.json` — re-run
+> `claude-env onboard /absolute/path/to/repo` and restart Claude Code.
 
 ---
 
 ## 8. repo-policy.yaml reference
 
-Lives at `<repo>/.claude/repo-policy.yaml`; created by onboarding (§6). Deny always wins
-over allow; at tier 3 the allow list is authoritative — anything not explicitly allowed
-is denied.
+Lives at `<repo>/.claude/repo-policy.yaml`; created by
+[onboarding](#6-step-3--onboard-a-repository). Deny always wins over allow; at tier 3
+the allow list is authoritative — anything not explicitly allowed is denied.
 
 ```yaml
 version: 1
@@ -505,16 +557,22 @@ kept-current version used when developing the platform itself.
 
 ### Memory maintenance
 
+Set the venv Python once, then run whichever maintenance step you need:
+
 ```bash
 PY=~/.claude-env/venv/bin/python
-$PY memory/memory_validator.py    --all --repair                 # integrity + safe repair
-$PY memory/memory_consolidator.py --all                          # merge low-value clusters
-$PY memory/memory_pruner.py       --all                          # dry-run report
-$PY memory/memory_pruner.py       --namespace proj-x --apply     # actually prune (archives first)
 ```
 
-Pruning archives to `~/.claude-env/archive/memory/<ns>.jsonl` and never prunes
-`decision` / `architecture` nodes.
+| Step | Command |
+|---|---|
+| Integrity check + safe repair | `$PY memory/memory_validator.py --all --repair` |
+| Merge low-value clusters | `$PY memory/memory_consolidator.py --all` |
+| Prune (dry-run report) | `$PY memory/memory_pruner.py --all` |
+| Prune (actually apply, archives first) | `$PY memory/memory_pruner.py --namespace proj-x --apply` |
+
+> [!NOTE]
+> Pruning archives to `~/.claude-env/archive/memory/<ns>.jsonl` and never prunes
+> `decision` / `architecture` nodes.
 
 ### Approvals
 
@@ -526,22 +584,37 @@ Governance has two enforcement layers:
   records the OS `user@host` automatically. On approve, the command runs in the same
   sandbox (argv-only, no shell/pipes, scrubbed env, repo-root cwd, timeout).
 - **Hard-deny (no gate)** — `git push`/`amend`/`rebase`/`reset --hard`, and the
-  native-tool hooks (§6) simply refuse rather than opening an approval.
+  native-tool hooks ([§6](#extend-governance-to-native-tools-readwriteeditbash)) simply
+  refuse rather than opening an approval.
+
+A gate opens when any of:
+
+- the agent requires approval by default (e.g. `devops`)
+- the repo is tier 2/3
+- a write targets a path outside the agent's scope
+- a state-mutating terminal command
+- a git history rewrite/push
+- a destructive memory op
+- the action is in the agent's `denied_tools` list
+
+**See what's on the local UI servers:**
 
 ```bash
-claude-env approvals-ui           # web UI (Approve/Deny)
-claude-env approvals --list-open  # terminal list
-claude-env services                # which local UI is on which port (auto-assigned if the default is busy)
+claude-env services   # which local UI is on which port (auto-assigned if the default is busy)
 ```
 
-A gate opens when any of: the agent requires approval by default (e.g. `devops`); the
-repo is tier 2/3; a write targets a path outside the agent's scope; a state-mutating
-terminal command; a git history rewrite/push; a destructive memory op; or the action is
-in the agent's `denied_tools` list.
+**List and open the approval queue:**
 
 ```bash
-claude-env approvals --list-open
+claude-env approvals --list-open  # terminal list
+claude-env approvals-ui           # web UI (Approve/Deny)
+```
+
+**Resolve a specific pending approval:**
+
+```bash
 claude-env approvals-ui --port 8002 --by you
+# or from the CLI directly:
 ~/.claude-env/venv/bin/python agents/orchestration/approval_gate.py --resolve <id> --approve --by you
 ```
 
@@ -549,10 +622,17 @@ Full walkthrough: [`docs/guide/approvals-workflow.md`](docs/guide/approvals-work
 
 ### Observability & budgets
 
+**Dashboard:**
+
 ```bash
 claude-env dashboard --window 7d
-claude-env dashboard serve --port 8001              # Datasette (read-only, localhost)
-claude-env budget                                    # per-repo monthly USD; exit 1 if exceeded
+claude-env dashboard serve --port 8001    # Datasette (read-only, localhost)
+```
+
+**Budgets:**
+
+```bash
+claude-env budget                # per-repo monthly USD; exit 1 if exceeded
 claude-env budget --format json
 ```
 
@@ -561,60 +641,92 @@ Set limits in `~/.claude-env/config/budgets.yaml`. Update `PRICES` in
 
 ### Governance: compliance, replay, incident, policy-sim
 
-```bash
-claude-env report  --window 30d                                  # markdown evidence + chain proof
-claude-env report  --window 7d --repo payments --format csv --out evidence.csv
-claude-env replay  --list                                        # recent sessions
-claude-env replay  <session_id>                                  # step-by-step timeline
+**Compliance reports** — markdown evidence + chain proof:
 
-claude-env incident on  --reason "suspected token leak" --by you # kill switch (fails everything closed)
+```bash
+claude-env report --window 30d
+claude-env report --window 7d --repo payments --format csv --out evidence.csv
+```
+
+> [!TIP]
+> A report's integrity line is the first thing to check — a non-`VERIFIED` chain exits 1.
+
+**Session replay** — step-by-step forensics timeline:
+
+```bash
+claude-env replay --list          # recent sessions
+claude-env replay <session_id>    # step-by-step timeline
+```
+
+**Incident mode** — the kill switch; fails every policy evaluation closed:
+
+```bash
+claude-env incident on --reason "suspected token leak" --by you
 claude-env incident status
 claude-env incident off --by you
+```
 
-claude-env policy-sim simulate /repo --candidate new-policy.yaml # which files change block/allow
+**Policy simulation** — dry-run a candidate policy or diff against the template:
+
+```bash
+claude-env policy-sim simulate /repo --candidate new-policy.yaml
 claude-env policy-sim diff /repo/.claude/repo-policy.yaml ~/.claude-env/config/repo-policy.template.yaml
 ```
 
-A report's integrity line is the first thing to check — a non-`VERIFIED` chain exits 1.
-
 ### Knowledge & quality tools
 
-```bash
-claude-env know "jwt validation" --repo payments --repo-root /work/payments   # fused memory+RAG+git
-claude-env context-pack /work/payments --write                                # CLAUDE.generated.md
-claude-env rag-bench    /work/payments --create-template                      # then edit + run
-claude-env test-impact  /work/payments --since HEAD~1
-claude-env doc-drift    /work/payments
-claude-env digest       /work/payments                                        # analyst digest now
-```
+| Tool | Command | What it does |
+|---|---|---|
+| Fused recall | `claude-env know "jwt validation" --repo payments --repo-root /work/payments` | Memory + RAG + git recall with provenance. |
+| Context pack | `claude-env context-pack /work/payments --write` | Generates `CLAUDE.generated.md` from repo signals + memory. |
+| RAG benchmark | `claude-env rag-bench /work/payments --create-template` | Scaffolds a benchmark template — edit it, then run it. |
+| Test impact | `claude-env test-impact /work/payments --since HEAD~1` | Changed files → minimal test set. |
+| Doc drift | `claude-env doc-drift /work/payments` | Finds markdown referencing code that moved/changed. |
+| Digest | `claude-env digest /work/payments` | Runs the analyst digest right now. |
 
 For nightly per-repo digests, list repo paths (one per line) in
 `~/.claude-env/config/analyst-repos.txt`.
 
 ### Team knowledge sync
 
+**On your machine — export** (secret-redacted):
+
 ```bash
-claude-env memory-sync export --namespace proj-payments --out team.jsonl   # secret-redacted
-# review the JSONL, share it, then on the teammate's machine:
-claude-env memory-sync import --in team.jsonl                              # additive; --namespace remaps
+claude-env memory-sync export --namespace proj-payments --out team.jsonl
 ```
 
-Imports are additive (existing node ids are skipped). Review the export before sharing,
-regardless.
+Review the JSONL, then share it with your teammate.
+
+**On the teammate's machine — import** (additive; `--namespace` remaps if needed):
+
+```bash
+claude-env memory-sync import --in team.jsonl
+```
+
+> [!NOTE]
+> Imports are additive — existing node ids are skipped. Review the export before
+> sharing, regardless.
 
 ### Backup & recovery
 
+**Backup** (schedule daily):
+
 ```bash
-# Backup (schedule daily)
 H=~/.claude-env
 sqlite3 "$H/state/claude-env.db" ".backup '$H/archive/db-$(date +%F).sqlite'"   # online, WAL-safe
 rsync -a "$H/knowledge/lancedb/" "$H/archive/lancedb-$(date +%F)/"
-# The venv does NOT need backup — rebuild with: python3 bootstrap.py --no-venv-create
+```
 
-# Recovery
-cp $H/archive/db-YYYY-MM-DD.sqlite $H/state/claude-env.db
-rsync -a --delete $H/archive/lancedb-YYYY-MM-DD/ $H/knowledge/lancedb/
-$H/venv/bin/python validation/validate_installation.py                        # must exit 0
+> [!NOTE]
+> The venv does **not** need backup — rebuild it with `python3 bootstrap.py --no-venv-create`.
+
+**Recovery:**
+
+```bash
+H=~/.claude-env
+cp "$H/archive/db-YYYY-MM-DD.sqlite" "$H/state/claude-env.db"
+rsync -a --delete "$H/archive/lancedb-YYYY-MM-DD/" "$H/knowledge/lancedb/"
+"$H/venv/bin/python" validation/validate_installation.py    # must exit 0
 ```
 
 Recovery is complete only when `validate_installation.py` exits 0 **and**
@@ -622,18 +734,32 @@ Recovery is complete only when `validate_installation.py` exits 0 **and**
 
 ### Upgrades
 
-```bash
-# Schema: add sql/00N_*.sql (bump schema_version), then:
-~/.claude-env/venv/bin/python -c "import sys; sys.path.insert(0,'.'); from lib.db import get_db; get_db().apply_schema('sql/00N_whatever.sql')"
+> [!IMPORTANT]
+> Always snapshot the DB ([Backup & recovery](#backup--recovery) above) before
+> upgrading; restore on failure.
 
-# Code + deps:
-git pull
-python3 bootstrap.py --no-venv-create      # update deps in the existing venv
-python3 bootstrap.py --recreate-venv        # rebuild venv from scratch (after a Python upgrade)
+**Schema change** — add `sql/00N_*.sql` (bump `schema_version`), then apply it:
+
+```bash
+~/.claude-env/venv/bin/python -c "
+import sys; sys.path.insert(0, '.')
+from lib.db import get_db
+get_db().apply_schema('sql/00N_whatever.sql')
+"
 ```
 
-Always snapshot the DB (see Backup & recovery above) before upgrading; restore on
-failure.
+**Code + dependencies:**
+
+```bash
+git pull
+python3 bootstrap.py --no-venv-create   # update deps in the existing venv
+```
+
+**Full venv rebuild** (e.g. after a Python upgrade):
+
+```bash
+python3 bootstrap.py --recreate-venv
+```
 
 ### Nightly automation
 
@@ -803,16 +929,25 @@ writer service. Memory and metrics tolerate concurrent writers as-is.
 (`hooks/hooks.json`), the core MCP servers (`.mcp.json`), and slash commands
 (`/claude-env:know`, `/claude-env:report`, `/claude-env:replay`).
 
+**Install from a marketplace:**
+
 ```text
 /plugin marketplace add <org>/claude-env
 /plugin install claude-env
-# or, for local testing:
+```
+
+**Or, for local testing:**
+
+```text
 claude --plugin-dir /path/to/claude-env/claude-plugin
 ```
 
-The platform must still be bootstrapped (§4) and models configured (§5) on each machine
-— the plugin is only the wiring/distribution layer. See `claude-plugin/README.md`.
-Without the plugin system, `claude-env hooks` (§6) achieves the same wiring.
+> [!NOTE]
+> The platform must still be [bootstrapped](#4-step-1--bootstrap-the-platform) and
+> [models configured](#5-step-2--install-local-models) on each machine — the plugin is
+> only the wiring/distribution layer. See `claude-plugin/README.md`. Without the plugin
+> system, [`claude-env hooks`](#extend-governance-to-native-tools-readwriteeditbash)
+> achieves the same wiring.
 
 ---
 
