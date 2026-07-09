@@ -183,8 +183,18 @@ class PolicyEngine:
         suffix = Path(path).suffix
         # handle compound like ".env" or files literally named ".env"
         name = Path(path).name
+        # Strip leading dots for dotfile variant matching: a file named "..env" or
+        # ".env.local" should match the ".env" deny extension. We compare the
+        # leading-dot-stripped name against the leading-dot-stripped extension so
+        # that ".env", "..env", and ".env.local" all match deny_ext ".env".
+        bare_name = name.lstrip(".")
         for e in exts:
-            if suffix == e or name == e or name.startswith(e + "."):
+            bare_e = e.lstrip(".")
+            if (suffix == e          # normal extension (.pem, .key)
+                    or name == e     # file literally named ".env"
+                    or name.startswith(e + ".")   # compound (.env.bak)
+                    or bare_name == bare_e         # dotfile variants (..env)
+                    or bare_name.startswith(bare_e + ".")):  # compound dotfile (..env.local)
                 return e
         return None
 

@@ -356,10 +356,16 @@ def _inspect_bash(command: str, engine, root: Path, cwd: str
                     rel_tok)
 
     # 1. any file argument that the policy blocks -> deny (hard)
+    #    Control-plane paths are exempt here: reads are harmless (step 0b already
+    #    hard-denies writes to them). Without this exemption, `cat repo-policy.yaml`
+    #    would be denied because the path is in the policy deny list.
     for tok in paths:
         abs_tok = tok if os.path.isabs(os.path.expanduser(tok)) \
             else str((Path(cwd or ".") / tok))
-        decision = engine.evaluate_path(_rel_for_policy(abs_tok, root))
+        rel_tok = _rel_for_policy(abs_tok, root)
+        if _is_control_plane(rel_tok, abs_tok):
+            continue  # reads of governance files are allowed; writes already blocked above
+        decision = engine.evaluate_path(rel_tok)
         if decision.action == "block":
             return ("deny",
                     f"blocked by claude-env policy ({decision.reason}: "
