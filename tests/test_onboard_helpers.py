@@ -78,3 +78,37 @@ def test_install_commands_preserves_existing(tmp_path):
     cj.write_text('{"run_tests": "custom"}')
     assert "kept existing" in reg._install_commands(str(tmp_path), dry_run=False)
     assert cj.read_text() == '{"run_tests": "custom"}'
+
+
+def _all_commands(settings_path):
+    data = json.loads(settings_path.read_text())
+    cmds = []
+    for event in ("PreToolUse", "PostToolUse"):
+        for entry in data.get("hooks", {}).get(event, []):
+            for h in entry.get("hooks", []):
+                cmds.append(h.get("command", ""))
+    return cmds
+
+
+def test_native_hooks_wired_into_repo_settings(tmp_path):
+    status = reg._install_native_hooks(str(tmp_path), dry_run=False)
+    assert "installed" in status, status
+    settings = tmp_path / ".claude" / "settings.json"
+    assert settings.exists()
+    cmds = _all_commands(settings)
+    assert any("policy_hook.py" in c for c in cmds)
+    assert any("audit_hook.py" in c for c in cmds)
+    # portable, not machine-specific
+    assert all("$CLAUDE_ENV_HOME" in c for c in cmds if "hook.py" in c)
+
+
+def test_native_hooks_dry_run_writes_nothing(tmp_path):
+    status = reg._install_native_hooks(str(tmp_path), dry_run=True)
+    assert "would install" in status
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_un_onboarded_repo_has_no_hooks(tmp_path):
+    # A repo that was never onboarded gets no .claude/settings.json hooks — the
+    # whole point of the repo-local move. (We simply never call the installer.)
+    assert not (tmp_path / ".claude" / "settings.json").exists()

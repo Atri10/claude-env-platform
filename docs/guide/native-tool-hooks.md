@@ -2,10 +2,11 @@
 
 > Relates to: [OVERVIEW.md §1 — the agent could read or touch something it shouldn't](../OVERVIEW.md#1-the-agent-could-read-or-touch-something-it-shouldnt)
 
-**Source:** [`hooks/policy_hook.py`](../../hooks/policy_hook.py) (557 lines),
-[`hooks/audit_hook.py`](../../hooks/audit_hook.py) (63 lines).
+**Source:** [`hooks/policy_hook.py`](../../hooks/policy_hook.py),
+[`hooks/audit_hook.py`](../../hooks/audit_hook.py).
 **Installer:** [`hooks/install_hooks.py`](../../hooks/install_hooks.py).
-**Tests:** [`tests/test_policy_hook_bash.py`](../../tests/test_policy_hook_bash.py).
+**Tests:** [`tests/test_policy_hook_bash.py`](../../tests/test_policy_hook_bash.py),
+[`tests/test_install_hooks.py`](../../tests/test_install_hooks.py).
 
 This doc covers the two Claude Code hooks and nothing else. The actual path
 allow/deny decision — globs, extensions, regex, tiers — is
@@ -32,9 +33,17 @@ hooks close that gap:
   `NotebookEdit`, `Bash`) and writes a `native.<Tool>` row to the audit ledger. It never
   blocks anything — `PostToolUse` fires after the tool already ran.
 
-Both are wired into `~/.claude/settings.json` by `hooks/install_hooks.py`, invoked as
-`$CLAUDE_ENV_HOME/venv/bin/python $CLAUDE_ENV_HOME/hooks/{policy_hook,audit_hook}.py`
-with the tool call's JSON piped in on stdin.
+Both are wired into the **repo-local**, git-committed `<repo>/.claude/settings.json`
+by `hooks/install_hooks.py` — so governance is scoped to onboarded repos only, and an
+un-onboarded repo on the same machine is left untouched. `claude-env onboard` installs
+them automatically; `claude-env hooks` (run inside a repo) re-installs or repairs them.
+They are invoked as
+`"$CLAUDE_ENV_HOME/venv/bin/python" "$CLAUDE_ENV_HOME/hooks/{policy_hook,audit_hook}.py"`
+with the tool call's JSON piped in on stdin. The command uses the literal
+`$CLAUDE_ENV_HOME` env var (shell-expanded per machine) rather than baked-in absolute
+paths, so the committed `settings.json` is portable across a team — any developer with
+claude-env bootstrapped runs the right hook. The old machine-wide install
+(`~/.claude/settings.json`) is still available behind `claude-env hooks --global`.
 
 ---
 
@@ -50,10 +59,14 @@ environment variables read at import/run time, plus the wiring the installer wri
 | `CLAUDE_ENV_MCP_FIRST` | bool-ish string | unset (`true`) | If `"false"`, disables the MCP-first redirect entirely — `_mcp_first_hint()` returns `None` unconditionally (`hooks/policy_hook.py`). |
 | `CLAUDE_ENV_HOOK_AUDIT_ALL` | bool-ish string | unset (`false`) | If `"true"`, `audit_hook.py` writes a row for **every** intercepted tool, not just the mutating set (`hooks/audit_hook.py,36`). |
 
-| Installer constant | Value | Effect |
+| Installer constant / flag | Value | Effect |
 |---|---|---|
 | `PRE_MATCHER` (`hooks/install_hooks.py`) | `"Read\|Write\|Edit\|NotebookEdit\|Glob\|Grep\|Bash"` | Which tools trigger `policy_hook.py` on `PreToolUse`. |
 | `POST_MATCHER` (`hooks/install_hooks.py`) | `"Write\|Edit\|NotebookEdit\|Bash"` | Which tools trigger `audit_hook.py` on `PostToolUse`. Note `Read`/`Glob`/`Grep` are **not** in this matcher at all — `audit_hook.py`'s own `_MUTATING` filter is a second, redundant layer of the same restriction. |
+| `PRE_CMD` / `POST_CMD` | `"$CLAUDE_ENV_HOME/venv/bin/python" "$CLAUDE_ENV_HOME/hooks/{policy,audit}_hook.py"` | The portable hook command written into `settings.json`. Uses the literal env var (shell-expanded per machine) so the committed file works on any bootstrapped teammate. |
+| `--repo <path>` (default: cwd) | resolves to `<path>/.claude/settings.json` | The default target — repo-local governance. |
+| `--global` | `~/.claude/settings.json` | Machine-wide install (legacy behavior; opt-in). |
+| `--settings <path>` | explicit file | Overrides `--repo`/`--global`. |
 
 All boolean-ish env vars use the same idiom: `os.environ.get(NAME, default).lower() ==
 "true"` — any other value (`"1"`, `"yes"`, unset-with-no-default-string) is falsy.
@@ -66,14 +79,23 @@ All boolean-ish env vars use the same idiom: `os.environ.get(NAME, default).lowe
 # Preview the resulting settings.json without writing anything
 claude-env hooks --dry-run
 
-# Install the policy + audit hooks into ~/.claude/settings.json
+# Install the policy + audit hooks into THIS repo's .claude/settings.json (default)
 claude-env hooks
 
-# Remove them again
-claude-env hooks --uninstall
+# Onboarding does this for you automatically:
+claude-env onboard .
 
-# Target a different settings file (e.g. a project-local settings.json)
+# Target a specific repo, or an explicit settings file
+claude-env hooks --repo /path/to/repo
 claude-env hooks --settings ./.claude/settings.json
+
+# Machine-wide install (the old behavior; not the default)
+claude-env hooks --global
+
+# Remove them again (mirrors whichever target is in effect; also strips
+# leftover legacy absolute-path installs)
+claude-env hooks --uninstall
+claude-env hooks --uninstall --global
 ```
 
 Running `--dry-run` before the real install is worth doing every time — it prints the
@@ -400,13 +422,20 @@ def main() -> int:
 
         from audit.audit_logger import AuditLogger
         AuditLogger(session, actor="claude-code",
-                    repo=Path(cwd).name if cwd else None).tool_call(
+                    repo=_repo_slug(cwd)).tool_call(
             tool=f"native.{tool}", args=summary,
             result_kind="ok" if ok else "error")
     except Exception:
         pass  # auditing must never disturb the session
     return 0
 ```
+
+`_repo_slug(cwd)` walks up from the session's `cwd` to the repo's
+`.claude/repo-policy.yaml` and reads its `repo:` field — the same stable slug the
+RAG table and memory namespace are keyed on — so audit rows key-match those
+namespaces instead of a possibly-divergent directory basename. It falls back to
+the directory name when no policy is found (e.g. an un-onboarded repo, though the
+repo-local hook wiring means a governed session almost always has one).
 
 This hook never emits a `hookSpecificOutput` block and never denies — `PostToolUse`
 fires after the tool has already run, so there's nothing left to block. It writes one

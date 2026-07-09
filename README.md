@@ -256,7 +256,10 @@ terminal, any tier-2/3 action, `git push/amend/rebase`, memory delete/prune.
 
 ### 5.8 Claude Code hooks — governing native tools
 **Components:** `hooks/policy_hook.py` (PreToolUse), `hooks/audit_hook.py` (PostToolUse),
-`hooks/install_hooks.py` (idempotent `~/.claude/settings.json` merge; `claude-env hooks`).
+`hooks/install_hooks.py` (idempotent merge into the repo's committed
+`.claude/settings.json`; installed by `claude-env onboard`, repaired by `claude-env hooks`).
+Scoped **per-repo**, so an un-onboarded repo on the same machine is untouched; the hook
+command is portable (`$CLAUDE_ENV_HOME`), so the committed settings work for every teammate.
 
 MCP servers only govern MCP traffic — Claude Code's own Read/Write/Edit/Glob/Grep/Bash would
 otherwise bypass them. The hooks make the same policy engine govern everything:
@@ -497,11 +500,15 @@ means reranking is live.
 Extend the policy engine + audit to Claude Code's native tools (Read/Write/Edit/Glob/Grep/Bash):
 
 ```bash
-claude-env hooks              # install into ~/.claude/settings.json
-claude-env hooks --dry-run    # preview
+claude-env onboard .          # onboarding installs the hooks for you (repo-local)
 
-# To uninstall
-claude-env hooks --uninstall  # uninstall hooks from  ~/.claude/settings.json
+claude-env hooks              # (re)install into THIS repo's .claude/settings.json
+claude-env hooks --dry-run    # preview
+claude-env hooks --global     # machine-wide install (legacy; opt-in)
+
+# To uninstall (mirrors the target; also strips legacy absolute-path installs)
+claude-env hooks --uninstall
+claude-env hooks --uninstall --global
 ```
 
 Restart Claude Code, then confirm: ask Claude to read a blocked file (e.g. `.env`) — the call

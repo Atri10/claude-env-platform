@@ -129,6 +129,23 @@ hooks are removed. The hook command is written **portably** so the committed
 - Global self-guard hook or `--global` fallback-by-default (explicitly rejected:
   repo-local only).
 
+## Security tradeoff (accepted, by the "repo-local only" decision)
+Under the old machine-wide install, the native-tool hooks enforced the
+`global-policy.yaml` self-protection deny list (`**/.claude-env/**`,
+`**/.claude/settings.json`, `**/.ssh/**`, …) in **every** session on the machine.
+With hooks scoped per-repo, a session in a **never-onboarded** repo runs no policy
+hook, so *native-tool* access to those paths there is no longer intercepted. This
+is the deliberate consequence of the chosen design (it is exactly the "un-onboarded
+repos are untouched" goal), and it is narrow:
+- Onboarded repos are fully governed (unchanged) — and their committed
+  `.claude/settings.json` is still deny-listed + control-plane-protected, so an
+  agent cannot edit away its own governance.
+- The `filesystem-policy` MCP server still governs any MCP-routed access in any
+  repo regardless of onboarding, so the exposure is limited to Claude Code's
+  *native* tools in a repo that was never onboarded.
+The `--global` escape hatch remains for anyone who wants the old machine-wide
+posture back.
+
 ## Deploy note
 Per the platform workflow, edited hooks/installer/scripts must be re-mirrored to
 `$CLAUDE_ENV_HOME` (`python3 bootstrap.py --no-deps` or targeted `cp`), and Claude

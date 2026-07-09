@@ -392,6 +392,37 @@ def _install_post_commit(repo_root: str, dry_run: bool) -> str:
     return "installed"
 
 
+def _install_native_hooks(repo_root: str, dry_run: bool) -> str:
+    """Install the policy + audit hooks into <repo>/.claude/settings.json so the
+    native-tool governance is scoped to THIS onboarded repo (not machine-wide).
+    Idempotent; merge-safe (preserves any existing settings). Also flags leftover
+    machine-wide hooks so the operator can remove them."""
+    installer = _HERE / "hooks" / "install_hooks.py"
+    if not installer.exists():
+        return "skipped (installer missing)"
+    notice = ""
+    gpath = Path.home() / ".claude" / "settings.json"
+    if gpath.exists():
+        try:
+            g = json.loads(gpath.read_text())
+            gtext = json.dumps(g.get("hooks", {}))
+            if "policy_hook.py" in gtext or "audit_hook.py" in gtext:
+                notice = ("  (note: machine-wide hooks still in ~/.claude/settings.json — "
+                          "remove with `claude-env hooks --uninstall --global`)")
+        except Exception:
+            pass
+    if dry_run:
+        return f"would install into {repo_root}/.claude/settings.json{notice}"
+    proc = subprocess.run(
+        [sys.executable, str(installer), "--repo", str(repo_root)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        _log.error("native-hook install failed: %s", proc.stderr.strip())
+        return f"FAILED ({proc.stderr.strip() or 'see logs'})"
+    return f"installed into .claude/settings.json{notice}"
+
+
 def _detect_test_command(repo_root: str) -> str | None:
     """Guess the repo's test command from its toolchain markers."""
     r = Path(repo_root)
@@ -545,6 +576,11 @@ def main() -> int:
 
     # 4b. terminal test command (so terminal.run_tests fits the repo's toolchain)
     print(f"{tag}commands.json: {_install_commands(repo_root, args.dry_run)}")
+
+    # 4c. native-tool governance hooks -> repo-local .claude/settings.json.
+    # Part of the in-repo .claude/ deliverable, so it follows --no-template.
+    if not args.no_template:
+        print(f"{tag}native-tool hooks: {_install_native_hooks(repo_root, args.dry_run)}")
 
     # 5. summary of the isolated space
     print(f"\n{GREEN}Isolated workspace provisioned:{RESET}")

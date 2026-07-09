@@ -29,6 +29,29 @@ _AUDIT_ALL = os.environ.get("CLAUDE_ENV_HOOK_AUDIT_ALL", "").lower() == "true"
 _MAX_ARG = 400  # truncate long args so the ledger stays compact
 
 
+def _repo_slug(cwd: str) -> str | None:
+    """The onboarded repo slug from <repo>/.claude/repo-policy.yaml, so audit
+    rows key-match the RAG/memory namespaces. Walk up from cwd to find the repo
+    root; fall back to the directory basename if there's no policy (e.g. an
+    un-onboarded repo, though the repo-local hook wiring means that's rare)."""
+    if not cwd:
+        return None
+    here = Path(cwd)
+    for root in (here, *here.parents):
+        pol = root / ".claude" / "repo-policy.yaml"
+        if pol.exists():
+            try:
+                import yaml
+                data = yaml.safe_load(pol.read_text()) or {}
+                slug = data.get("repo")
+                if slug:
+                    return str(slug)
+            except Exception:
+                break  # fall through to basename
+            break
+    return here.name
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -50,7 +73,7 @@ def main() -> int:
 
         from audit.audit_logger import AuditLogger
         AuditLogger(session, actor="claude-code",
-                    repo=Path(cwd).name if cwd else None).tool_call(
+                    repo=_repo_slug(cwd)).tool_call(
             tool=f"native.{tool}", args=summary,
             result_kind="ok" if ok else "error")
     except Exception:
