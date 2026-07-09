@@ -19,8 +19,8 @@ Construct via the factory:
         print(rr.status())   # explains why reranking is inactive
 
 Point the configured directory at any cross-encoder exported to ONNX; it must
-contain `model.onnx` plus the tokenizer files. See README §10 "Local models" for
-export instructions and suggested models.
+contain `model.onnx` plus the tokenizer files. See README §4 "Install local models"
+for export instructions and suggested models.
 
 Set RERANKER_DIR="" (or reranker.model_dir: "" in rag.yaml) to disable reranking.
 """
