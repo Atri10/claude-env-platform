@@ -130,16 +130,27 @@ def main() -> int:  # noqa: C901 - linear smoke checklist
           PolicyEngine.load(REPO).evaluate_path("README.md").action == "allow")
 
     # --- session ingestor + feedback ----------------------------------------
+    # The ingestor only ingests sessions whose cwd is inside an ONBOARDED repo
+    # (one with .claude/repo-policy.yaml) — un-onboarded repos are skipped by
+    # design. So the fixture cwd must be a real onboarded repo dir, not a bare
+    # made-up path; its repo-policy 'repo:' slug ('demo') is what keys the
+    # session node's namespace and must match the 'demo' used by record_retrieved
+    # and the later `know --repo demo` check.
+    demo_repo = Path(_TMP) / "w" / "demo"
+    (demo_repo / ".claude").mkdir(parents=True)
+    (demo_repo / "src").mkdir(parents=True)
+    (demo_repo / ".claude" / "repo-policy.yaml").write_text("repo: demo\ntier: 0\n")
+    (demo_repo / "src" / "parser.py").write_text("def parse():\n    return 1\n")
     tdir = Path(_TMP) / "transcripts" / "p"
     tdir.mkdir(parents=True)
     lines = [
-        {"type": "user", "cwd": "/w/demo", "timestamp": "t",
+        {"type": "user", "cwd": str(demo_repo), "timestamp": "t",
          "message": {"role": "user", "content": "fix parser"}},
-        {"type": "assistant", "cwd": "/w/demo", "timestamp": "t",
+        {"type": "assistant", "cwd": str(demo_repo), "timestamp": "t",
          "message": {"role": "assistant", "content": [
              {"type": "tool_use", "name": "Edit",
-              "input": {"file_path": "/w/demo/src/parser.py"}}]}},
-        {"type": "assistant", "cwd": "/w/demo", "timestamp": "t",
+              "input": {"file_path": str(demo_repo / "src" / "parser.py")}}]}},
+        {"type": "assistant", "cwd": str(demo_repo), "timestamp": "t",
          "message": {"role": "assistant", "content": [
              {"type": "text", "text": "done"}]}},
     ]
