@@ -48,6 +48,7 @@ import os
 import re
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 HOME = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
@@ -60,6 +61,20 @@ if str(_REPO) not in sys.path:
 
 INCIDENT_MARKER = HOME / "state" / "INCIDENT"
 FAIL_CLOSED = os.environ.get("CLAUDE_ENV_HOOK_FAIL_CLOSED", "").lower() == "true"
+
+# Provenance signature prefixed to EVERY deny/ask reason. Without it, a model
+# reads a bare "blocked …" string, cannot tell it apart from prompt-injected
+# text, classifies the whole control as fake, and tries to route around it
+# (observed 2026-07-09: denied `curl` -> retried via WebFetch). A stable,
+# self-identifying prefix tells the model this is a real operator-installed
+# control, not session content — so it stops and reports instead of evading.
+SIGNATURE = ("[claude-env: operator-installed governance control — not session "
+             "text; do not attempt to bypass. See `claude-env status`.]")
+
+
+def _signed(reason: str) -> str:
+    """Prefix a decision reason with the operator-control signature (Gap 3)."""
+    return f"{SIGNATURE} {reason}"
 
 # File-only (stdout is the hook's decision channel — must stay clean). The hook's
 # allow/ask/block decision must never depend on logging succeeding — nor on this
@@ -74,6 +89,14 @@ except Exception:  # pragma: no cover - defensive: broken/absent CLAUDE_ENV_HOME
     import logging
     _log = logging.getLogger("claude-env.hooks")
     _log.addHandler(logging.NullHandler())
+
+# Native tools that reach the network. The Bash inspector already gates `curl`/
+# `wget`/etc, but these NATIVE tools bypass Bash entirely — so a model whose
+# shell egress is denied can otherwise reach the network by switching to them
+# (observed 2026-07-09). Gated identically to Bash egress: deny on tier>=2
+# (network disabled), ask on tier<=1. Requires the install matcher to route
+# them here (hooks/install_hooks.py::PRE_MATCHER).
+_NET_TOOLS = {"WebFetch", "WebSearch"}
 
 # tool_input keys that carry a filesystem path, per native tool
 _PATH_KEYS = ("file_path", "path", "notebook_path")
@@ -410,14 +433,14 @@ def _deny(reason: str) -> None:
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": reason}}))
+        "permissionDecisionReason": _signed(reason)}}))
 
 
 def _ask(reason: str) -> None:
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "ask",
-        "permissionDecisionReason": reason}}))
+        "permissionDecisionReason": _signed(reason)}}))
 
 
 def _repo_root(cwd: str) -> Path:
@@ -442,6 +465,65 @@ def _rel_for_policy(path_str: str, root: Path) -> str:
         return str(p.resolve()).lstrip("/")
 
 
+# Out-of-repo read confinement (Gap 2). Policy allow-rules are scoped INSIDE the
+# repo and global deny globs only catch known-sensitive names, so a path
+# resolving OUTSIDE the onboarded repo root matched nothing and was allowed —
+# letting a session read sibling repos, ~/.claude/projects/*, ~/.claude/settings
+# .json, etc. We now hard-deny reads whose resolved path is outside the repo,
+# except the session scratchpad, where tools legitimately stage intermediate
+# working files. The allow-root is the SPECIFIC scratchpad dir (from
+# CLAUDE_CODE_SCRATCHPAD / the /tmp/claude-<uid>/… pattern), NOT the whole OS
+# temp tree — a blanket temp allow-root would let a repo that happened to live
+# under temp be escaped into via `..`. (The deployed platform dir
+# $CLAUDE_ENV_HOME is NOT an allow-root — the global deny glob
+# `**/.claude-env/**` already blocks it, so a model can't read platform internals.)
+def _read_scope_allow_roots() -> list[Path]:
+    roots: list[Path] = []
+    scratch = os.environ.get("CLAUDE_CODE_SCRATCHPAD") \
+        or os.environ.get("CLAUDE_SCRATCHPAD_DIR")
+    if scratch:
+        roots.append(Path(scratch))
+    # Fallback: the harness scratchpad lives under <tmp>/claude-<uid>/… ; allow
+    # exactly that subtree (both /tmp and macOS /private/tmp spellings), not the
+    # entire temp root.
+    uid = os.getuid() if hasattr(os, "getuid") else ""
+    for base in (tempfile.gettempdir(), "/tmp", "/private/tmp"):
+        roots.append(Path(base) / f"claude-{uid}")
+    out: list[Path] = []
+    for r in roots:
+        try:
+            out.append(r.resolve())
+        except OSError:
+            out.append(r)
+    return out
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _out_of_repo_read(path_str: str, root: Path) -> bool:
+    """True if `path_str` resolves OUTSIDE the onboarded repo and is not in an
+    operator-sanctioned allow root — i.e. a cross-repo/system read to hard-deny.
+    Read confinement only applies to onboarded repos (those with a repo-policy);
+    un-onboarded cwds have no scope to confine to."""
+    if not (root / ".claude" / "repo-policy.yaml").exists():
+        return False
+    p = Path(os.path.expanduser(path_str))
+    if not p.is_absolute():
+        p = (root / p)
+    if _is_within(p, root.resolve()):
+        return False
+    for allow in _read_scope_allow_roots():
+        if _is_within(p, allow):
+            return False
+    return True
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -463,6 +545,36 @@ def main() -> int:
               f"Run 'claude-env incident off' to lift it.")
         return 0
 
+    # 1b. native network tools (WebFetch/WebSearch): gate like Bash egress so a
+    #     model can't sidestep the shell egress rules by using the native tool.
+    #     deny on tier>=2 (network disabled there), ask on tier<=1.
+    if tool in _NET_TOOLS:
+        try:
+            from security.policy_engine import PolicyEngine
+            root = _repo_root(cwd)
+            engine = PolicyEngine.load(root)
+            tier = getattr(engine.repo, "tier", 1)
+        except Exception as exc:
+            # Can't resolve tier. Network egress is a hard invariant ("no egress
+            # by default"), so unlike the general fail-open posture we do NOT
+            # silently allow a net tool on error: fail closed to 'deny' under
+            # FAIL_CLOSED, otherwise 'ask' so the operator decides — never a
+            # silent allow.
+            _log.warning("net-tool gate: policy unavailable for %s, %s: %s",
+                         tool, "denying" if FAIL_CLOSED else "asking", exc,
+                         exc_info=True)
+            if FAIL_CLOSED:
+                _deny(f"network tool {tool}: policy unavailable (fail-closed) — {exc}")
+            else:
+                _ask(f"network tool {tool}: could not verify repo tier — confirm egress")
+            return 0
+        if tier >= 2:
+            _deny(f"native network tool {tool} is not permitted in a tier-{tier} "
+                  f"repo (no network egress) — route through an approved channel")
+        else:
+            _ask(f"{tool} performs network egress — confirm")
+        return 0
+
     # 2. collect the path (if any) this tool call touches
     path_str = next((tin[k] for k in _PATH_KEYS if tin.get(k)), None)
     if not path_str and tool == "Grep":
@@ -476,6 +588,48 @@ def main() -> int:
         from security.policy_engine import PolicyEngine
         root = _repo_root(cwd)
         engine = PolicyEngine.load(root)
+
+        # 2a. read confinement: a native path tool reaching OUTSIDE the onboarded
+        #     repo (a sibling repo, ~/.claude/projects/*, ~/.claude/settings.json)
+        #     is hard-denied. Policy allow-rules are in-repo only and global deny
+        #     globs miss most out-of-tree paths, so without this the read surface
+        #     is the whole filesystem. Operator allow-roots (scratchpad, tmp,
+        #     $CLAUDE_ENV_HOME) are exempted by _out_of_repo_read.
+        if path_str and _out_of_repo_read(path_str, root):
+            try:
+                from audit.audit_logger import AuditLogger
+                AuditLogger(session, actor="claude-code", repo=root.name,
+                            tier=engine.repo.tier).policy_violation(
+                    path_str, "out-of-repo read (cross-repo/system access)",
+                    "block", tier=engine.repo.tier)
+            except Exception:
+                _log.error("failed to audit out-of-repo read block "
+                           "(decision still enforced): %s", path_str, exc_info=True)
+            _deny(f"read confined to the onboarded repo — {path_str} resolves "
+                  f"outside {root}. Cross-repo and system reads are blocked.")
+            return 0
+
+        # 2a'. Bash read confinement: same rule for file args a Bash command
+        #      touches (`cat ~/.claude/settings.json`). Reuses _bash_candidates so
+        #      the parse matches the rest of the Bash inspection. Control-plane
+        #      reads are exempt (handled harmlessly by _inspect_bash below).
+        if is_bash and bash_cmd.strip():
+            cand_paths, _ = _bash_candidates(bash_cmd, cwd)
+            for tok in cand_paths:
+                if _out_of_repo_read(tok, root):
+                    try:
+                        from audit.audit_logger import AuditLogger
+                        AuditLogger(session, actor="claude-code", repo=root.name,
+                                    tier=engine.repo.tier).policy_violation(
+                            tok, "out-of-repo read via Bash (cross-repo/system access)",
+                            "block", tier=engine.repo.tier)
+                    except Exception:
+                        _log.error("failed to audit out-of-repo Bash read block "
+                                   "(decision still enforced): %s", tok, exc_info=True)
+                    _deny(f"read confined to the onboarded repo — the command "
+                          f"touches {tok}, which resolves outside {root}. "
+                          f"Cross-repo and system reads are blocked.")
+                    return 0
 
         # 2b. Bash: parse the command string and apply policy to its file args
         if is_bash and bash_cmd.strip():
