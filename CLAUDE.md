@@ -68,9 +68,12 @@ config/                 global-policy · repo-policy.template · rag.yaml · mcp
 mcp-servers/            filesystem-policy · git · lancedb-rag · memory-graph · terminal · documentation
 rag/                    config · chunkers · embeddings · rerankers · retrievers · indexers · pipelines
 memory/                 manager · retriever · consolidator · pruner · session_ingestor · sync
-agents/                 agent_registry.yaml · prompts/ · orchestration/ (task_router, approval_gate, approvals_ui)
+agents/                 orchestration/ (approval_gate · approvals_ui) · analysts/nightly_analyst
+                        Specialist agents ship as native .claude/agents/*.md files in
+                        templates/repo-onboarding/ — task_router · agent_registry · prompts/ retired.
 scripts/register_repo.py  the `claude-env onboard`/`register` flow
 templates/repo-onboarding/  the CLAUDE.md + skills + agents installed INTO onboarded repos (a deliverable)
+                        .claude/agents/ now ships 11 specialist agents (orchestrator + 10 specialists)
 tests/                  pytest suite
 ```
 

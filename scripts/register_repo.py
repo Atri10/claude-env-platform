@@ -392,6 +392,71 @@ def _install_post_commit(repo_root: str, dry_run: bool) -> str:
     return "installed"
 
 
+def _install_agents(repo_root: Path, dry_run: bool) -> str:
+    """Copy specialist agents from platform template into repo .claude/agents/.
+
+    Merge-safe: existing files are never overwritten (the repo may have
+    customised a specific agent).  Returns a human-readable summary line.
+    """
+    src_dir = _HERE / "templates" / "repo-onboarding" / ".claude" / "agents"
+    dst_dir = repo_root / ".claude" / "agents"
+
+    agent_files = list(src_dir.glob("*.md"))
+    if not agent_files:
+        return "no agent templates found — skipped"
+
+    if dry_run:
+        return f"would install {len(agent_files)} specialist agents -> {dst_dir}"
+
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    installed, skipped = [], []
+    for src in sorted(agent_files):
+        dst = dst_dir / src.name
+        if dst.exists():
+            skipped.append(src.stem)
+        else:
+            dst.write_text(src.read_text())
+            installed.append(src.stem)
+
+    parts = []
+    if installed:
+        parts.append(f"installed {len(installed)}: {', '.join(installed)}")
+    if skipped:
+        parts.append(f"skipped {len(skipped)} (already present): {', '.join(skipped)}")
+    return "; ".join(parts) if parts else "nothing to do"
+
+
+def _install_native_hooks(repo_root: str, dry_run: bool) -> str:
+    """Install the policy + audit hooks into <repo>/.claude/settings.json so the
+    native-tool governance is scoped to THIS onboarded repo (not machine-wide).
+    Idempotent; merge-safe (preserves any existing settings). Also flags leftover
+    machine-wide hooks so the operator can remove them."""
+    installer = _HERE / "hooks" / "install_hooks.py"
+    if not installer.exists():
+        return "skipped (installer missing)"
+    notice = ""
+    gpath = Path.home() / ".claude" / "settings.json"
+    if gpath.exists():
+        try:
+            g = json.loads(gpath.read_text())
+            gtext = json.dumps(g.get("hooks", {}))
+            if "policy_hook.py" in gtext or "audit_hook.py" in gtext:
+                notice = ("  (note: machine-wide hooks still in ~/.claude/settings.json — "
+                          "remove with `claude-env hooks --uninstall --global`)")
+        except Exception:
+            pass
+    if dry_run:
+        return f"would install into {repo_root}/.claude/settings.json{notice}"
+    proc = subprocess.run(
+        [sys.executable, str(installer), "--repo", str(repo_root)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        _log.error("native-hook install failed: %s", proc.stderr.strip())
+        return f"FAILED ({proc.stderr.strip() or 'see logs'})"
+    return f"installed into .claude/settings.json{notice}"
+
+
 def _detect_test_command(repo_root: str) -> str | None:
     """Guess the repo's test command from its toolchain markers."""
     r = Path(repo_root)
@@ -545,6 +610,15 @@ def main() -> int:
 
     # 4b. terminal test command (so terminal.run_tests fits the repo's toolchain)
     print(f"{tag}commands.json: {_install_commands(repo_root, args.dry_run)}")
+
+    # 4c. native-tool governance hooks -> repo-local .claude/settings.json.
+    # Part of the in-repo .claude/ deliverable, so it follows --no-template.
+    if not args.no_template:
+        print(f"{tag}native-tool hooks: {_install_native_hooks(repo_root, args.dry_run)}")
+
+    # 4d. specialist agents -> repo-local .claude/agents/
+    if not args.no_template:
+        print(f"{tag}specialist agents: {_install_agents(repo_root, args.dry_run)}")
 
     # 5. summary of the isolated space
     print(f"\n{GREEN}Isolated workspace provisioned:{RESET}")

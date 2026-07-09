@@ -1,8 +1,14 @@
 # Conflict Resolution
 
+> ⚠ **SUPERSEDED (2026-07-09).** `conflict_resolver.py` has been retired. Conflict synthesis
+> is now handled by the orchestrator agent's prompt: when two specialists produce conflicting
+> outputs, the orchestrator names the conflict, chooses the more conservative option with
+> explicit rationale, and flags it to the human if it affects correctness.
+> This document is preserved for historical reference only.
+
 > Relates to: [OVERVIEW.md §6 — one generalist agent doing everything, badly](../OVERVIEW.md#6-one-generalist-agent-doing-everything-badly)
 
-**Source:** [`agents/orchestration/conflict_resolver.py`](../../agents/orchestration/conflict_resolver.py) (184 lines).
+**Source (retired):** `agents/orchestration/conflict_resolver.py`.
 
 This doc covers `agents/orchestration/conflict_resolver.py` only. How proposals get
 routed to specialist agents in the first place is a separate module

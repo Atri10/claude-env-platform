@@ -228,18 +228,19 @@ episodic `session` node each (task, files touched, outcome — secret-redacted, 
 also closes the RAG feedback loop.
 
 ### 5.6 Multi-agent framework
-**Components:** `agents/agent_registry.yaml`, `agents/prompts/*.md` (11 system prompts),
-`agents/orchestration/{task_router,agent_handoff,conflict_resolver,approval_gate}.py`.
+**Components:** `templates/repo-onboarding/.claude/agents/*.md` (11 native Claude Code agents),
+`agents/orchestration/{approval_gate,approvals_ui}.py`.
 
-Each agent's `allowed_tools`, `denied_tools`, `write_paths`, `memory/rag_access`, and
-`requires_approval` are declared in the registry. Examples: architect is read-only on source
-(memory write); backend writes `src/**`,`tests/**`; database writes migrations/schema and
-never touches a live DB; devops `requires_approval: true`; security is read-only; research
-does web fetch only in tiers 0–1. **Flow:** decompose → `task_router.route()` picks a
-specialist → `approval_gate.evaluate()` → `agent_handoff.handoff()` packages scoped context
-as data → specialist acts via MCP → `conflict_resolver.resolve()` reconciles (security veto
-wins) → orchestrator synthesizes. Global approval gates: writes outside scope, state-mutating
-terminal, any tier-2/3 action, `git push/amend/rebase`, memory delete/prune.
+Eleven specialist agents ship into every onboarded repo as native Claude Code `.claude/agents/`
+files: **orchestrator** (routes multi-step tasks), **architect** (read-only design/ADRs),
+**backend**, **frontend**, **database** (propose-only), **devops** (approval-gated writes),
+**security** (read-only findings), **performance** (read-only analysis), **testing**,
+**documentation**, **research** (read-only). Each agent declares its own `tools:` allow-list in
+frontmatter — no central registry. **Flow:** Claude Code's native agent system activates the
+orchestrator for multi-step/cross-cutting tasks; single-area tasks go direct to the specialist.
+Agents self-discover the repo's stack (language, framework, test harness) before acting. Global
+approval gates (state-mutating terminal, tier-2/3 writes, devops changes, git rewrites, memory
+deletes) are enforced by `approval_gate.py` + `approvals_ui.py`.
 
 ### 5.7 MCP layer
 **Components:** `config/mcp-servers.json`, `mcp-servers/*/server.py`.
@@ -256,7 +257,10 @@ terminal, any tier-2/3 action, `git push/amend/rebase`, memory delete/prune.
 
 ### 5.8 Claude Code hooks — governing native tools
 **Components:** `hooks/policy_hook.py` (PreToolUse), `hooks/audit_hook.py` (PostToolUse),
-`hooks/install_hooks.py` (idempotent `~/.claude/settings.json` merge; `claude-env hooks`).
+`hooks/install_hooks.py` (idempotent merge into the repo's committed
+`.claude/settings.json`; installed by `claude-env onboard`, repaired by `claude-env hooks`).
+Scoped **per-repo**, so an un-onboarded repo on the same machine is untouched; the hook
+command is portable (`$CLAUDE_ENV_HOME`), so the committed settings work for every teammate.
 
 MCP servers only govern MCP traffic — Claude Code's own Read/Write/Edit/Glob/Grep/Bash would
 otherwise bypass them. The hooks make the same policy engine govern everything:
@@ -351,7 +355,8 @@ claude-env/
 ├── config/                   # global-policy · repo-policy.template · rag.yaml · mcp-servers.json · budgets
 ├── rag/                      # config · chunkers · embeddings · rerankers · retrievers · indexers · pipelines · tools
 ├── memory/                   # manager · retriever · consolidator · pruner · validator · session_ingestor · sync
-├── agents/                   # agent_registry.yaml · prompts/*.md · orchestration/ · analysts/
+├── agents/                   # orchestration/ (approval_gate · approvals_ui) · analysts/
+├── templates/repo-onboarding/.claude/agents/  # 11 specialist agents shipped to onboarded repos
 ├── mcp-servers/              # filesystem-policy · git · lancedb-rag · memory-graph · terminal · documentation
 ├── observability/            # collectors · feedback · budgets · dashboard
 ├── validation/               # validate_installation · _security · _memory · _agents · _mcp · _features
@@ -497,11 +502,15 @@ means reranking is live.
 Extend the policy engine + audit to Claude Code's native tools (Read/Write/Edit/Glob/Grep/Bash):
 
 ```bash
-claude-env hooks              # install into ~/.claude/settings.json
-claude-env hooks --dry-run    # preview
+claude-env onboard .          # onboarding installs the hooks for you (repo-local)
 
-# To uninstall
-claude-env hooks --uninstall  # uninstall hooks from  ~/.claude/settings.json
+claude-env hooks              # (re)install into THIS repo's .claude/settings.json
+claude-env hooks --dry-run    # preview
+claude-env hooks --global     # machine-wide install (legacy; opt-in)
+
+# To uninstall (mirrors the target; also strips legacy absolute-path installs)
+claude-env hooks --uninstall
+claude-env hooks --uninstall --global
 ```
 
 Restart Claude Code, then confirm: ask Claude to read a blocked file (e.g. `.env`) — the call

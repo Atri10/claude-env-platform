@@ -61,11 +61,19 @@ if str(_REPO) not in sys.path:
 INCIDENT_MARKER = HOME / "state" / "INCIDENT"
 FAIL_CLOSED = os.environ.get("CLAUDE_ENV_HOOK_FAIL_CLOSED", "").lower() == "true"
 
-from lib.logging_setup import get_logger  # noqa: E402
-
 # File-only (stdout is the hook's decision channel — must stay clean). The hook's
-# allow/ask/block decision must never depend on logging succeeding.
-_log = get_logger("hooks")
+# allow/ask/block decision must never depend on logging succeeding — nor on this
+# import succeeding. On a machine where CLAUDE_ENV_HOME is unset/misconfigured
+# and lib/ can't be found, fall back to a no-op logger so the module still
+# imports and main()'s fail-open/fail-closed guard governs the decision, rather
+# than an ImportError crashing Claude Code before main() ever runs.
+try:
+    from lib.logging_setup import get_logger  # noqa: E402
+    _log = get_logger("hooks")
+except Exception:  # pragma: no cover - defensive: broken/absent CLAUDE_ENV_HOME
+    import logging
+    _log = logging.getLogger("claude-env.hooks")
+    _log.addHandler(logging.NullHandler())
 
 # tool_input keys that carry a filesystem path, per native tool
 _PATH_KEYS = ("file_path", "path", "notebook_path")
@@ -348,10 +356,16 @@ def _inspect_bash(command: str, engine, root: Path, cwd: str
                     rel_tok)
 
     # 1. any file argument that the policy blocks -> deny (hard)
+    #    Control-plane paths are exempt here: reads are harmless (step 0b already
+    #    hard-denies writes to them). Without this exemption, `cat repo-policy.yaml`
+    #    would be denied because the path is in the policy deny list.
     for tok in paths:
         abs_tok = tok if os.path.isabs(os.path.expanduser(tok)) \
             else str((Path(cwd or ".") / tok))
-        decision = engine.evaluate_path(_rel_for_policy(abs_tok, root))
+        rel_tok = _rel_for_policy(abs_tok, root)
+        if _is_control_plane(rel_tok, abs_tok):
+            continue  # reads of governance files are allowed; writes already blocked above
+        decision = engine.evaluate_path(rel_tok)
         if decision.action == "block":
             return ("deny",
                     f"blocked by claude-env policy ({decision.reason}: "

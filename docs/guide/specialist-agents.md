@@ -1,11 +1,16 @@
 # Specialist Agents
 
+> ⚠ **SUPERSEDED (2026-07-09).** `agent_registry.yaml` and `agents/prompts/*.md` have been
+> retired. Specialist agents now ship as native Claude Code `.claude/agents/*.md` files in
+> `templates/repo-onboarding/.claude/agents/`. Each agent's constraints (tools, scope, tier
+> behavior) are declared in its own `.md` frontmatter and body — no central registry.
+> See the eleven agent files in `templates/repo-onboarding/.claude/agents/` for current specs.
+> This document is preserved for historical reference only.
+
 > Relates to: [OVERVIEW.md §6 — one generalist agent doing everything, badly](../OVERVIEW.md#6-one-generalist-agent-doing-everything-badly)
 
-**Source:** [`agents/agent_registry.yaml`](../../agents/agent_registry.yaml) (121 lines).
-**Consumed by:** [`agents/orchestration/task_router.py`](../../agents/orchestration/task_router.py),
-[`agents/orchestration/approval_gate.py`](../../agents/orchestration/approval_gate.py),
-[`agents/orchestration/agent_handoff.py`](../../agents/orchestration/agent_handoff.py).
+**Source (retired):** `agents/agent_registry.yaml`, `agents/prompts/*.md`.
+**Current source:** `templates/repo-onboarding/.claude/agents/*.md`.
 
 This doc covers the registry file itself: its schema, its 11 agent entries (orchestrator
 + 10 specialists), and how each consumer reads it. How a task actually gets scored and

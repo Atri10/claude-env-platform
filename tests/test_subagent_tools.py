@@ -1,18 +1,25 @@
-"""Guard: review/analysis subagents must stay read-only. Run: pytest tests/ -q
+"""Guard: subagents must declare explicit tool allow-lists; reviewer agents must be
+read-only. Run: pytest tests/ -q
 
 Subagents are contained only by their `tools:` allow-list (hard) and the MCP
-servers (hard, caller-independent) — NOT by their prompt, and NOT reliably by the
-PreToolUse policy hook (whether it fires on a subagent's tool calls is
-undocumented in Claude Code). The shell is the native-tool bypass surface, so no
-`.claude/agents/*.md` (platform or onboarding template) may grant Bash, Write,
-Edit, or NotebookEdit, and each must declare an explicit read-only allow-list.
-This test fails if anyone reintroduces a shell/write-capable reviewer.
+servers — NOT by their prompt alone. Two invariants:
+
+1. ALL agents must declare an explicit `tools:` allow-list (no allow-list means the
+   agent inherits every tool, which is never intentional).
+
+2. REVIEWER agents (name contains "reviewer") must be read-only — no Bash, Write,
+   Edit, or NotebookEdit. This test fails if anyone reintroduces a shell/write-capable
+   reviewer.
+
+3. SPECIALIST agents (backend, frontend, devops, testing, documentation) may use write
+   tools — they are implementation agents, not review agents. The orchestrator may use
+   Agent. The constraint is only that they declare an allow-list (invariant 1).
 """
 import re
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-_FORBIDDEN = {"Bash", "Write", "Edit", "NotebookEdit"}
+_WRITE_TOOLS = {"Bash", "Write", "Edit", "NotebookEdit"}
 _AGENT_DIRS = [
     _ROOT / ".claude" / "agents",
     _ROOT / "templates" / "repo-onboarding" / ".claude" / "agents",
@@ -32,14 +39,27 @@ def test_agent_files_exist():
     assert _agent_files(), "no .claude/agents/*.md found — did the paths move?"
 
 
-def test_reviewer_subagents_are_read_only():
-    offenders = {}
+def test_all_agents_declare_tools_allowlist():
+    """Every agent must declare an explicit tools: allow-list — no silent inherit-all."""
+    missing = {}
     for f in _agent_files():
         tools = _tools_of(f)
-        if not tools:                       # no allow-list => inherits everything
-            offenders[str(f.relative_to(_ROOT))] = ["<missing tools: allow-list>"]
-        elif tools & _FORBIDDEN:
-            offenders[str(f.relative_to(_ROOT))] = sorted(tools & _FORBIDDEN)
+        if not tools:
+            missing[str(f.relative_to(_ROOT))] = "<missing tools: allow-list>"
+    assert not missing, (
+        f"agents must declare an explicit tools: allow-list. Missing: {missing}")
+
+
+def test_reviewer_subagents_are_read_only():
+    """Agents whose filename contains 'reviewer' must be read-only (no write tools)."""
+    offenders = {}
+    for f in _agent_files():
+        if "reviewer" not in f.stem:
+            continue  # only reviewer agents are constrained to read-only
+        tools = _tools_of(f)
+        bad = tools & _WRITE_TOOLS
+        if bad:
+            offenders[str(f.relative_to(_ROOT))] = sorted(bad)
     assert not offenders, (
-        f"subagents must be read-only — no {sorted(_FORBIDDEN)} and must declare a "
-        f"tools: allow-list. Offenders: {offenders}")
+        f"reviewer subagents must be read-only — no {sorted(_WRITE_TOOLS)}. "
+        f"Offenders: {offenders}")

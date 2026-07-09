@@ -211,6 +211,18 @@ the matching relative path under `<repo>/.claude/` with `shutil.copy2` —
 `--force-template` is passed. This is why re-onboarding a repo you've already
 customized skills/agents in is safe by default.
 
+Finally, `_install_native_hooks()` runs `hooks/install_hooks.py --repo <repo>`
+to wire the policy (`PreToolUse`) + audit (`PostToolUse`) hooks into the repo's
+committed `.claude/settings.json`. Because it's part of the in-repo `.claude/`
+deliverable, it follows `--no-template` (skipped when that flag is set). The
+install is merge-safe (existing `settings.json` keys/hooks are preserved) and
+idempotent, and the hook command is written portably with `$CLAUDE_ENV_HOME`
+rather than this machine's absolute paths, so the committed file works for every
+teammate who clones the repo. If a leftover machine-wide install is detected in
+`~/.claude/settings.json`, onboarding prints a one-line notice pointing at
+`claude-env hooks --uninstall --global` — it never removes the global hooks
+itself. See [`native-tool-hooks.md`](native-tool-hooks.md) for the full wiring.
+
 ### 5. Idempotent extras (not gated by `--no-template`)
 
 - **`.git/hooks/post-commit`** (`_install_post_commit`) — copies
@@ -291,6 +303,13 @@ network, imported by loading `scripts/register_repo.py` via
 | `test_install_commands_detected` | With `go.mod` present, the written `commands.json` has `run_tests == "go test ./..."` and `run_benchmarks`/`run_audit` left as `""`. |
 | `test_install_commands_scaffold_when_undetected` | With no toolchain markers, all three keys are written but empty. |
 | `test_install_commands_preserves_existing` | An existing `commands.json` (even a minimal `{"run_tests": "custom"}`) is returned as `"kept existing..."` and left byte-for-byte unchanged. |
+| `test_native_hooks_wired_into_repo_settings` | `_install_native_hooks()` writes the policy + audit hooks into `<repo>/.claude/settings.json`, and every hook command uses the portable `$CLAUDE_ENV_HOME` env var (no absolute paths). |
+| `test_native_hooks_dry_run_writes_nothing` | A dry-run returns a `"would install"` status and creates no `settings.json`. |
+| `test_un_onboarded_repo_has_no_hooks` | A repo the installer was never run against has no `.claude/settings.json` — the regression guard for the repo-local scoping. |
+
+The hook installer itself is covered separately by
+`tests/test_install_hooks.py` (target resolution, portable-command emission,
+merge safety, idempotency, and legacy-aware uninstall).
 
 No test in this file exercises `_write_repo_policy`, `_install_claude_md`, or
 `_patch_claude_json` directly — those three are not covered by
