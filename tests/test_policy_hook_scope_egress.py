@@ -85,11 +85,13 @@ def test_webfetch_denied_on_tier2():
     assert _decision(payload) == "deny"
 
 
-def test_websearch_asked_on_low_tier():
+def test_websearch_allowed_on_low_tier():
+    # WebSearch only sends a query string (no file exfil vector), so it is
+    # allowed on tier<=1 without a prompt — lighter than WebFetch.
     d = _repo(tier=1)
     payload = {"tool_name": "WebSearch", "cwd": d,
                "tool_input": {"query": "latest go version"}}
-    assert _decision(payload) == "ask"
+    assert _decision(payload) == "allow"
 
 
 def test_websearch_denied_on_tier2():

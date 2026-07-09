@@ -383,11 +383,14 @@ Putting it together, in the order the real code checks them (`hooks/policy_hook.
 
 1. Parse stdin JSON; malformed input returns `0` immediately (nothing to decide on).
 2. Incident marker check — hard deny everything if present.
-3. **Network-tool gate (`WebFetch`/`WebSearch`, `_NET_TOOLS`)**: mirrors the Bash
-   egress rule — `deny` on tier ≥ 2 (network disabled there), `ask` on tier ≤ 1.
-   Unlike the general fail-open posture, if the tier can't be resolved this gate
-   **never silently allows**: it denies under `CLAUDE_ENV_HOOK_FAIL_CLOSED`, else
-   asks — egress is a hard invariant. Returns before any path logic.
+3. **Network-tool gate (`WebFetch`/`WebSearch`, `_NET_TOOLS`)**: at tier ≥ 2 both
+   are `deny` (network disabled there). At tier ≤ 1 they split by risk:
+   `WebFetch` → `ask` (it retrieves an arbitrary URL and can POST a body, so it is
+   a data-exfil vector like Bash `curl` — the operator confirms each one), while
+   `WebSearch` → allow (it sends only a query string and cannot ship file contents
+   out). Unlike the general fail-open posture, if the tier can't be resolved the
+   gate **never silently allows**: it denies under `CLAUDE_ENV_HOOK_FAIL_CLOSED`,
+   else asks — egress is a hard invariant. Returns before any path logic.
 4. Extract `path_str` / `bash_cmd`; bail early (allow) if neither applies.
 5. `PolicyEngine.load(root)` where `root` is found by walking up from `cwd` looking
    for `.claude/repo-policy.yaml` or `.git` (`_repo_root`, `hooks/policy_hook.py`).

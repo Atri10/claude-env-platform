@@ -93,10 +93,18 @@ except Exception:  # pragma: no cover - defensive: broken/absent CLAUDE_ENV_HOME
 # Native tools that reach the network. The Bash inspector already gates `curl`/
 # `wget`/etc, but these NATIVE tools bypass Bash entirely — so a model whose
 # shell egress is denied can otherwise reach the network by switching to them
-# (observed 2026-07-09). Gated identically to Bash egress: deny on tier>=2
-# (network disabled), ask on tier<=1. Requires the install matcher to route
-# them here (hooks/install_hooks.py::PRE_MATCHER).
-_NET_TOOLS = {"WebFetch", "WebSearch"}
+# (observed 2026-07-09). Requires the install matcher to route them here
+# (hooks/install_hooks.py::PRE_MATCHER). Two risk classes:
+#   * WebFetch retrieves an arbitrary URL and can POST a body — a data
+#     exfiltration vector on par with `curl`. Gated like Bash egress: deny on
+#     tier>=2 (network disabled), ASK on tier<=1 (the URL leaves the machine and
+#     may carry a body, so the operator confirms each one).
+#   * WebSearch only sends a search-query string — it cannot ship file contents
+#     out — so it is lower risk. Allowed on tier<=1, denied only at tier>=2 where
+#     all egress is off.
+_NET_FETCH_TOOLS = {"WebFetch"}
+_NET_SEARCH_TOOLS = {"WebSearch"}
+_NET_TOOLS = _NET_FETCH_TOOLS | _NET_SEARCH_TOOLS
 
 # tool_input keys that carry a filesystem path, per native tool
 _PATH_KEYS = ("file_path", "path", "notebook_path")
@@ -571,8 +579,13 @@ def main() -> int:
         if tier >= 2:
             _deny(f"native network tool {tool} is not permitted in a tier-{tier} "
                   f"repo (no network egress) — route through an approved channel")
+        elif tool in _NET_FETCH_TOOLS:
+            # WebFetch can carry a body off-machine -> operator confirms each one
+            _ask(f"{tool} performs network egress (an outbound request that may "
+                 f"carry data) — confirm")
         else:
-            _ask(f"{tool} performs network egress — confirm")
+            # WebSearch sends only a query string; allow on tier<=1 (silent)
+            return 0
         return 0
 
     # 2. collect the path (if any) this tool call touches
