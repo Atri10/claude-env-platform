@@ -123,32 +123,39 @@ def _repo_tier() -> int | None:
     return None
 
 
-def _open_approvals_ui() -> None:
-    """Surface an ACTUAL UI: reuse the running approvals server (discovered from
-    the service registry) or auto-start one on a free port, then open the browser
-    to whatever port it actually got. Beats a contentless OS notification. Disable
-    with CLAUDE_ENV_APPROVAL_AUTO_UI=false."""
-    if os.environ.get("CLAUDE_ENV_APPROVAL_AUTO_UI", "true").lower() != "true":
-        return
+def _ensure_approvals_ui() -> None:
+    """Make sure the approvals server is running, and open ONE browser tab the
+    first time it is started — never per request. The server is a long-lived,
+    single-tab queue: once it's up, every new approval just appears in that same
+    page (which auto-refreshes), so we must not `open` the URL again for each
+    command or tabs pile up. Reusing an already-running server therefore opens
+    nothing. Disable browser opening entirely with CLAUDE_ENV_APPROVAL_AUTO_UI=false
+    (the server still starts and the request still blocks)."""
     import time
     try:
         from lib.services import get as _svc_get
         svc = _svc_get("approvals")
-        if svc is None:                               # not running -> start it
-            ui = _HOME / "agents" / "orchestration" / "approvals_ui.py"
-            cmd = [sys.executable, str(ui)]
-            pref = os.environ.get("CLAUDE_ENV_APPROVAL_PORT")
-            if pref:                                  # optional preferred-port hint
-                cmd += ["--port", pref]
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
-            for _ in range(30):                       # wait for it to register (~3s)
-                svc = _svc_get("approvals")
-                if svc:
-                    break
-                time.sleep(0.1)
+        if svc is not None:
+            # Already running — the operator already has (or can reopen) the tab.
+            # Opening again is exactly what caused tabs to pile up, so don't.
+            return
+        # Not running -> start it once, and open the browser once, now.
+        ui = _HOME / "agents" / "orchestration" / "approvals_ui.py"
+        cmd = [sys.executable, str(ui)]
+        pref = os.environ.get("CLAUDE_ENV_APPROVAL_PORT")
+        if pref:                                      # optional preferred-port hint
+            cmd += ["--port", pref]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+        for _ in range(30):                           # wait for it to register (~3s)
+            svc = _svc_get("approvals")
+            if svc:
+                break
+            time.sleep(0.1)
         if not svc:
             return
+        if os.environ.get("CLAUDE_ENV_APPROVAL_AUTO_UI", "true").lower() != "true":
+            return                                    # started, but don't open a tab
         url = svc["url"]
         if sys.platform == "darwin":
             subprocess.run(["open", url], capture_output=True, timeout=5)
@@ -157,7 +164,7 @@ def _open_approvals_ui() -> None:
     except Exception:
         # auto-opening the approval UI is a convenience; the request still blocks
         # and the operator can open the URL manually. Log the failure.
-        _log.info("could not auto-open approval UI in a browser", exc_info=True)
+        _log.info("could not ensure/auto-open approval UI in a browser", exc_info=True)
 
 
 async def _await_decision(req_id: str) -> tuple[str, str | None]:
@@ -280,7 +287,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         # scrubbed env, repo-root cwd, timeout); on denial/timeout it does not.
         req_id = _audit.human_approval_request(
             agent="terminal", action=f"terminal.run: {command}", tier=_repo_tier())
-        _open_approvals_ui()
+        _ensure_approvals_ui()
         decision, by = await _await_decision(req_id)
         if decision == "approved":
             out = _run(command, "run")

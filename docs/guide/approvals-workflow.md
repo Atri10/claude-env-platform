@@ -2,9 +2,9 @@
 
 > Relates to: [OVERVIEW.md §3 — risky actions run without anyone checking](../OVERVIEW.md#3-risky-actions-run-without-anyone-checking)
 
-**Source:** [`agents/orchestration/approval_gate.py`](../../agents/orchestration/approval_gate.py)
-(227 lines), [`agents/orchestration/approvals_ui.py`](../../agents/orchestration/approvals_ui.py)
-(268 lines), [`mcp-servers/terminal/server.py`](../../mcp-servers/terminal/server.py) (271 lines).
+**Source:** [`agents/orchestration/approval_gate.py`](../../agents/orchestration/approval_gate.py),
+[`agents/orchestration/approvals_ui.py`](../../agents/orchestration/approvals_ui.py),
+[`mcp-servers/terminal/server.py`](../../mcp-servers/terminal/server.py).
 
 This doc covers the three modules that make "risky actions block for a human" true
 end to end: the gate that decides *whether* to block, the local web UI a human
@@ -33,9 +33,11 @@ through (`AuditLogger`, hash-chained `human_approvals` rows) is covered in
 
 `mcp-servers/terminal/server.py` opens a `pending` row in `human_approvals` directly
 (via `AuditLogger.human_approval_request()`, hash-chained like everything else) for
-any state-mutating command routed through `terminal.run`, fires a best-effort macOS
-notification, and opens `approvals_ui.py` — a stdlib-only localhost web page listing
-every pending request as a card with one-click Approve/Deny. Approve/Deny calls
+any state-mutating command routed through `terminal.run`, and ensures the
+`approvals_ui.py` server is running — a stdlib-only localhost web page showing every
+pending request as a numbered queue with one-click Approve/Deny. The browser tab is
+opened once, when the server first starts, not per request (so tabs don't pile up),
+and there is no desktop notification. Approve/Deny calls
 `ApprovalGate(session_id=...).resolve()`, which writes the resolution via the same
 `AuditLogger`. `terminal.run_tests`/`run_benchmarks`/`run_audit` never go through this
 flow at all — they run immediately if configured, or refuse if not.
@@ -75,7 +77,7 @@ flow at all — they run immediately if configured, or refuse if not.
 | `CLAUDE_ENV_CMD_TIMEOUT` | `600` (seconds) | Hard `subprocess.run(..., timeout=...)` for every command that actually executes, on both the configured and `terminal.run` paths. |
 | `CLAUDE_ENV_APPROVAL_WAIT_S` | `120` (seconds) | How long `terminal.run` blocks polling for a decision before giving up and reporting "still pending." |
 | `CLAUDE_ENV_APPROVAL_PORT` | unset | Optional *preferred*-port hint passed to a freshly spawned `approvals_ui.py`; the actual port actually used is discovered from the service registry, not assumed. |
-| `CLAUDE_ENV_APPROVAL_AUTO_UI` | `"true"` | Set to anything else to skip auto-opening the browser UI (the approval still gets created and still blocks — this only skips the `open`/`xdg-open` step). |
+| `CLAUDE_ENV_APPROVAL_AUTO_UI` | `"true"` | Whether to open a browser tab when the approvals server is *first started*. The tab is opened at most once (never per request — see `_ensure_approvals_ui()`); set to anything else to start the server without opening any tab. The approval is still created and still blocks either way. |
 | `<repo>/.claude/commands.json` keys `run_tests`/`run_benchmarks`/`run_audit` | none (must be set explicitly) | The *only* way a command is "configured"; an unset key returns a `NOT CONFIGURED` directive and runs nothing — see `_run_configured` (`mcp-servers/terminal/server.py`). |
 | `_ENV_ALLOW` (hardcoded, not env-configurable) | `{"PATH","HOME","LANG","LC_ALL","TMPDIR","VIRTUAL_ENV","PWD"}` | The complete environment allow-list passed to every subprocess; everything else (secrets, tokens) is stripped. |
 
@@ -201,7 +203,6 @@ def open(self, verdict: GateVerdict) -> str:
                       f"{'; '.join(verdict.reasons)}"
     req_id = self.audit.human_approval_request(
         agent=verdict.agent, action=action_desc, tier=verdict.tier)
-    self._notify(req_id, verdict)
     return req_id
 ...
 def resolve(self, request_id: str, approved: bool, decided_by: str) -> None:
@@ -211,15 +212,16 @@ def resolve(self, request_id: str, approved: bool, decided_by: str) -> None:
 ```
 
 `open()` itself does not block — it returns a `request_id` immediately after writing
-the `pending` row and firing the notification. **Blocking is the caller's
-responsibility**; `ApprovalGate` has no wait loop of its own. The only caller in this
-codebase that blocks is `terminal.run` (below), via its own `_await_decision` poll
-loop — `ApprovalGate.resolve()` is a thin wrapper that just writes the decision.
+the `pending` row. **Blocking is the caller's responsibility**; `ApprovalGate` has no
+wait loop of its own. The only caller in this codebase that blocks is `terminal.run`
+(below), via its own `_await_decision` poll loop — `ApprovalGate.resolve()` is a thin
+wrapper that just writes the decision.
 
-`_notify()` (`approval_gate.py`) is macOS-only (`if sys.platform != "darwin":
-return`), shells out to `osascript` with a 5s timeout, and swallows all exceptions —
-it is explicitly a "best-effort" nicety per its own docstring, never a dependency for
-correctness.
+**No desktop notification (removed 2026-07-09).** `open()` previously called a
+macOS-only `_notify()` that shelled out to `osascript` to raise a system toast per
+request. That method has been deleted: per-request OS notifications were noisy, and
+the single always-current web-UI queue (below) is now the sole surface for pending
+approvals.
 
 ### `approvals_ui.py` — the blocking mechanism, from the human side
 
@@ -318,7 +320,7 @@ if name == "terminal.run":
                           source="terminal.run")
     req_id = _audit.human_approval_request(
         agent="terminal", action=f"terminal.run: {command}", tier=_repo_tier())
-    _open_approvals_ui()
+    _ensure_approvals_ui()
     decision, by = await _await_decision(req_id)
     if decision == "approved":
         out = _run(command, "run")
@@ -423,32 +425,34 @@ def _run(template: str, kind: str) -> str:
 
 ![terminal.run sandbox and tool split](../assets/guide/approvals-workflow/terminal-run-sandbox.svg)
 
-### `_open_approvals_ui()` — reuse-or-spawn, then open the real port
+### `_ensure_approvals_ui()` — start once, open one tab, never again
 
 ```python
 # mcp-servers/terminal/server.py
-def _open_approvals_ui() -> None:
-    if os.environ.get("CLAUDE_ENV_APPROVAL_AUTO_UI", "true").lower() != "true":
-        return
+def _ensure_approvals_ui() -> None:
     import time
     try:
         from lib.services import get as _svc_get
         svc = _svc_get("approvals")
-        if svc is None:                               # not running -> start it
-            ui = _HOME / "agents" / "orchestration" / "approvals_ui.py"
-            cmd = [sys.executable, str(ui)]
-            pref = os.environ.get("CLAUDE_ENV_APPROVAL_PORT")
-            if pref:                                  # optional preferred-port hint
-                cmd += ["--port", pref]
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
-            for _ in range(30):                       # wait for it to register (~3s)
-                svc = _svc_get("approvals")
-                if svc:
-                    break
-                time.sleep(0.1)
+        if svc is not None:
+            return                                    # already running -> open NOTHING
+        # not running -> start it once, and open the browser once, now
+        ui = _HOME / "agents" / "orchestration" / "approvals_ui.py"
+        cmd = [sys.executable, str(ui)]
+        pref = os.environ.get("CLAUDE_ENV_APPROVAL_PORT")
+        if pref:
+            cmd += ["--port", pref]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+        for _ in range(30):                           # wait for it to register (~3s)
+            svc = _svc_get("approvals")
+            if svc:
+                break
+            time.sleep(0.1)
         if not svc:
             return
+        if os.environ.get("CLAUDE_ENV_APPROVAL_AUTO_UI", "true").lower() != "true":
+            return                                    # started, but don't open a tab
         url = svc["url"]
         if sys.platform == "darwin":
             subprocess.run(["open", url], capture_output=True, timeout=5)
@@ -458,11 +462,19 @@ def _open_approvals_ui() -> None:
         pass
 ```
 
+**Single-tab queue (fixed 2026-07-09).** The earlier `_open_approvals_ui()` ran
+`open`/`xdg-open` on *every* `terminal.run` request. The approvals server was reused
+(not restarted), but re-opening the URL still spawned a fresh browser tab each time,
+so a burst of commands piled up a wall of duplicate tabs. `_ensure_approvals_ui()`
+opens the browser **only when it spawns the server** — when a server is already
+registered, it returns immediately and opens nothing. The approvals page is a
+long-lived single tab: new requests appear in its always-current queue (it
+auto-refreshes every 15s), so there is no need to re-open it. `CLAUDE_ENV_APPROVAL_AUTO_UI=false`
+still starts the server without opening any tab at all.
+
 It checks the shared service registry (`lib/services.py`, the same file backing
-`bind_http`/`register`/`unregister` in `approvals_ui.py`) before spawning anything —
-if an approvals UI is already registered (from a prior `terminal.run` call, or a
-manually started one), it reuses that port instead of starting a second server. The
-spawned process runs from `$CLAUDE_ENV_HOME` (`_HOME`), not the source repo — a
+`bind_http`/`register`/`unregister` in `approvals_ui.py`) before spawning anything.
+The spawned process runs from `$CLAUDE_ENV_HOME` (`_HOME`), not the source repo — a
 concrete instance of the "deploy to `$CLAUDE_ENV_HOME`" rule: editing
 `agents/orchestration/approvals_ui.py` in this repo has no effect on what
 `terminal.run` actually launches until it's mirrored there. The whole function is
@@ -516,11 +528,15 @@ the UI manually.
   rather than using a YAML loader or the `security/policy_engine.py` config loading
   path (`server.py`) — it only needs the tier number for the approval record,
   and swallows any read error to `None`.
-- **Tests confirm the pure-helper behavior, not the DB/HTTP paths.** `tests/test_approvals_ui.py`
-  covers only the four side-effect-free functions: `_command_of` (prefix stripping,
-  `test_approvals_ui.py`), `_tier_pill` (tier 0/3/`None` rendering), `_ago` (`None` → `""`, an old ISO timestamp → ends with `"d ago"`), and `_default_decider` (contains `"@"`, length > 2). There
-  is no test in the repo exercising `do_POST`'s CSRF check, `ApprovalGate.evaluate()`'s
-  six conditions, or `terminal.run`'s blocking loop as of this reading.
+- **Tests confirm the pure helpers plus the open/resolve lifecycle, not the HTTP
+  paths.** `tests/test_approvals_ui.py` covers the side-effect-free functions:
+  `_command_of` (prefix stripping), `_tier_pill` (tier 0/3/`None` rendering), `_ts`
+  (absolute `YYYY-MM-DD HH:MM:SS TZ`, never a relative "N ago" string — and asserts
+  the old `_ago` helper is gone), and `_default_decider`.
+  `tests/test_approval_gate_no_registry.py` additionally exercises the live
+  `open()` → `list_open()` → `resolve()` → `list_recent()` lifecycle against a temp DB
+  and asserts the desktop-notification method is removed. No test exercises
+  `do_POST`'s CSRF check or `terminal.run`'s blocking loop as of this reading.
 
 ---
 

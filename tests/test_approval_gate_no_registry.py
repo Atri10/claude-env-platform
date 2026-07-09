@@ -78,3 +78,11 @@ def test_approvals_ui_module_has_no_dangling_registry_constant():
     """REGISTRY used to point at the deleted agents/agent_registry.yaml."""
     import agents.orchestration.approvals_ui as ui
     assert not hasattr(ui, "REGISTRY")
+
+
+def test_desktop_notification_feature_is_removed():
+    """The macOS osascript toast (_notify) was removed 2026-07-09 — the web
+    UI queue is the sole surface for pending approvals. open() must not depend
+    on it, and the method must be gone."""
+    from agents.orchestration.approval_gate import ApprovalGate
+    assert not hasattr(ApprovalGate, "_notify")

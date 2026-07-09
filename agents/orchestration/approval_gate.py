@@ -50,9 +50,6 @@ if str(_ROOT) not in sys.path:
 
 from audit.audit_logger import AuditLogger  # noqa: E402
 from lib.db import get_db  # noqa: E402
-from lib.logging_setup import get_logger  # noqa: E402
-
-_log = get_logger("agents")
 
 # Substrings that always indicate a state-mutating / dangerous action.
 _STATE_MUTATING_TERMINAL = (
@@ -161,35 +158,17 @@ class ApprovalGate:
 
     # -- lifecycle ---------------------------------------------------------
     def open(self, verdict: GateVerdict) -> str:
-        """Persist a pending approval, return its request_id."""
+        """Persist a pending approval, return its request_id. The approvals web
+        UI is the sole surface for pending requests — there is deliberately no
+        desktop notification (removed 2026-07-09): a single, always-current
+        queue page is less noisy than per-request OS toasts."""
         action_desc = f"{verdict.action} :: {'; '.join(verdict.reasons)}"
         if verdict.target:
             action_desc = f"{verdict.action} -> {verdict.target} :: " \
                           f"{'; '.join(verdict.reasons)}"
         req_id = self.audit.human_approval_request(
             agent=verdict.agent, action=action_desc, tier=verdict.tier)
-        self._notify(req_id, verdict)
         return req_id
-
-    @staticmethod
-    def _notify(req_id: str, verdict: GateVerdict) -> None:
-        """Best-effort local notification so gates don't sit unseen (macOS).
-        Resolve via `claude-env approvals --list-open` or `claude-env approvals-ui`."""
-        if sys.platform != "darwin":
-            return
-        try:
-            import subprocess
-            msg = f"{verdict.agent}: {verdict.action}"[:120].replace('"', "'")
-            subprocess.run(
-                ["osascript", "-e",
-                 f'display notification "{msg}" with title '
-                 f'"claude-env approval needed ({req_id})"'],
-                capture_output=True, timeout=5)
-        except Exception:
-            # desktop notification is best-effort; the approval still blocks in
-            # the UI regardless of whether the toast fires.
-            _log.debug("approval desktop notification failed for %s", req_id,
-                       exc_info=True)
 
     def resolve(self, request_id: str, approved: bool, decided_by: str) -> None:
         self.audit.human_approval_resolve(

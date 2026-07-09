@@ -18,9 +18,18 @@ def test_tier_pill():
     assert 'tier ?' in ui._tier_pill(None)          # unknown tier is safe
 
 
-def test_ago_formats():
-    assert ui._ago(None) == ""
-    assert ui._ago("2020-01-01T00:00:00.000Z").endswith("d ago")   # long past -> days
+def test_ts_is_absolute_not_relative():
+    import re
+    assert ui._ts(None) == "—"
+    out = ui._ts("2020-01-01T00:00:00.000Z")
+    # absolute 'YYYY-MM-DD HH:MM:SS TZ' — never a relative 'N ago' string
+    assert re.match(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", out), out
+    assert "ago" not in out
+
+
+def test_no_relative_time_helper_remains():
+    # regression: _ago was removed in favor of hard timestamps (_ts)
+    assert not hasattr(ui, "_ago")
 
 
 def test_default_decider_has_user_and_host():
