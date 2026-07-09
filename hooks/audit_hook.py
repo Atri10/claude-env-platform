@@ -30,26 +30,13 @@ _MAX_ARG = 400  # truncate long args so the ledger stays compact
 
 
 def _repo_slug(cwd: str) -> str | None:
-    """The onboarded repo slug from <repo>/.claude/repo-policy.yaml, so audit
-    rows key-match the RAG/memory namespaces. Walk up from cwd to find the repo
-    root; fall back to the directory basename if there's no policy (e.g. an
-    un-onboarded repo, though the repo-local hook wiring means that's rare)."""
-    if not cwd:
-        return None
-    here = Path(cwd)
-    for root in (here, *here.parents):
-        pol = root / ".claude" / "repo-policy.yaml"
-        if pol.exists():
-            try:
-                import yaml
-                data = yaml.safe_load(pol.read_text()) or {}
-                slug = data.get("repo")
-                if slug:
-                    return str(slug)
-            except Exception:
-                break  # fall through to basename
-            break
-    return here.name
+    """The onboarded repo slug for cwd, so audit rows key-match the RAG/memory
+    namespaces. Falls back to the directory basename if cwd is not inside an
+    onboarded repo — the hook only ever fires inside a repo that installed it
+    (repo-local hooks), so this fallback is a defensive label, not a signal
+    that un-onboarded repos are being treated as governed."""
+    from lib.repo_policy import repo_slug
+    return repo_slug(cwd, fallback_to_basename=True)
 
 
 def main() -> int:

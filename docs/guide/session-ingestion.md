@@ -49,7 +49,7 @@ constants and CLI flags.
 |---|---|---|
 | `session_id` | TEXT PRIMARY KEY | Transcript file stem — the Claude Code session UUID. |
 | `transcript_path` | TEXT NOT NULL | Absolute path to the `.jsonl` file at ingest time. |
-| `repo` | TEXT | Derived repo slug (`Path(cwd).name`), or `NULL` if the transcript had no usable `cwd`. |
+| `repo` | TEXT | The `repo-policy.yaml` slug for the transcript's `cwd`, or `NULL` if `cwd` was missing/unusable OR the repo is not onboarded (no ancestor `.claude/repo-policy.yaml`). |
 | `node_id` | TEXT | The `memory_nodes.node_id` created for this session; `NULL` if the session was skipped. |
 | `events` | INTEGER NOT NULL DEFAULT 0 | Count of JSONL records parsed (0 for unparseable files). |
 | `ingested_at` | TEXT NOT NULL | UTC timestamp of the ingest run that processed this transcript. |
@@ -146,8 +146,12 @@ Notable extraction rules:
   blocks; a `tool_use` block's `input` is checked for `file_path`, `path`, or `notebook_path` in
   that order. Any file path seen this way goes into `files`; only `Write`, `Edit`, and
   `NotebookEdit` calls also add it to `edited`.
-- **`repo`** is derived later, in `ingest()`, as `Path(summary["cwd"]).name` — the last path
-  component of whatever `cwd` the transcript recorded, not a value read from repo config.
+- **`repo`** is derived later, in `ingest()`, via `lib.repo_policy.repo_slug(cwd,
+  fallback_to_basename=False)` — it walks up from `cwd` looking for a
+  `<root>/.claude/repo-policy.yaml` and reads its `repo:` field. If no ancestor
+  directory has a repo-policy.yaml (the transcript's `cwd` is not inside an
+  onboarded repo), `repo` is `None` and the session is skipped — never a
+  directory-basename guess.
 - `files` and `edited` are each capped at 50 entries (`sorted(...)[:50]`) before being stored.
 
 A transcript is discarded (`_parse_transcript` returns `None`) if fewer than `MIN_EVENTS` (3)
@@ -296,20 +300,28 @@ is wrapped in `|| true` so a failure here doesn't abort the rest of the nightly 
   a `cwd` field, `repo` resolves to `None`/empty and the session is routed into the
   skip-and-record-dedupe branch, regardless of how many events it had — a valid, event-rich
   session with no `cwd` is never turned into a memory node.
-- **The repo derivation is a bare directory-name, not the onboarding `repo` slug.** `repo =
-  Path(summary["cwd"]).name` takes the last path segment of the transcript's `cwd` — if that
-  differs from the `repo:` value configured in that project's `.claude/repo-policy.yaml`, the
-  memory namespace (`proj-<repo>`) can silently diverge from the RAG/policy repo slug used
-  elsewhere.
+- **Onboarding gate (fixed 2026-07-09).** This ingestor bypasses the per-repo native-tool hooks
+  entirely — it walks `~/.claude/projects/*.jsonl` directly on a nightly schedule, so narrowing
+  hook install to onboarded repos (the repo-local hooks change) did nothing to limit its scope.
+  Before the fix, `repo` was derived as a bare directory-name (`Path(cwd).name`) with no
+  onboarding check, so **every** session on the machine — onboarded or not — was ingested into
+  the memory graph, keyed by whatever the last path segment happened to be. The fix (this
+  module now calling `lib.repo_policy.repo_slug(cwd, fallback_to_basename=False)`) makes the
+  onboarding check explicit: a transcript is only ingested if an ancestor of its `cwd` has a
+  `.claude/repo-policy.yaml`, and the `repo` used for the memory namespace is that file's
+  `repo:` slug, not a basename guess. Un-onboarded sessions are recorded in
+  `session_ingest_state` (repo=NULL, node_id=NULL) so they are not rescanned every night, but
+  never reach `memory_nodes`. `stats["not_onboarded"]` in `ingest()`'s return value counts them.
 - **`ingest()` is safe to run concurrently with itself for the same transcript only insofar as
   the dedupe check protects it** — there is no row-level locking or transaction wrapping the
   check-then-parse-then-insert sequence; two simultaneous runs could both pass the `SELECT 1
   ... WHERE session_id=?` check for the same new transcript before either inserts, producing two
   memory nodes for one session. The nightly script is the only scheduled caller, so this is a
   latent rather than an observed issue.
-- **No test file exists for this module.** A repo-wide search found no `tests/test_session_ingest*.py`
-  or similar — behavior described above is verified only by direct reading of
-  `memory/session_ingestor.py`, not by an executable spec.
+- **Test coverage:** `tests/test_session_ingestor_onboarding.py` covers the onboarding gate (an
+  un-onboarded repo's session is skipped with no memory node; an onboarded repo's session is
+  ingested and keyed by its `repo-policy.yaml` slug, not its directory basename) and the shared
+  `lib.repo_policy.repo_slug()` helper (walk-up behavior, no-fallback vs fallback-to-basename).
 
 ---
 

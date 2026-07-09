@@ -30,7 +30,6 @@ CMDS = {
     "approvals":    ROOT / "agents" / "orchestration" / "approval_gate.py",
     "approvals-ui": ROOT / "agents" / "orchestration" / "approvals_ui.py",
     "services":     ROOT / "scripts" / "services_cli.py",
-    "route":        ROOT / "agents" / "orchestration" / "task_router.py",
     "register":     ROOT / "scripts" / "register_repo.py",
     "onboard":      ROOT / "scripts" / "register_repo.py",
     "report":       ROOT / "audit" / "compliance_report.py",
@@ -48,7 +47,7 @@ CMDS = {
     "memory-sync":  ROOT / "memory" / "memory_sync.py",
     "budget":       ROOT / "observability" / "budgets.py",
 }
-VALIDATORS = ["installation", "security", "rag", "memory", "agents", "mcp", "features"]
+VALIDATORS = ["installation", "security", "rag", "memory", "mcp", "features"]
 
 # One-line description per command, grouped for a readable overview.
 # (Keep in sync with CMDS; "validate" is handled specially below.)
@@ -86,7 +85,6 @@ GROUPS = [
         ("budget",      "Per-repo monthly cost budgets (exit 1 on exceed)."),
         ("ingest-sessions", "Ingest Claude Code transcripts into episodic memory."),
         ("memory-sync", "Export / import a memory namespace (secret-redacted JSONL)."),
-        ("route",       "Route a task to a specialist agent (orchestrator)."),
     ]),
     ("Diagnostics", [
         ("validate",    "Run platform validators (all | " + " | ".join(VALIDATORS) + ")."),

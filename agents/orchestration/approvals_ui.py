@@ -4,11 +4,14 @@ claude-env :: local approvals UI
 File: agents/orchestration/approvals_ui.py
 Purpose:
     Gate latency is the #1 friction in approval-based agent systems. This is a
-    localhost web page (stdlib http.server only — no new dependencies) that lists
-    pending approvals as rich cards — project, session, agent, tier, the exact
-    command, and when it was requested — with one-click Approve / Deny, plus a
-    recent-decisions log. Resolutions go through the same audited ApprovalGate
-    path as the CLI.
+    single localhost web page (stdlib http.server only — no new dependencies)
+    that shows every pending approval as a numbered queue — position, repo,
+    agent, tier, session, the exact command, and an absolute request timestamp
+    — with one-click Approve / Deny, plus a recent-decisions log. It is designed
+    to live in ONE browser tab: the terminal server opens it once when it first
+    starts and never again, so requests accumulate in this page rather than
+    spawning a new tab each time. Resolutions go through the same audited
+    ApprovalGate path as the CLI. There is no desktop notification.
 
 Security posture:
     * binds 127.0.0.1 only — never an external interface
@@ -42,7 +45,6 @@ if str(_ROOT) not in sys.path:
 from agents.orchestration.approval_gate import ApprovalGate   # noqa: E402
 
 TOKEN = secrets.token_urlsafe(24)
-REGISTRY = _ROOT / "agents" / "agent_registry.yaml"
 
 
 def _default_decider() -> str:
@@ -79,16 +81,25 @@ h1{font-size:1.15rem;margin:0;font-weight:650}
 .sub b{color:var(--ink);font-weight:600}
 h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
   margin:1.75rem 0 .6rem}
+.qcount{display:inline-flex;align-items:center;justify-content:center;min-width:1.4rem;
+  height:1.4rem;padding:0 .45rem;border-radius:999px;background:var(--accent);color:#fff;
+  font-size:.78rem;font-weight:700;margin-left:.4rem}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
   padding:1rem 1.1rem;margin-bottom:.85rem;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.card.head{border-left:3px solid var(--accent)}
 .top{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;margin-bottom:.6rem}
+.qpos{display:inline-flex;align-items:center;justify-content:center;min-width:1.5rem;
+  height:1.5rem;border-radius:8px;background:var(--line);color:var(--ink);
+  font-size:.78rem;font-weight:700;font-family:ui-monospace,Menlo,monospace}
 .proj{font-weight:650;font-size:1rem}
 .pill{font-size:.68rem;font-weight:600;padding:.12rem .5rem;border-radius:999px;
   border:1px solid var(--line);color:#fff}
 .pill.t0{background:var(--t0)} .pill.t1{background:var(--t1)}
 .pill.t2{background:var(--t2)} .pill.t3{background:var(--t3)}
 .rid{font-family:ui-monospace,Menlo,monospace;font-size:.72rem;color:var(--muted);margin-left:auto}
-.meta{display:flex;flex-wrap:wrap;gap:.35rem 1.1rem;color:var(--muted);font-size:.8rem;margin-bottom:.6rem}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:.3rem .9rem;color:var(--muted);font-size:.8rem;margin-bottom:.6rem}
+.meta .k{color:var(--muted)}
 .meta b{color:var(--ink);font-weight:600}
 .cmd{background:var(--code-bg);color:var(--code-ink);font-family:ui-monospace,Menlo,monospace;
   font-size:.82rem;padding:.6rem .75rem;border-radius:8px;white-space:pre-wrap;
@@ -109,18 +120,21 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 """
 
 
-def _ago(iso: str | None) -> str:
+def _ts(iso: str | None) -> str:
+    """Absolute, human-readable local timestamp — no relative 'N min ago'.
+    Renders the stored UTC time in the operator's local zone as
+    'YYYY-MM-DD HH:MM:SS TZ' so the queue shows exactly when each request
+    arrived, unambiguously and without drifting as the page sits open."""
     if not iso:
-        return ""
+        return "—"
     try:
         t = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
-        secs = (datetime.now(timezone.utc) - t).total_seconds()
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        local = t.astimezone()
+        return local.strftime("%Y-%m-%d %H:%M:%S %Z")
     except Exception:
         return html.escape(str(iso)[:19])
-    for limit, div, unit in ((60, 1, "s"), (3600, 60, "m"), (86400, 3600, "h")):
-        if secs < limit:
-            return f"{int(secs // div)}{unit} ago"
-    return f"{int(secs // 86400)}d ago"
 
 
 def _tier_pill(tier) -> str:
@@ -136,24 +150,37 @@ def _command_of(action: str) -> str:
 
 
 def _pending_html() -> str:
+    # list_open() is ordered by requested_at (oldest first) — that IS the queue
+    # order, so position 1 is the request that has waited longest.
     rows = ApprovalGate.list_open()
     if not rows:
-        return '<div class="empty">✓ No pending approvals — you\'re all caught up.</div>'
-    out = []
-    for r in rows:
+        return ('<h2>Pending queue</h2>'
+                '<div class="empty">✓ No pending approvals — you\'re all caught up.</div>')
+    out = [f'<h2>Pending queue<span class="qcount">{len(rows)}</span></h2>']
+    for i, r in enumerate(rows, start=1):
         rid = html.escape(str(r["request_id"]))
         proj = html.escape(str(r.get("repo") or "—"))
         agent = html.escape(str(r.get("agent") or "—"))
         session = html.escape(str(r.get("session_id") or "—"))
+        tier_val = r.get("tier")
+        tier_txt = html.escape(_TIER_LABEL.get(int(tier_val), "?")
+                               if tier_val not in (None, "") else "unknown")
+        ts = html.escape(_ts(r.get("requested_at")))
         cmd = html.escape(_command_of(str(r.get("action") or "")))
+        head = ' head' if i == 1 else ''
         out.append(
-            '<div class="card">'
-            f'<div class="top"><span class="proj">{proj}</span>'
-            f'{_tier_pill(r.get("tier"))}'
+            f'<div class="card{head}">'
+            f'<div class="top"><span class="qpos">{i}</span>'
+            f'<span class="proj">{proj}</span>'
+            f'{_tier_pill(tier_val)}'
             f'<span class="rid">{rid}</span></div>'
-            f'<div class="meta"><span>agent <b>{agent}</b></span>'
-            f'<span>session <b class="mono">{session}</b></span>'
-            f'<span>requested <b>{_ago(r.get("requested_at"))}</b></span></div>'
+            '<div class="meta">'
+            f'<span class="k">repo <b>{proj}</b></span>'
+            f'<span class="k">agent <b>{agent}</b></span>'
+            f'<span class="k">tier <b>{tier_txt}</b></span>'
+            f'<span class="k">session <b class="mono">{session}</b></span>'
+            f'<span class="k">requested <b class="mono">{ts}</b></span>'
+            '</div>'
             f'<div class="cmd">{cmd}</div>'
             '<form method="post" action="/resolve" class="actions">'
             f'<input type="hidden" name="id" value="{rid}">'
@@ -169,12 +196,13 @@ def _recent_html() -> str:
     if not rows:
         return ""
     body = ["<h2>Recent decisions</h2><table class='recent'>"
-            "<tr><th>when</th><th>decision</th><th>by</th><th>project</th><th>command</th></tr>"]
+            "<tr><th>when</th><th>decision</th><th>by</th><th>repo</th>"
+            "<th>command</th></tr>"]
     for r in rows:
         dc = html.escape(str(r.get("decision") or ""))
         body.append(
             "<tr>"
-            f"<td>{_ago(r.get('decided_at'))}</td>"
+            f"<td class='mono'>{html.escape(_ts(r.get('decided_at')))}</td>"
             f"<td class='dc-{dc}'>{dc}</td>"
             f"<td class='mono'>{html.escape(str(r.get('decided_by') or '—'))}</td>"
             f"<td>{html.escape(str(r.get('repo') or '—'))}</td>"
@@ -193,7 +221,7 @@ def _page() -> str:
         '<meta http-equiv="refresh" content="15">'
         f'<style>{CSS}</style></head><body><div class="wrap">'
         '<header><div><h1>claude-env — approvals</h1>'
-        '<div class="sub">Auto-refreshes every 15s · localhost only</div></div>'
+        '<div class="sub">One queue, one tab · auto-refreshes every 15s · localhost only</div></div>'
         f'<div class="sub">signed in as <b class="mono">{by}</b></div></header>'
         f'{_pending_html()}{_recent_html()}'
         '</div></body></html>')
@@ -227,8 +255,9 @@ class Handler(BaseHTTPRequestHandler):
         rid = form.get("id", [""])[0]
         decision = form.get("decision", [""])[0]
         if rid and decision in ("approve", "deny"):
-            gate = ApprovalGate(REGISTRY, session_id="approvals-ui",
-                                actor="approvals-ui")
+            # resolve() never needs a registry (only evaluate() does — see
+            # approval_gate.py's module docstring); no registry_path here.
+            gate = ApprovalGate(session_id="approvals-ui", actor="approvals-ui")
             gate.resolve(rid, approved=(decision == "approve"),
                          decided_by=DECIDED_BY)          # OS user@host, auto-recorded
         self.send_response(303)
