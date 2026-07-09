@@ -392,6 +392,40 @@ def _install_post_commit(repo_root: str, dry_run: bool) -> str:
     return "installed"
 
 
+def _install_agents(repo_root: Path, dry_run: bool) -> str:
+    """Copy specialist agents from platform template into repo .claude/agents/.
+
+    Merge-safe: existing files are never overwritten (the repo may have
+    customised a specific agent).  Returns a human-readable summary line.
+    """
+    src_dir = _HERE / "templates" / "repo-onboarding" / ".claude" / "agents"
+    dst_dir = repo_root / ".claude" / "agents"
+
+    agent_files = list(src_dir.glob("*.md"))
+    if not agent_files:
+        return "no agent templates found — skipped"
+
+    if dry_run:
+        return f"would install {len(agent_files)} specialist agents -> {dst_dir}"
+
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    installed, skipped = [], []
+    for src in sorted(agent_files):
+        dst = dst_dir / src.name
+        if dst.exists():
+            skipped.append(src.stem)
+        else:
+            dst.write_text(src.read_text())
+            installed.append(src.stem)
+
+    parts = []
+    if installed:
+        parts.append(f"installed {len(installed)}: {', '.join(installed)}")
+    if skipped:
+        parts.append(f"skipped {len(skipped)} (already present): {', '.join(skipped)}")
+    return "; ".join(parts) if parts else "nothing to do"
+
+
 def _install_native_hooks(repo_root: str, dry_run: bool) -> str:
     """Install the policy + audit hooks into <repo>/.claude/settings.json so the
     native-tool governance is scoped to THIS onboarded repo (not machine-wide).
@@ -581,6 +615,10 @@ def main() -> int:
     # Part of the in-repo .claude/ deliverable, so it follows --no-template.
     if not args.no_template:
         print(f"{tag}native-tool hooks: {_install_native_hooks(repo_root, args.dry_run)}")
+
+    # 4d. specialist agents -> repo-local .claude/agents/
+    if not args.no_template:
+        print(f"{tag}specialist agents: {_install_agents(repo_root, args.dry_run)}")
 
     # 5. summary of the isolated space
     print(f"\n{GREEN}Isolated workspace provisioned:{RESET}")
