@@ -15,6 +15,14 @@ Purpose:
     session, a signal='used' row is recorded — a heuristic time-window
     correlation that the retriever turns into a ranking boost.
 
+Onboarding scope: this ingestor walks ~/.claude/projects/ directly and does
+NOT go through the per-repo native-tool hooks, so it is not narrowed by the
+repo-local hook install. It must do its own onboarding check: a transcript is
+only ingested if its cwd is inside a repo with a <repo>/.claude/repo-policy.yaml
+(lib.repo_policy.repo_slug, no basename fallback). Transcripts from
+un-onboarded repos are recorded in session_ingest_state as skipped (so they
+are not rescanned every night) but never reach the memory graph.
+
 Privacy: node bodies pass through SecretDetector.redact() before storage; the
 transcript itself never leaves disk. Dedupe via session_ingest_state.
 
@@ -34,6 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib.db import get_db                          # noqa: E402
+from lib.repo_policy import repo_slug              # noqa: E402
 from memory.memory_manager import MemoryManager    # noqa: E402
 from security.detectors import SecretDetector      # noqa: E402
 from lib.logging_setup import get_logger           # noqa: E402
@@ -145,7 +154,8 @@ def _record_usage_signals(db, repo: str, edited: list[str], session_id: str) -> 
 def ingest(transcripts_dir: Path, dry_run: bool = False) -> dict:
     db = get_db()
     redact = SecretDetector(session_id="ingest").redact
-    stats = {"scanned": 0, "ingested": 0, "skipped": 0, "usage_signals": 0}
+    stats = {"scanned": 0, "ingested": 0, "skipped": 0, "not_onboarded": 0,
+             "usage_signals": 0}
 
     for tpath in sorted(transcripts_dir.glob("*/*.jsonl")):
         sid = tpath.stem
@@ -154,7 +164,27 @@ def ingest(transcripts_dir: Path, dry_run: bool = False) -> dict:
             continue
 
         summary = _parse_transcript(tpath)
-        repo = Path(summary["cwd"]).name if summary and summary["cwd"] else None
+        cwd = summary["cwd"] if summary else None
+
+        # Onboarding gate: this ingestor bypasses the per-repo native-tool
+        # hooks entirely (it reads ~/.claude/projects/ directly), so a session
+        # from a repo that was never `claude-env register`-ed must never reach
+        # the memory graph. No basename fallback — absence of a repo-policy.yaml
+        # means skip, not "guess a label and ingest anyway".
+        repo = repo_slug(cwd, fallback_to_basename=False) if cwd else None
+        if summary is not None and cwd and not repo:
+            stats["not_onboarded"] += 1
+            stats["skipped"] += 1
+            if dry_run:
+                print(f"would skip {sid[:8]} cwd={cwd} (not onboarded)")
+            if not dry_run:
+                db.execute(
+                    "INSERT OR IGNORE INTO session_ingest_state "
+                    "(session_id,transcript_path,repo,node_id,events,ingested_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (sid, str(tpath), None, None, summary["events"], _now()))
+            continue
+
         if summary is None or not repo:
             stats["skipped"] += 1
             if not dry_run:
@@ -210,7 +240,8 @@ def main() -> int:
         return 0
     stats = ingest(tdir, dry_run=args.dry_run)
     print(f"transcripts scanned={stats['scanned']} ingested={stats['ingested']} "
-          f"skipped={stats['skipped']} usage_signals={stats['usage_signals']}")
+          f"skipped={stats['skipped']} (not_onboarded={stats['not_onboarded']}) "
+          f"usage_signals={stats['usage_signals']}")
     return 0
 
 
