@@ -51,12 +51,15 @@ def _sum_transcript_usage(transcript_path: str) -> tuple[int, int]:
                 rec = json.loads(line)
             except Exception:
                 continue
-            msg = rec.get("message") or {}
-            if msg.get("role") != "assistant":
-                continue
-            usage = msg.get("usage") or {}
-            total_in += int(usage.get("input_tokens") or 0)
-            total_out += int(usage.get("output_tokens") or 0)
+            try:
+                msg = rec.get("message") or {}
+                if msg.get("role") != "assistant":
+                    continue
+                usage = msg.get("usage") or {}
+                total_in += int(usage.get("input_tokens") or 0)
+                total_out += int(usage.get("output_tokens") or 0)
+            except Exception:
+                continue  # a malformed usage value shouldn't drop the whole transcript
     return total_in, total_out
 
 

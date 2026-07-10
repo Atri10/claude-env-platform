@@ -100,6 +100,31 @@ def test_malformed_transcript_line_does_not_crash(tmp_path, monkeypatch):
     assert rows[0]["input_tokens"] == 0
 
 
+def test_malformed_usage_value_does_not_drop_whole_transcript(tmp_path, monkeypatch):
+    db = _fresh_db()
+    transcript = tmp_path / "transcript.jsonl"
+    lines = [
+        json.dumps({"message": {"role": "assistant", "content": "ok",
+                                "usage": {"input_tokens": 100, "output_tokens": 50}}}),
+        json.dumps({"message": {"role": "assistant", "content": "ok",
+                                "usage": "not-a-dict"}}),                    # malformed usage
+        json.dumps({"message": {"role": "assistant", "content": "ok",
+                                "usage": {"input_tokens": "not-a-number", "output_tokens": 50}}}),
+        json.dumps({"message": {"role": "assistant", "content": "ok",
+                                "usage": {"input_tokens": 100, "output_tokens": 50}}}),
+    ]
+    transcript.write_text("\n".join(lines) + "\n")
+    assert _run_hook({"session_id": "s6", "cwd": str(tmp_path),
+                      "transcript_path": str(transcript),
+                      "hook_event_name": "SessionEnd", "reason": "other"},
+                     monkeypatch) == 0
+    rows = db.query("SELECT * FROM metrics_sessions WHERE session_id=?", ("s6",))
+    # the two malformed lines are skipped, not fatal -- the two good lines still count
+    assert rows[0]["input_tokens"] == 200
+    assert rows[0]["output_tokens"] == 100
+    assert rows[0]["ended_at"] is not None
+
+
 def test_missing_transcript_file_does_not_crash(monkeypatch):
     _fresh_db()
     assert _run_hook({"session_id": "s5", "cwd": "/tmp",

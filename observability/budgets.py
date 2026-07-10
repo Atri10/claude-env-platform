@@ -30,9 +30,6 @@ if str(_ROOT) not in sys.path:
 
 import yaml                    # noqa: E402
 from lib.db import get_db      # noqa: E402
-from lib.logging_setup import get_logger  # noqa: E402
-
-_log = get_logger("observability")
 
 HOME = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
 
