@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,26 +93,10 @@ def evaluate(repo_filter: str | None = None) -> dict:
             "warn_at": cfg["warn_at"], "repos": statuses, "overall": worst}
 
 
-def _notify(title: str, message: str) -> None:
-    """Best-effort local notification (macOS only, never fails)."""
-    if sys.platform != "darwin":
-        return
-    try:
-        subprocess.run(
-            ["osascript", "-e",
-             f'display notification "{message}" with title "{title}"'],
-            capture_output=True, timeout=5)
-    except Exception:
-        # desktop notification is a nicety (macOS-only, may be absent/blocked);
-        # never let it break budget enforcement.
-        _log.debug("desktop notification failed: %s", title, exc_info=True)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description="Monthly cost budget status")
     ap.add_argument("--repo")
     ap.add_argument("--format", choices=["text", "json"], default="text")
-    ap.add_argument("--no-notify", action="store_true")
     args = ap.parse_args()
 
     result = evaluate(args.repo)
@@ -132,11 +115,6 @@ def main() -> int:
                 budget = f"{r['budget_usd']:.0f}" if r["budget_usd"] else "-"
                 print(f"{r['repo']:24s} {r['sessions']:>8d} "
                       f"{(r['spent_usd'] or 0):>10.2f} {budget:>8s} {pct:>6s}  {r['status']}")
-    if result["overall"] != "ok" and not args.no_notify:
-        bad = [r["repo"] for r in result["repos"]
-               if r["status"] in ("warning", "EXCEEDED")]
-        _notify("claude-env budget",
-                f"{result['overall']}: {', '.join(bad[:3])}")
     return 1 if result["overall"] == "EXCEEDED" else 0
 
 
