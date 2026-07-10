@@ -64,24 +64,22 @@ the platform's `$CLAUDE_ENV_HOME` deploy rule).
 
 ## How to use it
 
-Unlike most other platform scripts, these two are **not** wired into `bin/claude-env` —
-there's no `claude-env consolidate-memory` or `claude-env prune-memory` subcommand.
-They're invoked as standalone scripts through the deployed venv Python, normally by the
-nightly memory-maintenance job rather than by hand:
+Both scripts are wired into `bin/claude-env` as `consolidate` and `prune`. Normally the
+nightly memory-maintenance job runs them, but either is safe to run by hand at any time:
 
 ```bash
 # Consolidate one namespace's low-confidence clusters
-~/.claude-env/venv/bin/python ~/.claude-env/memory/memory_consolidator.py --namespace proj-payments
+claude-env consolidate --namespace proj-payments
 
 # Consolidate every namespace with memory
-~/.claude-env/venv/bin/python ~/.claude-env/memory/memory_consolidator.py --all
+claude-env consolidate --all
 
 # Preview what the pruner would remove — the default, since --apply is required to
 # actually archive+delete anything
-~/.claude-env/venv/bin/python ~/.claude-env/memory/memory_pruner.py --namespace proj-payments
+claude-env prune --namespace proj-payments
 
 # Actually prune it, across every namespace
-~/.claude-env/venv/bin/python ~/.claude-env/memory/memory_pruner.py --all --apply
+claude-env prune --all --apply
 ```
 
 Both scripts print one JSON object per namespace to stdout (`{"namespace": ..., "clusters_consolidated": ...}`

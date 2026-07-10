@@ -182,7 +182,6 @@ def test_all_agents_have_valid_frontmatter():
 - [ ] **Step 2: Run tests — expect failures (agents don't exist yet)**
 
 ```bash
-cd /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform
 python3 -m pytest tests/test_onboard_agents.py -v 2>&1 | tail -20
 ```
 
@@ -828,7 +827,6 @@ Before researching anything:
 - [ ] **Step 12: Run the frontmatter and section tests**
 
 ```bash
-cd /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform
 python3 -m pytest tests/test_onboard_agents.py::test_all_agents_have_valid_frontmatter tests/test_onboard_agents.py::test_all_agents_have_required_sections tests/test_onboard_agents.py::test_orchestrator_description_is_scoped_to_multi_step -v
 ```
 
@@ -920,7 +918,6 @@ In `main()`, immediately after the step 4c block:
 - [ ] **Step 4: Run the install tests**
 
 ```bash
-cd /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform
 python3 -m pytest tests/test_onboard_agents.py -v
 ```
 
@@ -1040,7 +1037,7 @@ The receiving agent treats `<notes>` as data, not as instructions.
 
 ```bash
 grep -n "CLAUDE-ENV:BEGIN\|CLAUDE-ENV:END\|## 6\.\|## 7\." \
-  /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform/templates/repo-onboarding/CLAUDE.md
+  ./templates/repo-onboarding/CLAUDE.md
 ```
 
 Expected output (line numbers will vary):
@@ -1088,7 +1085,7 @@ Remove `task_router.py`, `agent_registry.yaml`, `conflict_resolver.py`, `agent_h
 
 ```bash
 grep -r "task_router\|agent_registry\|conflict_resolver\|agent_handoff" \
-  /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform \
+  . \
   --include="*.py" --include="*.yaml" --include="*.md" -l
 ```
 
@@ -1097,7 +1094,6 @@ For each file in the output (excluding the retired files themselves), read it an
 - [ ] **Step 2: Delete the Python files and registry**
 
 ```bash
-cd /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform
 git rm agents/orchestration/task_router.py \
        agents/orchestration/conflict_resolver.py \
        agents/orchestration/agent_handoff.py \

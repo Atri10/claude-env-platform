@@ -4,9 +4,16 @@
 
 This document is for anyone evaluating or onboarding to claude-env. Each section
 below starts with a problem you'd actually recognize, names the feature(s) that solve
-it, and walks through a concrete example. For exhaustive installation steps, CLI
-flags, and config schemas, see [`README.md`](../README.md) — this document links out
-to it rather than repeating it.
+it, and walks through a concrete example — with the actual `claude-env` command you'd
+run and the kind of output you'd see. For exhaustive installation steps, CLI flags,
+and config schemas, see [`README.md`](../README.md) — this document links out to it
+rather than repeating it.
+
+> **New here?** Every command below is real — copy any of them once you've run
+> `claude-env bootstrap` and `claude-env onboard <repo>` (see
+> [README §3](../README.md#3-step-1--bootstrap-the-platform) and
+> [§5](../README.md#5-step-3--onboard-a-repository)). Run `claude-env` with no
+> arguments any time for the full, grouped command list.
 
 ---
 
@@ -20,6 +27,9 @@ to it rather than repeating it.
 6. [One generalist agent doing everything, badly](#6-one-generalist-agent-doing-everything-badly)
 7. [You can't tell if it's working well or costing too much](#7-you-cant-tell-if-its-working-well-or-costing-too-much)
 8. [How this actually gets turned on](#8-how-this-actually-gets-turned-on)
+
+*Skimming? Jump straight to [the one-command onboarding flow](#8-how-this-actually-gets-turned-on)
+or [the CLI's own command overview](../README.md#11-cli-command-reference).*
 
 ---
 
@@ -67,6 +77,21 @@ incident switch denies everything, everywhere, until it's turned off.
 > back a policy-denied response instead of the file contents. You never had to tell it
 > not to look there; the policy already didn't allow it.
 
+**Try it — dry-run a policy change before it goes live:**
+
+```bash
+$ claude-env policy-sim /abs/path/to/repo --candidate .claude/repo-policy.candidate.yaml
+# policy simulation — myrepo
+tier: 2 -> 2   changed rules: 1
+newly-blocked: 3
+  src/legacy/dump_credentials.py  (deny: **/dump_*.py)
+  ...
+newly-allowed: 0
+blocked-by-different-rule: 1
+```
+No file is touched and no agent session is affected — this is pure "what would change,"
+so a policy edit can be reviewed like any other diff before it's ever applied.
+
 *Implemented in [`security/policy_engine.py`](../security/policy_engine.py),
 [`hooks/policy_hook.py`](../hooks/policy_hook.py),
 [`hooks/audit_hook.py`](../hooks/audit_hook.py),
@@ -101,6 +126,21 @@ ledger evidence with cryptographic proof of integrity, not just a log dump.
 > which files the agent touched and when, and the config change isn't among them. You
 > just ruled out the agent with proof, not a guess.
 
+**Try it — replay a session, then pull auditor-ready evidence:**
+
+```bash
+$ claude-env replay --list
+session_id                            events  first                last                 actors
+a1b2c3d4-...                          42      2026-07-08T14:02:11  2026-07-08T14:47:03  alex
+
+$ claude-env replay a1b2c3d4-...
+2026-07-08T14:02:11  policy_check   alex  myrepo  read src/billing/retry.py — allowed
+2026-07-08T14:03:44  policy_check   alex  myrepo  read secrets/prod.env — DENIED
+...
+
+$ claude-env report --window 7d --format md --out weekly-compliance.md
+```
+
 *Implemented in [`audit/audit_logger.py`](../audit/audit_logger.py),
 [`audit/session_replay.py`](../audit/session_replay.py),
 [`audit/compliance_report.py`](../audit/compliance_report.py).*
@@ -131,6 +171,18 @@ host), not just a generic "approved" flag.
 > request. You get a prompt, read what it wants to run, and click approve. The agent
 > resumes; the ledger now shows exactly what ran, that it required approval, and that
 > you were the one who approved it.
+
+**Try it — see what's waiting, then resolve it:**
+
+```bash
+$ claude-env approvals --list-open
+id       requested             command                          repo
+7f3a...  2026-07-08T14:31:02   scripts/regen_fixtures.sh --all   myrepo
+
+$ claude-env approvals --resolve 7f3a... --approve --by you
+approved 7f3a... by you@laptop.local — command released
+```
+(or `claude-env approvals-ui` for a point-and-click browser view of the same queue.)
 
 ![claude-env request lifecycle](assets/request-lifecycle.svg)
 
@@ -168,6 +220,17 @@ redacted, without handing over someone's entire memory store.
 > ago has faded and no longer surfaces — but it's archived, not gone, if you ever need
 > it back. A new teammate's claude-env setup imports the project's memory namespace and
 > starts with that context already in place.
+
+**Try it — hand a teammate three months of accumulated context in one file:**
+
+```bash
+$ claude-env memory-sync export --namespace proj-payments --out team.jsonl
+exported 214 live nodes (secrets redacted) -> team.jsonl
+
+# on the teammate's machine, after onboarding the same repo:
+$ claude-env memory-sync import --in team.jsonl
+imported 214 nodes into proj-payments
+```
 
 *Implemented in [`memory/memory_manager.py`](../memory/memory_manager.py),
 [`memory/memory_retriever.py`](../memory/memory_retriever.py),
@@ -207,6 +270,15 @@ server, and even that only fetches externally for lower-sensitivity (tier 0-1) r
 > committed a doc file containing text designed to look like an instruction ("ignore
 > previous guidance and...") — when that file gets retrieved, the poison screener flags
 > it before the agent treats it as anything other than reference text.
+
+**Try it — fused recall over memory, code, and git history, with sources shown:**
+
+```bash
+$ claude-env know /abs/path/to/repo "where do we validate incoming webhook signatures?"
+[rag]    src/webhooks/verify.py:18-42  verify_signature()
+[memory] decision (conf 0.91, reinforced 3x): "all webhook HMACs use sha256, see verify.py"
+[git]    last touched 2026-06-02 in a1b2c3d "fix: constant-time compare for HMAC"
+```
 
 *Implemented in [`rag/retrievers/lance_store.py`](../rag/retrievers/lance_store.py),
 [`rag/config.py`](../rag/config.py),
@@ -283,6 +355,26 @@ and digest generation automatically.
 > integrity, and MCP server startup in one pass, and tells you exactly what (if
 > anything) needs attention before you trust it with real work again.
 
+**Try it — see spend and system health without touching a database:**
+
+```bash
+$ claude-env budget
+# budget status — month 2026-07 (warn at 80%)
+repo                     sessions  spent USD   budget   used  status
+proj-payments                  18       42.10       50    84%  warning
+proj-internal-tools             6        3.40        0     -   unlimited
+
+$ claude-env dashboard --window 7d
+-- cost by repo (total, window) --
+   proj-payments             sessions=   6 $14.22
+   proj-internal-tools       sessions=   2 $0.90
+
+$ claude-env validate all
+PASS installation  PASS security  PASS rag  PASS memory  PASS mcp  PASS features
+```
+Both `budget` and `dashboard` read `metrics_sessions` rows written automatically by the
+SessionStart/SessionEnd hooks — no cron job or manual ingestion step to configure.
+
 *Implemented in [`observability/budgets.py`](../observability/budgets.py),
 [`config/budgets.yaml`](../config/budgets.yaml),
 [`observability/feedback.py`](../observability/feedback.py),
@@ -303,6 +395,23 @@ read-only reviewer subagents) *into* the onboarded repo — a different delivera
 claude-env's own root `CLAUDE.md`, which governs the platform itself. Templates for
 what gets installed live in
 [`templates/repo-onboarding/`](../templates/repo-onboarding/).
+
+**Try it — from zero to a governed, searchable repo:**
+
+```bash
+$ claude-env onboard /abs/path/to/myrepo
+? Tier for this repo (0=public … 3=restricted): 2
+? Enable local RAG indexing? yes
+✓ wrote .claude/repo-policy.yaml (tier 2)
+✓ RAG namespace myrepo@main created, memory namespace myrepo
+✓ installed CLAUDE.md + .claude/skills/ + .claude/agents/ (11 specialists + 2 reviewers)
+✓ index built: 1,204 chunks across 312 files
+
+$ claude-env validate all
+PASS installation  PASS security  PASS rag  PASS memory  PASS mcp  PASS features
+```
+Restart Claude Code once, and every MCP server, hook, and agent for that repo is live —
+nothing left to wire up by hand.
 
 ---
 

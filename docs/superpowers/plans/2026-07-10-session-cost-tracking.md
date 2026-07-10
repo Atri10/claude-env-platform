@@ -92,7 +92,7 @@ def test_end_session_sets_ended_at():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform && python3 -m pytest tests/test_collectors.py -v`
+Run: `python3 -m pytest tests/test_collectors.py -v`
 Expected: FAIL on `test_set_usage_totals_overwrites_not_increments` with `ImportError: cannot import name 'set_usage_totals'`.
 
 - [ ] **Step 3: Add `set_usage_totals`, remove `record_tokens`**
@@ -133,7 +133,7 @@ Expected: 3 passed.
 
 - [ ] **Step 5: Run the full suite (nothing else references `record_tokens`)**
 
-Run: `grep -rn "record_tokens" /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform --include="*.py"`
+Run: `grep -rn "record_tokens" . --include="*.py"`
 Expected: no output (confirms it's safe to delete — if anything shows up, stop and investigate before proceeding).
 
 Run: `python3 -m pytest tests/ -q`
@@ -837,7 +837,7 @@ EOF
 
 - [ ] **Step 1: Check for stale references**
 
-Run: `grep -n "no-notify\|notify\|session ingestion" /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform/README.md`
+Run: `grep -n "no-notify\|notify\|session ingestion" ./README.md`
 
 If any lines are returned, note the line numbers — they'll need the same treatment as the guide doc below (remove the notification mention; if a line claims cost data requires session ingestion to be scheduled, correct it to describe the automatic hook instead).
 
@@ -914,7 +914,7 @@ Apply the same removal/correction to each line `grep` returned in Step 1, follow
 
 - [ ] **Step 5: Verify no stale references remain**
 
-Run: `grep -rn "no-notify\|osascript" /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform --include="*.py" --include="*.md" --include="*.yaml"`
+Run: `grep -rn "no-notify\|osascript" . --include="*.py" --include="*.md" --include="*.yaml"`
 Expected: no output.
 
 - [ ] **Step 6: Run the full suite one more time**
@@ -947,17 +947,17 @@ EOF
 - [ ] **Step 1: Copy every changed file to the deployed mirror**
 
 ```bash
-cp -v /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform/observability/collectors.py \
+cp -v ./observability/collectors.py \
       ~/.claude-env/observability/collectors.py
-cp -v /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform/observability/budgets.py \
+cp -v ./observability/budgets.py \
       ~/.claude-env/observability/budgets.py
-cp -v /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform/observability/dashboard.py \
+cp -v ./observability/dashboard.py \
       ~/.claude-env/observability/dashboard.py
-cp -v /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform/hooks/session_metrics_hook.py \
+cp -v ./hooks/session_metrics_hook.py \
       ~/.claude-env/hooks/session_metrics_hook.py
-cp -v /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform/hooks/install_hooks.py \
+cp -v ./hooks/install_hooks.py \
       ~/.claude-env/hooks/install_hooks.py
-cp -v /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform/config/budgets.yaml \
+cp -v ./config/budgets.yaml \
       ~/.claude-env/config/budgets.yaml
 ```
 
@@ -994,7 +994,7 @@ get_db().execute(\"DELETE FROM metrics_sessions WHERE session_id='deploy-check-1
 
 - [ ] **Step 4: Run the full test suite one last time**
 
-Run: `cd /Users/atriyakumar.patel/Downloads/Temp/claude-env-platform && python3 -m pytest tests/ -q`
+Run: `python3 -m pytest tests/ -q`
 Expected: all pass.
 
 No commit for this task — it's a deploy + verification step, not a code change.

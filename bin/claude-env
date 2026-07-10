@@ -45,6 +45,8 @@ CMDS = {
     "digest":       ROOT / "agents" / "analysts" / "nightly_analyst.py",
     "ingest-sessions": ROOT / "memory" / "session_ingestor.py",
     "memory-sync":  ROOT / "memory" / "memory_sync.py",
+    "consolidate":  ROOT / "memory" / "memory_consolidator.py",
+    "prune":        ROOT / "memory" / "memory_pruner.py",
     "budget":       ROOT / "observability" / "budgets.py",
 }
 VALIDATORS = ["installation", "security", "rag", "memory", "mcp", "features"]
@@ -85,6 +87,8 @@ GROUPS = [
         ("budget",      "Per-repo monthly cost budgets (exit 1 on exceed)."),
         ("ingest-sessions", "Ingest Claude Code transcripts into episodic memory."),
         ("memory-sync", "Export / import a memory namespace (secret-redacted JSONL)."),
+        ("consolidate", "Merge low-confidence memory clusters into cleaner summaries."),
+        ("prune",       "Archive decayed memories (dry-run by default; --apply to commit)."),
     ]),
     ("Diagnostics", [
         ("validate",    "Run platform validators (all | " + " | ".join(VALIDATORS) + ")."),
