@@ -183,9 +183,9 @@ for r in rows:
 ### CLI usage
 
 ```
-python observability/budgets.py                 # status table, all repos
-python observability/budgets.py --repo payments  # filter to one repo
-python observability/budgets.py --format json    # machine-readable
+claude-env budget                 # status table, all repos
+claude-env budget --repo payments # filter to one repo
+claude-env budget --format json   # machine-readable
 ```
 
 `--format json` dumps the exact `evaluate()` return shape: `{month, warn_at, repos:
@@ -364,10 +364,10 @@ found, and picks `days` unless the string ends in `h` — `"7w"` would silently 
 ### CLI usage
 
 ```
-python observability/dashboard.py                  # summary, last 30 days
-python observability/dashboard.py --window 7d       # summary, last 7 days
-python observability/dashboard.py --window 24h       # summary, last 24 hours
-python observability/dashboard.py serve --port 8001  # Datasette on localhost
+claude-env dashboard                  # summary, last 30 days
+claude-env dashboard --window 7d       # summary, last 7 days
+claude-env dashboard --window 24h      # summary, last 24 hours
+claude-env dashboard serve --port 8001 # Datasette on localhost
 ```
 
 ---

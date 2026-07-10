@@ -255,7 +255,7 @@ file present" and "reranker loads + runs" lines) or in Python:
 > **Always edit the deployed config, not the repo's.** The servers and tools read
 > `~/.claude-env/config/rag.yaml`, which is what [§4a](#4a-embedding-model-required)/[§4b](#4b-reranker-optional)
 > above edit directly. If you instead edit this repo's `config/rag.yaml`, re-run
-> `python3 bootstrap.py --no-deps` to sync the deployed copy.
+> `claude-env bootstrap --no-deps` to sync the deployed copy.
 
 ---
 
@@ -585,8 +585,8 @@ claude-env approvals-ui           # web UI (Approve/Deny)
 
 ```bash
 claude-env approvals-ui --port 8002 --by you
-# or from the CLI directly:
-~/.claude-env/venv/bin/python agents/orchestration/approval_gate.py --resolve <id> --approve --by you
+# or resolve one directly, no browser needed:
+claude-env approvals --resolve <id> --approve --by you
 ```
 
 Full walkthrough: [`docs/guide/approvals-workflow.md`](docs/guide/approvals-workflow.md).
@@ -689,7 +689,7 @@ rsync -a "$H/knowledge/lancedb/" "$H/archive/lancedb-$(date +%F)/"
 ```
 
 > [!NOTE]
-> The venv does **not** need backup — rebuild it with `python3 bootstrap.py --no-venv-create`.
+> The venv does **not** need backup — rebuild it with `claude-env bootstrap --no-venv-create`.
 
 **Recovery:**
 
@@ -697,7 +697,7 @@ rsync -a "$H/knowledge/lancedb/" "$H/archive/lancedb-$(date +%F)/"
 H=~/.claude-env
 cp "$H/archive/db-YYYY-MM-DD.sqlite" "$H/state/claude-env.db"
 rsync -a --delete "$H/archive/lancedb-YYYY-MM-DD/" "$H/knowledge/lancedb/"
-"$H/venv/bin/python" validation/validate_installation.py    # must exit 0
+claude-env validate installation    # must exit 0
 ```
 
 Recovery is complete only when `validate_installation.py` exits 0 **and**
@@ -723,13 +723,13 @@ get_db().apply_schema('sql/00N_whatever.sql')
 
 ```bash
 git pull
-python3 bootstrap.py --no-venv-create   # update deps in the existing venv
+claude-env bootstrap --no-venv-create   # update deps in the existing venv
 ```
 
 **Full venv rebuild** (e.g. after a Python upgrade):
 
 ```bash
-python3 bootstrap.py --recreate-venv
+claude-env bootstrap --recreate-venv
 ```
 
 ### Nightly automation
@@ -784,7 +784,7 @@ for a one-line summary, and `claude-env <command> --help` for a command's full o
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| `validate_installation` fails on venv | Bootstrap not run | `python3 bootstrap.py` |
+| `validate_installation` fails on venv | Bootstrap not run | `claude-env bootstrap` |
 | MCP server won't start | venv Python not in command | Ensure `claude mcp add` used `$H/venv/bin/python`, not bare `python`. |
 | `git` MCP: `fatal: not a git repository` | `CLAUDE_ENV_REPO_ROOT` unset | `claude-env onboard <repo>`; restart Claude Code. |
 | `filesystem-policy`: "file not found" | Wrong/unset repo root | Same as above. |

@@ -16,8 +16,7 @@ logic (see [`policy-engine.md`](policy-engine.md)) or the RAG indexer that
 
 ## What it does (30-second version)
 
-`claude-env onboard /abs/path/to/repo` (equivalently `claude-env register` or
-`python scripts/register_repo.py`) turns an ordinary git repo into a
+`claude-env onboard /abs/path/to/repo` (equivalently `claude-env register`) turns an ordinary git repo into a
 **claude-env-governed** one. It writes that repo's `.claude/repo-policy.yaml`
 (the actual isolation boundary the policy engine enforces), computes its RAG
 table name and memory namespace, patches `~/.claude.json` so every MCP server

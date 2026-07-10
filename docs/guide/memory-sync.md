@@ -40,9 +40,9 @@ them, per the module docstring (`memory/memory_sync.py`).
 | `import` | `--namespace` | no | Remap all imported rows into this namespace instead of each record's own `namespace` field. |
 
 ```
-python memory/memory_sync.py export --namespace proj-payments --out team.jsonl
-python memory/memory_sync.py import --in team.jsonl
-python memory/memory_sync.py import --in team.jsonl --namespace proj-other
+claude-env memory-sync export --namespace proj-payments --out team.jsonl
+claude-env memory-sync import --in team.jsonl
+claude-env memory-sync import --in team.jsonl --namespace proj-other
 ```
 
 (`memory/memory_sync.py`)

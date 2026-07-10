@@ -64,7 +64,7 @@ if cmd == "validate":
 ```bash
 claude-env validate                 # same as `validate all` — runs all 7, ORs exit codes
 claude-env validate security        # run just one
-python validation/validate_memory.py   # or invoke a script directly
+claude-env validate memory          # or any other single validator by name
 ```
 
 Each script can also be run directly with the deployed venv's Python

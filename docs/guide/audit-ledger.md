@@ -91,7 +91,7 @@ projection=None)`, which is the only method that touches `audit_events` directly
 | `list_sessions` | `(limit: int = 25) -> list[dict]` | One row per `session_id`: `session_id, events, first, last, actors` (via `GROUP_CONCAT(DISTINCT actor)`), `ORDER BY MAX(ts) DESC`. |
 | `replay` | `(session_id: str) -> list[dict]` | Ordered list of `{event_id, ts, type, actor, repo, summary, body}` for that session. |
 | `_summarize` | `(event_type: str, body: dict) -> str` | One-line human-readable summary, dispatched by `event_type`; falls back to `json.dumps(body)[:100]` for unrecognized types. |
-| CLI | `--list` / `<session_id>` / `--format {text,json}` | `python audit/session_replay.py ...` |
+| CLI | `--list` / `<session_id>` / `--format {text,json}` | `claude-env replay ...` |
 
 ### `compliance_report.py`
 
