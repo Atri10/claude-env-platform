@@ -374,13 +374,14 @@ python observability/dashboard.py serve --port 8001  # Datasette on localhost
 
 ## Test coverage
 
-No dedicated test file exists for these three modules as of this writing — there is
-no `tests/test_budgets.py`, `tests/test_feedback.py`, or `tests/test_dashboard.py` in
-`tests/`, and no other test file references `usage_boosts`, `rag_chunk_feedback`, or
-`observability/budgets.py`. The formulas and behavior documented above are verified
-directly by reading the source, not by an existing test suite — if you change
-`BOOST_UNIT`, `CAP`, or the budget status thresholds, there is currently nothing
-regression-testing the exact numbers.
+`tests/test_collectors.py`, `tests/test_session_metrics_hook.py`, `tests/test_budgets.py`,
+and `tests/test_dashboard.py` cover the cost-tracking path end to end: writing
+`metrics_sessions` rows, the SessionStart/SessionEnd hook, `budgets.py`'s status
+thresholds, and the dashboard's cost sections. `feedback.py` remains untested — no
+`tests/test_feedback.py` exists, and no other test file references `usage_boosts` or
+`rag_chunk_feedback`. Its formulas and behavior documented above are verified directly
+by reading the source, not by an existing test suite — if you change `BOOST_UNIT` or
+`CAP`, there is currently nothing regression-testing the exact numbers.
 
 ---
 
