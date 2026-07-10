@@ -25,6 +25,7 @@ from __future__ import annotations
 import fcntl
 import os
 import sys
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -36,6 +37,19 @@ HOME = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
 
 def _current_branch(repo_root: str) -> str:
     return _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD") or "main"
+
+
+def _is_ancestor(repo_root: str, old_sha: str, new_sha: str) -> bool:
+    """True if old_sha is still in new_sha's history. False after a
+    rebase/force-push drops it -- in that case a diff against old_sha would
+    fail and silently produce an empty changed-file list (since _git()
+    discards the exit code), while Indexer.incremental() still advances
+    rag_index_state.last_commit to new_sha, leaving the index stale with no
+    way to self-heal on a later checkout. Callers must fall back to a full
+    re-index when this returns False."""
+    import subprocess
+    r = subprocess.run(["git", "-C", repo_root, "merge-base", "--is-ancestor", old_sha, new_sha])
+    return r.returncode == 0
 
 
 def _lock_path(repo: str, branch: str) -> Path:
@@ -116,7 +130,7 @@ def sync_checkout(repo_root: str, prev_sha: str, new_sha: str, is_branch_flag: s
         row = idx.db.query_one(
             "SELECT last_commit FROM rag_index_state WHERE repo=? AND branch=?",
             (repo_slug, branch))
-        if row is None:
+        if row is None or not _is_ancestor(repo_root, row["last_commit"], new_sha):
             return idx.full_index()
         out = _git(repo_root, "diff", "--name-only", row["last_commit"], new_sha)
         changed = [f for f in out.splitlines() if f]
@@ -136,8 +150,8 @@ def main() -> int:
         else:
             result = {"error": f"unknown event {event!r}"}
         print(result)
-    except Exception as e:
-        sys.stderr.write(f"[claude-env] git_sync error: {e}\n")
+    except Exception:
+        sys.stderr.write(f"[claude-env] git_sync error:\n{traceback.format_exc()}")
     return 0
 
 

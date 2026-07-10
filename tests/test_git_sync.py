@@ -248,6 +248,97 @@ def test_sync_checkout_incrementally_catches_up_a_known_branch(tmp_path, monkeyp
     assert result["chunks"] >= 1
 
 
+def test_sync_checkout_full_indexes_after_rebase_drops_recorded_commit(tmp_path, monkeypatch):
+    """If the recorded last_commit was rewritten out of history (rebase/force-push
+    elsewhere, then pulled), a plain `git diff last_commit..new_sha` fails and
+    _git() silently discards the error, producing an empty changed-file list.
+    sync_checkout must detect that last_commit is no longer an ancestor of
+    new_sha and fall back to full_index() instead of a no-op incremental."""
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    _fresh_db()
+    repo = _init_repo(tmp_path)
+    monkeypatch.setattr(gs, "_build_indexer", lambda root: _fake_indexer(root))
+
+    gs.sync_commit(str(repo), ["src/app.py"])   # records rag_index_state row for the init commit
+    first_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+
+    # simulate a rebase/force-push: rewrite the recorded commit out of history,
+    # changing the file's content so a real full_index would have work to do
+    # (distinguishes "took the full_index path" from "took it but skipped
+    # everything as unchanged")
+    (repo / "src" / "app.py").write_text("def hello():\n    return 'hi again'\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "--amend", "-m", "init amended"],
+                   check=True)
+    new_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                             capture_output=True, text=True).stdout.strip()
+    assert new_sha != first_sha
+
+    result = gs.sync_checkout(str(repo), first_sha, new_sha, "1")
+
+    assert result["files"] == 1     # full_index() walked the one tracked file,
+                                     # not an empty incremental() no-op
+    assert result["chunks"] >= 1
+
+
+def test_main_dispatches_commit_event_from_argv(tmp_path, monkeypatch):
+    """Exercises the hook-script -> main() argv seam for the commit event:
+    main()'s args[0]/args[1]/args[2:] unpacking and routing to sync_commit,
+    proven by an actual rag_file_state row (not just a non-crash)."""
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    db = _fresh_db()
+    repo = _init_repo(tmp_path)
+    monkeypatch.setattr(gs, "_build_indexer", lambda root: _fake_indexer(root))
+    monkeypatch.setattr(sys, "argv", ["git_sync.py", str(repo), "commit", "src/app.py"])
+
+    assert gs.main() == 0
+
+    row = db.query_one(
+        "SELECT 1 FROM rag_file_state WHERE repo=? AND file_path=?",
+        ("demo-repo", "src/app.py"))
+    assert row is not None
+
+
+def test_main_dispatches_merge_event_from_argv(tmp_path, monkeypatch):
+    """Same seam, for the merge event (post-merge hook)."""
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    db = _fresh_db()
+    repo = _init_repo(tmp_path)
+    monkeypatch.setattr(gs, "_build_indexer", lambda root: _fake_indexer(root))
+    monkeypatch.setattr(sys, "argv", ["git_sync.py", str(repo), "merge", "src/app.py"])
+
+    assert gs.main() == 0
+
+    row = db.query_one(
+        "SELECT 1 FROM rag_file_state WHERE repo=? AND file_path=?",
+        ("demo-repo", "src/app.py"))
+    assert row is not None
+
+
+def test_main_dispatches_checkout_event_from_argv(tmp_path, monkeypatch):
+    """Same seam, for the checkout event (post-checkout hook): verifies
+    main()'s rest[0]/rest[1]/rest[2] unpacking into
+    sync_checkout(repo_root, prev_sha, new_sha, is_branch_flag) is correct --
+    a never-indexed branch here takes the full_index() path."""
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    db = _fresh_db()
+    repo = _init_repo(tmp_path)
+    monkeypatch.setattr(gs, "_build_indexer", lambda root: _fake_indexer(root))
+    new_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                             capture_output=True, text=True).stdout.strip()
+    monkeypatch.setattr(
+        sys, "argv",
+        ["git_sync.py", str(repo), "checkout", "0" * 40, new_sha, "1"])
+
+    assert gs.main() == 0
+
+    row = db.query_one(
+        "SELECT 1 FROM rag_file_state WHERE repo=? AND file_path=?",
+        ("demo-repo", "src/app.py"))
+    assert row is not None
+
+
 def test_sync_checkout_skips_when_lock_held(tmp_path, monkeypatch):
     monkeypatch.setattr(gs, "HOME", tmp_path / "home")
     _fresh_db()
