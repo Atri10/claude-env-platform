@@ -14,7 +14,10 @@ Steps (in order):
   5. optional brew        (llama.cpp formula if --with-brew)
   6. SQLite init          (applies sql/001_schema.sql + sql/002_retention.sql)
   7. LanceDB init         (creates the knowledge/lancedb directory)
-  8. policy init          (copies global-policy.yaml + repo-policy template)
+  8. policy init          (copies global-policy.yaml + repo-policy template + rag.yaml
+                          + mcp-servers.json + budgets.yaml on first run only — an
+                          already-deployed copy is left untouched so machine-local
+                          edits, like rag.yaml's embedding.model_path, survive re-runs)
   9. audit init           (writes genesis event, verifies the chain)
  10. environment validate  (delegates to validation/validate_installation.py)
 
@@ -24,6 +27,7 @@ Usage:
     python3 bootstrap.py --no-deps         # skip dep install (venv must exist)
     python3 bootstrap.py --no-venv-create  # reuse existing venv, just update deps
     python3 bootstrap.py --dsn postgresql://user@localhost/claude_env  # PG target
+    python3 bootstrap.py --force-config    # reset deployed config/*.yaml|json to repo defaults
 
 After bootstrap, every platform script should be run via the venv Python:
     ~/.claude-env/venv/bin/python <script>
@@ -267,15 +271,36 @@ def init_lancedb() -> None:
 # ---------------------------------------------------------------------------
 # 7. policies
 # ---------------------------------------------------------------------------
-def init_policies() -> None:
-    src_global = REPO_DIR / "config" / "global-policy.yaml"
-    dst_global = HOME / "config" / "global-policy.yaml"
-    if src_global.exists():
-        shutil.copy2(src_global, dst_global)
-        ok(f"global policy -> {dst_global}")
-    else:
-        warn("config/global-policy.yaml missing in repo")
+def _deploy_config(src: Path, dst: Path, label: str, needed_by: str | None = None,
+                    force: bool = False) -> None:
+    """Copy a config file into $CLAUDE_ENV_HOME on first bootstrap only.
 
+    These files (global-policy.yaml, rag.yaml, mcp-servers.json, budgets.yaml)
+    are documented as edit-the-deployed-copy targets — e.g. rag.yaml's
+    embedding.model_path is machine-local and has no committed value in the
+    repo. Overwriting an existing deployed copy on every re-run (the previous
+    behavior) silently reverted that local configuration back to the repo's
+    blank template on every routine `bootstrap.py --no-deps` re-sync. Pass
+    force=True (--force-config) to intentionally reset to the repo template.
+    """
+    if not src.exists():
+        suffix = f" ({needed_by} will fail until present)" if needed_by else ""
+        warn(f"{src.name} missing in repo{suffix}")
+        return
+    if dst.exists() and not force:
+        ok(f"{label} -> {dst} (already present, left untouched; use --force-config to reset)")
+        return
+    shutil.copy2(src, dst)
+    ok(f"{label} -> {dst}")
+
+
+def init_policies(force_config: bool = False) -> None:
+    _deploy_config(REPO_DIR / "config" / "global-policy.yaml",
+                    HOME / "config" / "global-policy.yaml",
+                    "global policy", force=force_config)
+
+    # Template consumed at onboarding time (not a per-machine hand-edited
+    # value store like the four configs above) — always kept in sync.
     tmpl = REPO_DIR / "config" / "repo-policy.template.yaml"
     dst_tmpl = HOME / "config" / "repo-policy.template.yaml"
     if tmpl.exists():
@@ -284,26 +309,16 @@ def init_policies() -> None:
 
     # RAG model config — rag/config.py resolves config/rag.yaml relative to the
     # deployed tree, so it must live at $CLAUDE_ENV_HOME/config/rag.yaml.
-    src_rag = REPO_DIR / "config" / "rag.yaml"
-    dst_rag = HOME / "config" / "rag.yaml"
-    if src_rag.exists():
-        shutil.copy2(src_rag, dst_rag)
-        ok(f"rag model config -> {dst_rag}")
-    else:
-        warn("config/rag.yaml missing in repo (RAG will use built-in defaults)")
+    _deploy_config(REPO_DIR / "config" / "rag.yaml", HOME / "config" / "rag.yaml",
+                    "rag model config", force=force_config)
 
     # Config files that deployed scripts resolve relative to $CLAUDE_ENV_HOME:
     #   mcp-servers.json -> scripts/register_repo.py (repo onboarding)
     #   budgets.yaml     -> observability/budgets.py (claude-env budget)
     for name, needed_by in (("mcp-servers.json", "repo onboarding"),
                             ("budgets.yaml", "claude-env budget")):
-        src = REPO_DIR / "config" / name
-        dst = HOME / "config" / name
-        if src.exists():
-            shutil.copy2(src, dst)
-            ok(f"{name} -> {dst}")
-        else:
-            warn(f"config/{name} missing in repo ({needed_by} will fail until present)")
+        _deploy_config(REPO_DIR / "config" / name, HOME / "config" / name,
+                        name, needed_by=needed_by, force=force_config)
 
     # mirror the platform code under $CLAUDE_ENV_HOME so MCP servers can import it
     for sub in ("security", "audit", "lib", "rag", "memory", "observability",
@@ -394,6 +409,10 @@ def main() -> int:
                     help="reuse existing venv, only update deps inside it")
     ap.add_argument("--recreate-venv", action="store_true",
                     help="delete and recreate the venv (use after Python upgrade)")
+    ap.add_argument("--force-config", action="store_true",
+                    help="reset global-policy.yaml/rag.yaml/mcp-servers.json/budgets.yaml "
+                         "to the repo's template, discarding any local edits to the "
+                         "deployed copies")
     ap.add_argument("--dsn", default=None,
                     help="override persistence DSN (default: SQLite)")
     args = ap.parse_args()
@@ -412,7 +431,7 @@ def main() -> int:
     # DB init runs via bootstrap Python (lib/db uses stdlib sqlite3 — no venv dep)
     init_database(args.dsn)
     init_lancedb()
-    init_policies()
+    init_policies(force_config=args.force_config)
     init_audit()
 
     # final validation runs via the venv Python (so all deps are tested)
