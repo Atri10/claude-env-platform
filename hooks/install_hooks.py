@@ -38,12 +38,14 @@ GLOBAL_SETTINGS = Path.home() / ".claude" / "settings.json"
 
 PRE_MATCHER = "Read|Write|Edit|NotebookEdit|Glob|Grep|Bash|WebFetch|WebSearch"
 POST_MATCHER = "Write|Edit|NotebookEdit|Bash"
+SESSION_MATCHER = "*"  # every SessionStart source / SessionEnd reason
 # Portable, per-machine: the shell running the hook expands $CLAUDE_ENV_HOME.
 # Quoted so a home dir with spaces survives. Keep in sync with the legacy
 # suffix match in _strip_cmd so old absolute-path installs are also removable.
 _PY = '"$CLAUDE_ENV_HOME/venv/bin/python"'
 PRE_CMD = f'{_PY} "$CLAUDE_ENV_HOME/hooks/policy_hook.py"'
 POST_CMD = f'{_PY} "$CLAUDE_ENV_HOME/hooks/audit_hook.py"'
+SESSION_CMD = f'{_PY} "$CLAUDE_ENV_HOME/hooks/session_metrics_hook.py"'
 
 
 def _entry(matcher: str, command: str) -> dict:
@@ -111,16 +113,24 @@ def main() -> int:
     hooks = settings.setdefault("hooks", {})
     pre = hooks.setdefault("PreToolUse", [])
     post = hooks.setdefault("PostToolUse", [])
+    sess_start = hooks.setdefault("SessionStart", [])
+    sess_end = hooks.setdefault("SessionEnd", [])
 
     if args.uninstall:
         hooks["PreToolUse"] = _strip_cmd(pre, "hooks/policy_hook.py")
         hooks["PostToolUse"] = _strip_cmd(post, "hooks/audit_hook.py")
+        hooks["SessionStart"] = _strip_cmd(sess_start, "hooks/session_metrics_hook.py")
+        hooks["SessionEnd"] = _strip_cmd(sess_end, "hooks/session_metrics_hook.py")
         action = "removed from"
     else:
         if not _has_cmd(pre, PRE_CMD):
             pre.append(_entry(PRE_MATCHER, PRE_CMD))
         if not _has_cmd(post, POST_CMD):
             post.append(_entry(POST_MATCHER, POST_CMD))
+        if not _has_cmd(sess_start, SESSION_CMD):
+            sess_start.append(_entry(SESSION_MATCHER, SESSION_CMD))
+        if not _has_cmd(sess_end, SESSION_CMD):
+            sess_end.append(_entry(SESSION_MATCHER, SESSION_CMD))
         action = "installed into"
 
     rendered = json.dumps(settings, indent=2) + "\n"

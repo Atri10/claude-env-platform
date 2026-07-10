@@ -29,7 +29,7 @@ def _hooks(settings_path: Path) -> dict:
 
 def _all_commands(hooks: dict) -> list[str]:
     cmds = []
-    for event in ("PreToolUse", "PostToolUse"):
+    for event in ("PreToolUse", "PostToolUse", "SessionStart", "SessionEnd"):
         for entry in hooks.get(event, []):
             for h in entry.get("hooks", []):
                 cmds.append(h.get("command", ""))
@@ -128,3 +128,27 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch, capsys):
     assert not (tmp_path / ".claude" / "settings.json").exists()
     out = capsys.readouterr().out
     assert "$CLAUDE_ENV_HOME" in out                       # printed the portable command
+
+
+def test_session_hooks_installed(tmp_path, monkeypatch):
+    assert _run(["--repo", str(tmp_path)], monkeypatch) == 0
+    data = _hooks(tmp_path / ".claude" / "settings.json")
+    assert any("session_metrics_hook.py" in h.get("command", "")
+               for e in data.get("SessionStart", []) for h in e.get("hooks", []))
+    assert any("session_metrics_hook.py" in c for c in _all_commands(data))
+
+
+def test_session_hooks_removed_on_uninstall(tmp_path, monkeypatch):
+    _run(["--repo", str(tmp_path)], monkeypatch)
+    _run(["--repo", str(tmp_path), "--uninstall"], monkeypatch)
+    data = _hooks(tmp_path / ".claude" / "settings.json")
+    assert not data.get("SessionStart")
+    assert not data.get("SessionEnd")
+
+
+def test_session_hooks_idempotent(tmp_path, monkeypatch):
+    _run(["--repo", str(tmp_path)], monkeypatch)
+    _run(["--repo", str(tmp_path)], monkeypatch)
+    data = _hooks(tmp_path / ".claude" / "settings.json")
+    cmds = [h.get("command", "") for e in data.get("SessionStart", []) for h in e.get("hooks", [])]
+    assert sum("session_metrics_hook.py" in c for c in cmds) == 1

@@ -69,6 +69,16 @@ def summary(window: str) -> int:
         print(f"   {r['session_id'][:18]:18s} {str(r['repo'])[:14]:14s} "
               f"in={r['input_tokens']:>8} out={r['output_tokens']:>8} ${r['usd']}")
 
+    print("\n-- cost by repo (total, window) --")
+    repo_totals = db.query(
+        f"SELECT COALESCE(repo,'(none)') AS repo, COUNT(*) AS sessions, "
+        f"ROUND(SUM(est_cost_usd),4) AS usd FROM metrics_sessions "
+        f"WHERE started_at >= {since} GROUP BY repo ORDER BY usd DESC")
+    if not repo_totals:
+        print("   (no sessions)")
+    for r in repo_totals:
+        print(f"   {str(r['repo'])[:24]:24s} sessions={r['sessions']:>4} ${r['usd']}")
+
     print("\n-- latency by component (ms) --")
     comps = db.query(
         f"SELECT DISTINCT component FROM metrics_latency WHERE ts >= {since}")

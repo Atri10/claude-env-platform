@@ -236,7 +236,7 @@ def main() -> int:  # noqa: C901 - linear smoke checklist
                "VALUES ('b1','demo',?,2.0)",
                (datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),))
     bud = subprocess.run([sys.executable, str(REPO / "observability" / "budgets.py"),
-                          "--no-notify", "--format", "json"],
+                          "--format", "json"],
                          capture_output=True, text=True, env=env)
     try:
         budd = json.loads(bud.stdout)

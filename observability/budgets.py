@@ -8,8 +8,7 @@ Purpose:
     any network — it is a local governance check.
 
     Exit codes: 0 ok / warning, 1 any budget exceeded — so it can gate CI or
-    surface in a shell prompt. On macOS a notification fires at warn/exceed
-    (best-effort, silent if osascript is unavailable).
+    surface in a shell prompt.
 
 Usage:
     python observability/budgets.py                 # status table
@@ -21,7 +20,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,9 +30,6 @@ if str(_ROOT) not in sys.path:
 
 import yaml                    # noqa: E402
 from lib.db import get_db      # noqa: E402
-from lib.logging_setup import get_logger  # noqa: E402
-
-_log = get_logger("observability")
 
 HOME = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
 
@@ -94,26 +89,10 @@ def evaluate(repo_filter: str | None = None) -> dict:
             "warn_at": cfg["warn_at"], "repos": statuses, "overall": worst}
 
 
-def _notify(title: str, message: str) -> None:
-    """Best-effort local notification (macOS only, never fails)."""
-    if sys.platform != "darwin":
-        return
-    try:
-        subprocess.run(
-            ["osascript", "-e",
-             f'display notification "{message}" with title "{title}"'],
-            capture_output=True, timeout=5)
-    except Exception:
-        # desktop notification is a nicety (macOS-only, may be absent/blocked);
-        # never let it break budget enforcement.
-        _log.debug("desktop notification failed: %s", title, exc_info=True)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description="Monthly cost budget status")
     ap.add_argument("--repo")
     ap.add_argument("--format", choices=["text", "json"], default="text")
-    ap.add_argument("--no-notify", action="store_true")
     args = ap.parse_args()
 
     result = evaluate(args.repo)
@@ -132,11 +111,6 @@ def main() -> int:
                 budget = f"{r['budget_usd']:.0f}" if r["budget_usd"] else "-"
                 print(f"{r['repo']:24s} {r['sessions']:>8d} "
                       f"{(r['spent_usd'] or 0):>10.2f} {budget:>8s} {pct:>6s}  {r['status']}")
-    if result["overall"] != "ok" and not args.no_notify:
-        bad = [r["repo"] for r in result["repos"]
-               if r["status"] in ("warning", "EXCEEDED")]
-        _notify("claude-env budget",
-                f"{result['overall']}: {', '.join(bad[:3])}")
     return 1 if result["overall"] == "EXCEEDED" else 0
 
 
