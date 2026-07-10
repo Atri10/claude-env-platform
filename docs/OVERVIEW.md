@@ -131,11 +131,11 @@ ledger evidence with cryptographic proof of integrity, not just a log dump.
 ```bash
 $ claude-env replay --list
 session_id                            events  first                last                 actors
-a1b2c3d4-...                          42      2026-07-08T14:02:11  2026-07-08T14:47:03  atriya
+a1b2c3d4-...                          42      2026-07-08T14:02:11  2026-07-08T14:47:03  alex
 
 $ claude-env replay a1b2c3d4-...
-2026-07-08T14:02:11  policy_check   atriya  myrepo  read src/billing/retry.py — allowed
-2026-07-08T14:03:44  policy_check   atriya  myrepo  read secrets/prod.env — DENIED
+2026-07-08T14:02:11  policy_check   alex  myrepo  read src/billing/retry.py — allowed
+2026-07-08T14:03:44  policy_check   alex  myrepo  read secrets/prod.env — DENIED
 ...
 
 $ claude-env report --window 7d --format md --out weekly-compliance.md
