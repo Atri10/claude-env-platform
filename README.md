@@ -52,7 +52,7 @@ it once, top to bottom, without guessing.
 |---|---|
 | **Guardrails** | Layered policy engine (global deny → tier → repo deny → repo allow; deny always wins; tier-3 is default-deny) + content secret-scanning. |
 | **Audit** | Append-only, hash-chained ledger; DB triggers reject any mutation; `verify_chain()` proves integrity. |
-| **Local RAG** | AST-aware chunking, pluggable local embeddings + optional ONNX reranker, LanceDB hybrid search, one table per repo+branch, incremental re-index on every commit. |
+| **Local RAG** | AST-aware chunking, pluggable local embeddings + optional ONNX reranker, LanceDB hybrid search, one table per repo+branch, automatic re-index on every commit, merge/pull, and branch switch. |
 | **Memory graph** | Episodic / semantic / procedural / agent memory in SQLite, with decay, corrections, consolidation, and namespace isolation. |
 | **Agents** | 10 specialists + orchestrator with explicit tools, write scopes, and approval gates. |
 | **MCP layer** | Six local stdio servers; the policy-enforcing filesystem server is the single sanctioned path to disk. |
@@ -373,12 +373,16 @@ claude-env validate rag /absolute/path/to/repo "auth token validation"
 Empty results usually mean the index is empty (re-run step 2) or the slug/branch don't
 match the LanceDB table name.
 
-**Keep the index current automatically** — install the post-commit hook so every commit
-triggers a background incremental re-index:
+**Keep the index current automatically** — onboarding (`claude-env onboard`/`register`)
+already installs all three of these; to install them manually instead (e.g. on a repo you
+didn't onboard through the CLI), symlink all three so commits, merges/pulls, and branch
+switches each trigger a background re-index via `rag/git_sync.py`:
 
 ```bash
-ln -sf ~/.claude-env/scripts/post-commit /absolute/path/to/repo/.git/hooks/post-commit
-chmod +x /absolute/path/to/repo/.git/hooks/post-commit
+for hook in post-commit post-merge post-checkout; do
+  ln -sf ~/.claude-env/scripts/"$hook" /absolute/path/to/repo/.git/hooks/"$hook"
+  chmod +x /absolute/path/to/repo/.git/hooks/"$hook"
+done
 ```
 
 ### Extend governance to native tools (Read/Write/Edit/Bash)
@@ -849,8 +853,9 @@ the MCP bridge on recent builds) → `Settings → Tools → Claude Code`: point
 
 **Recommended IDE settings:** Actions-on-Save → Reformat + Optimize imports (so agent
 diffs match house style); keep language inspections strict (the review agents consume
-them via the bridge); enable "Run Git hooks" on commit (so the post-commit indexer
-fires); mark `generated/`, `vendor/`, `node_modules/` as Excluded.
+them via the bridge); enable "Run Git hooks" on commit, merge, and checkout (so the
+RAG re-index hooks fire on all three — see [§10](#10-everyday-operations)); mark
+`generated/`, `vendor/`, `node_modules/` as Excluded.
 
 **Workflows:** *Code review* — open the diff, ask Claude to review; the orchestrator
 routes to Security + Performance (read-only) + Testing; findings are file:line

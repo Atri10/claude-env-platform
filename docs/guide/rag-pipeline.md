@@ -97,6 +97,35 @@ paying the cost of loading the embedding model.
 
 ---
 
+## Automatic re-indexing (git hooks)
+
+**Source:** [`rag/git_sync.py`](../../rag/git_sync.py),
+[`scripts/post-commit`](../../scripts/post-commit),
+[`scripts/post-merge`](../../scripts/post-merge),
+[`scripts/post-checkout`](../../scripts/post-checkout).
+
+Running `reindex` by hand is one way to keep the index current; the other is to not
+have to. `claude-env onboard`/`register` installs three git hooks per repo (see
+[`onboarding.md`](onboarding.md) for the install mechanics and the `--no-post-commit`
+flag that skips all three) that dispatch through `rag/git_sync.py` to the same
+`Indexer.incremental()`/`Indexer.full_index()` this doc's `reindex`/`index` commands
+call — no separate indexing logic, only new triggers:
+
+| Git event | Hook | What runs |
+|---|---|---|
+| `git commit` | `post-commit` | `Indexer.incremental()` on the files changed in that commit. |
+| `git merge` (including a `git pull`'s fast-forward, which never invokes `git commit`) | `post-merge` | `Indexer.incremental()` on the files changed between `ORIG_HEAD` and `HEAD`. |
+| `git checkout <branch>` | `post-checkout` | A branch never indexed before gets a full `Indexer.full_index()`; a previously-indexed branch gets an `Indexer.incremental()` catch-up on the commits made since its recorded `rag_index_state.last_commit` — falling back to a full re-index instead if that commit is no longer in history (e.g. after a rebase/force-push). Ignored for a plain file-level checkout (git's own `is_branch_flag` argument distinguishes the two). |
+
+Every hook runs in the background (`nohup`, logging to `logs/incremental_index.log`)
+and never blocks or fails the triggering git command. A per-`(repo, branch)` lock file
+under `state/locks/` prevents two triggers landing close together (e.g. an interactive
+rebase firing `post-commit` several times in a row) from each loading the embedding
+model concurrently — a later trigger simply skips with a logged note instead of piling
+up redundant work.
+
+---
+
 ## `rag/config.py` — the one place models get chosen
 
 ```python

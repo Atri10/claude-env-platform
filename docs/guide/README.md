@@ -51,7 +51,7 @@ Status legend: ✅ written · 🔜 planned (not yet written)
 
 | Doc | Source | Status |
 |---|---|---|
-| [rag-pipeline.md](rag-pipeline.md) | `rag/config.py`, `rag/chunkers/`, `rag/embeddings/`, `rag/rerankers/`, `rag/retrievers/lance_store.py` | ✅ |
+| [rag-pipeline.md](rag-pipeline.md) | `rag/config.py`, `rag/chunkers/`, `rag/embeddings/`, `rag/rerankers/`, `rag/retrievers/lance_store.py`, `rag/git_sync.py` | ✅ |
 | [retrieval-poison-screening.md](retrieval-poison-screening.md) | `rag/pipelines/retrieve.py` | ✅ |
 | [mcp-servers.md](mcp-servers.md) | `mcp-servers/*/server.py` (all six) | ✅ |
 
