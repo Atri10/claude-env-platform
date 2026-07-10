@@ -136,6 +136,7 @@ This should be green except model warnings, until you complete
 | `--no-venv-create` | Reuse the existing venv, just update deps. |
 | `--recreate-venv` | Delete and rebuild the venv from scratch (e.g. after a Python upgrade). |
 | `--dsn postgresql://…` | Target PostgreSQL instead of SQLite (see [Appendix B](#appendix-b--postgresql-migration)). |
+| `--force-config` | Reset `global-policy.yaml`/`rag.yaml`/`mcp-servers.json`/`budgets.yaml` to the repo's template, discarding local edits to the deployed copies. Every other run leaves an already-deployed copy untouched — re-running bootstrap (e.g. `--no-deps` after a code change) never reverts your configured `rag.yaml` model path. |
 
 ---
 
@@ -254,8 +255,12 @@ file present" and "reranker loads + runs" lines) or in Python:
 > [!IMPORTANT]
 > **Always edit the deployed config, not the repo's.** The servers and tools read
 > `~/.claude-env/config/rag.yaml`, which is what [§4a](#4a-embedding-model-required)/[§4b](#4b-reranker-optional)
-> above edit directly. If you instead edit this repo's `config/rag.yaml`, re-run
-> `claude-env bootstrap --no-deps` to sync the deployed copy.
+> above edit directly. Bootstrap only writes this file the *first* time it runs (it
+> never overwrites an already-deployed copy, so your model path survives every later
+> `bootstrap.py --no-deps`) — if you edit the repo's `config/rag.yaml` by mistake, copy
+> it over by hand (`cp config/rag.yaml ~/.claude-env/config/rag.yaml`) rather than
+> re-running bootstrap, since `--force-config` would also reset `global-policy.yaml`,
+> `mcp-servers.json`, and `budgets.yaml` back to their repo templates.
 
 ---
 

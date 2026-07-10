@@ -26,10 +26,14 @@ full product guide is [`README.md`](README.md) (read it once).
    changes:
    ```bash
    cp -v mcp-servers/terminal/server.py ~/.claude-env/mcp-servers/terminal/server.py   # targeted
-   python3 bootstrap.py --no-deps                                                       # re-mirror all + config
+   python3 bootstrap.py --no-deps                                                       # re-mirror code
    ```
    Config files (`config/*.yaml|json`) are also read from the deployed copy — editing the repo
-   copy alone does nothing until deployed.
+   copy alone does nothing until deployed. `bootstrap.py` only *writes* a config file the first
+   time it runs; a later `--no-deps` re-mirror leaves an already-deployed `config/*.yaml|json`
+   untouched (a machine-local value like `rag.yaml`'s `embedding.model_path` must survive every
+   later bootstrap). Use `--force-config` only when you intend to discard local edits to
+   `global-policy.yaml`/`rag.yaml`/`mcp-servers.json`/`budgets.yaml`.
 3. **Run the tests.** `pytest tests/ -q` (needs `pytest` + `pyyaml`; the platform venv is at
    `~/.claude-env/venv`). Add/extend tests for every behavioral change.
 4. **Never weaken the invariants below to make something pass.** They are the product.
