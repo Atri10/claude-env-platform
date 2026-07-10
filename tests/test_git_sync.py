@@ -90,3 +90,111 @@ def test_repo_slug_falls_back_to_dirname_without_policy(tmp_path):
     repo = tmp_path / "some-dir"
     repo.mkdir()
     assert gs._repo_slug(str(repo)) == "some-dir"
+
+
+class _FakeEmbedder:
+    """Deterministic, model-free embedder -- same shape as
+    test_incremental_index.py's fake, duplicated here per this test suite's
+    existing convention of a self-contained fixture per file (no conftest.py
+    exists in this repo)."""
+    dim = 8
+    model_name = "fake-embedder"
+
+    def embed_documents(self, texts):
+        return [[0.0] * self.dim for _ in texts]
+
+
+class _FakeStore:
+    def __init__(self):
+        self.upserts = []
+        self.deletes = []
+        self._rows = {}
+
+    def upsert(self, repo, branch, rows):
+        self.upserts.append((repo, branch, len(rows)))
+        self._rows[(repo, branch)] = self._rows.get((repo, branch), 0) + len(rows)
+        return len(rows)
+
+    def delete_file(self, repo, branch, file_path):
+        self.deletes.append((repo, branch, file_path))
+
+    def count(self, repo, branch):
+        return self._rows.get((repo, branch), 0)
+
+
+def _init_repo(tmp_path, tier: int = 0):
+    repo = tmp_path / "demo-repo"
+    (repo / ".claude").mkdir(parents=True)
+    (repo / "src").mkdir()
+    (repo / ".claude" / "repo-policy.yaml").write_text(
+        "repo: demo-repo\n"
+        f"tier: {tier}\n"
+        "rag:\n"
+        "  enabled: true\n"
+        "  index_paths: ['**']\n"
+        "  exclude_paths: []\n"
+        "  index_only_committed: true\n")
+    (repo / "src" / "app.py").write_text("def hello():\n    return 'hi'\n")
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    return repo
+
+
+def _fake_indexer(repo_root):
+    from rag.indexers.indexer import Indexer
+    idx = Indexer(str(repo_root))
+    idx.embedder = _FakeEmbedder()
+    idx.store = _FakeStore()
+    return idx
+
+
+def test_sync_commit_indexes_changed_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    _fresh_db()
+    repo = _init_repo(tmp_path)
+    monkeypatch.setattr(gs, "_build_indexer", lambda root: _fake_indexer(root))
+
+    result = gs.sync_commit(str(repo), ["src/app.py"])
+
+    assert result["files"] == 1
+    assert result["chunks"] >= 1
+
+
+def test_sync_merge_indexes_changed_files(tmp_path, monkeypatch):
+    """merge uses the identical strategy as commit -- given file list -> incremental()."""
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    _fresh_db()
+    repo = _init_repo(tmp_path)
+    monkeypatch.setattr(gs, "_build_indexer", lambda root: _fake_indexer(root))
+
+    result = gs.sync_merge(str(repo), ["src/app.py"])
+
+    assert result["files"] == 1
+    assert result["chunks"] >= 1
+
+
+def test_sync_commit_skips_when_lock_held(tmp_path, monkeypatch):
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    _fresh_db()
+    repo = _init_repo(tmp_path)
+
+    def _raising_indexer(root):
+        raise AssertionError("_build_indexer must not run while the lock is held")
+
+    # hold the lock externally, under the exact key sync_commit will compute
+    # (_repo_slug reads .claude/repo-policy.yaml's repo: field directly, so
+    # this doesn't need _build_indexer or a real Indexer to determine)
+    lock_path = gs._lock_path("demo-repo", "main")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    holder = open(lock_path, "w")
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        monkeypatch.setattr(gs, "_build_indexer", _raising_indexer)
+        result = gs.sync_commit(str(repo), ["src/app.py"])
+        assert result["skipped"] == "reindex already running"
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        holder.close()

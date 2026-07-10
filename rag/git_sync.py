@@ -89,5 +89,35 @@ def _build_indexer(repo_root: str):
     return Indexer(repo_root)
 
 
+def sync_commit(repo_root: str, changed: list[str]) -> dict:
+    branch = _current_branch(repo_root)
+    repo_slug = _repo_slug(repo_root)
+    with _repo_lock(repo_slug, branch) as acquired:
+        if not acquired:
+            return {"skipped": "reindex already running",
+                    "repo": repo_slug, "branch": branch}
+        return _build_indexer(repo_root).incremental(changed)
+
+
+def sync_merge(repo_root: str, changed: list[str]) -> dict:
+    return sync_commit(repo_root, changed)   # identical strategy
+
+
+def main() -> int:
+    try:
+        args = sys.argv[1:]
+        repo_root, event, rest = args[0], args[1], args[2:]
+        if event == "commit":
+            result = sync_commit(repo_root, rest)
+        elif event == "merge":
+            result = sync_merge(repo_root, rest)
+        else:
+            result = {"error": f"unknown event {event!r}"}
+        print(result)
+    except Exception as e:
+        sys.stderr.write(f"[claude-env] git_sync error: {e}\n")
+    return 0
+
+
 if __name__ == "__main__":
-    pass  # main() dispatch added in Task 2
+    raise SystemExit(main())
