@@ -50,13 +50,16 @@ def start_session(session_id: str, repo: str | None = None) -> None:
         "VALUES (?,?,?)", (session_id, repo, _now()))
 
 
-def record_tokens(session_id: str, input_tokens: int, output_tokens: int,
-                  model: str = "default") -> None:
+def set_usage_totals(session_id: str, input_tokens: int, output_tokens: int,
+                     model: str = "default") -> None:
+    """Overwrite (not increment) a session's usage/cost totals. Called once
+    per SessionEnd with the transcript's full cumulative usage — idempotent
+    if the hook ever fires more than once for the same session."""
     pin, pout = PRICES.get(model, PRICES["default"])
     cost = (input_tokens * pin + output_tokens * pout) / 1_000_000
     get_db().execute(
-        "UPDATE metrics_sessions SET input_tokens=input_tokens+?, "
-        "output_tokens=output_tokens+?, est_cost_usd=est_cost_usd+? WHERE session_id=?",
+        "UPDATE metrics_sessions SET input_tokens=?, output_tokens=?, "
+        "est_cost_usd=? WHERE session_id=?",
         (input_tokens, output_tokens, cost, session_id))
 
 
