@@ -8,8 +8,7 @@ Purpose:
     any network — it is a local governance check.
 
     Exit codes: 0 ok / warning, 1 any budget exceeded — so it can gate CI or
-    surface in a shell prompt. On macOS a notification fires at warn/exceed
-    (best-effort, silent if osascript is unavailable).
+    surface in a shell prompt.
 
 Usage:
     python observability/budgets.py                 # status table
