@@ -198,3 +198,72 @@ def test_sync_commit_skips_when_lock_held(tmp_path, monkeypatch):
     finally:
         fcntl.flock(holder, fcntl.LOCK_UN)
         holder.close()
+
+
+def test_sync_checkout_ignores_file_level_checkout(tmp_path, monkeypatch):
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    _fresh_db()
+    repo = _init_repo(tmp_path)
+    monkeypatch.setattr(gs, "_build_indexer", lambda root: _fake_indexer(root))
+
+    result = gs.sync_checkout(str(repo), "deadbeef", "cafefeed", "0")
+
+    assert result["skipped"] == "file-level checkout, not a branch switch"
+
+
+def test_sync_checkout_full_indexes_a_never_indexed_branch(tmp_path, monkeypatch):
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    _fresh_db()
+    repo = _init_repo(tmp_path)
+    monkeypatch.setattr(gs, "_build_indexer", lambda root: _fake_indexer(root))
+
+    new_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                             capture_output=True, text=True).stdout.strip()
+    result = gs.sync_checkout(str(repo), "0" * 40, new_sha, "1")
+
+    assert result["files"] == 1     # full_index() walked the one tracked file
+    assert result["chunks"] >= 1
+
+
+def test_sync_checkout_incrementally_catches_up_a_known_branch(tmp_path, monkeypatch):
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    db = _fresh_db()
+    repo = _init_repo(tmp_path)
+    monkeypatch.setattr(gs, "_build_indexer", lambda root: _fake_indexer(root))
+
+    first_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+    gs.sync_commit(str(repo), ["src/app.py"])   # records rag_index_state row
+
+    # a second commit lands (simulating a commit made elsewhere, then pulled)
+    (repo / "src" / "app2.py").write_text("def bye():\n    return 'bye'\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "add app2"], check=True)
+    second_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                                capture_output=True, text=True).stdout.strip()
+
+    result = gs.sync_checkout(str(repo), first_sha, second_sha, "1")
+
+    assert result["files"] == 1     # only the newly-committed file
+    assert result["chunks"] >= 1
+
+
+def test_sync_checkout_skips_when_lock_held(tmp_path, monkeypatch):
+    monkeypatch.setattr(gs, "HOME", tmp_path / "home")
+    _fresh_db()
+    repo = _init_repo(tmp_path)
+
+    def _raising_indexer(root):
+        raise AssertionError("must not build an Indexer while locked")
+
+    lock_path = gs._lock_path("demo-repo", "main")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    holder = open(lock_path, "w")
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        monkeypatch.setattr(gs, "_build_indexer", _raising_indexer)
+        result = gs.sync_checkout(str(repo), "a" * 40, "b" * 40, "1")
+        assert result["skipped"] == "reindex already running"
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        holder.close()

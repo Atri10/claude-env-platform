@@ -103,6 +103,26 @@ def sync_merge(repo_root: str, changed: list[str]) -> dict:
     return sync_commit(repo_root, changed)   # identical strategy
 
 
+def sync_checkout(repo_root: str, prev_sha: str, new_sha: str, is_branch_flag: str) -> dict:
+    if is_branch_flag != "1":
+        return {"skipped": "file-level checkout, not a branch switch"}
+    branch = _current_branch(repo_root)
+    repo_slug = _repo_slug(repo_root)
+    with _repo_lock(repo_slug, branch) as acquired:
+        if not acquired:
+            return {"skipped": "reindex already running",
+                    "repo": repo_slug, "branch": branch}
+        idx = _build_indexer(repo_root)
+        row = idx.db.query_one(
+            "SELECT last_commit FROM rag_index_state WHERE repo=? AND branch=?",
+            (repo_slug, branch))
+        if row is None:
+            return idx.full_index()
+        out = _git(repo_root, "diff", "--name-only", row["last_commit"], new_sha)
+        changed = [f for f in out.splitlines() if f]
+        return idx.incremental(changed)
+
+
 def main() -> int:
     try:
         args = sys.argv[1:]
@@ -111,6 +131,8 @@ def main() -> int:
             result = sync_commit(repo_root, rest)
         elif event == "merge":
             result = sync_merge(repo_root, rest)
+        elif event == "checkout":
+            result = sync_checkout(repo_root, rest[0], rest[1], rest[2])
         else:
             result = {"error": f"unknown event {event!r}"}
         print(result)
