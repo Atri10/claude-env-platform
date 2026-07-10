@@ -48,7 +48,8 @@ def _is_ancestor(repo_root: str, old_sha: str, new_sha: str) -> bool:
     way to self-heal on a later checkout. Callers must fall back to a full
     re-index when this returns False."""
     import subprocess
-    r = subprocess.run(["git", "-C", repo_root, "merge-base", "--is-ancestor", old_sha, new_sha])
+    r = subprocess.run(["git", "-C", repo_root, "merge-base", "--is-ancestor", old_sha, new_sha],
+                       capture_output=True)
     return r.returncode == 0
 
 
