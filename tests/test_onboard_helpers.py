@@ -25,26 +25,38 @@ def test_slugify():
     assert reg._slugify("") == "repo"
 
 
-def test_post_commit_install_and_idempotency(tmp_path):
-    repo = _git_repo(tmp_path)
-    assert reg._install_post_commit(repo, dry_run=False) == "installed"
-    hook = Path(repo) / ".git" / "hooks" / "post-commit"
-    assert hook.exists() and (hook.stat().st_mode & 0o111)          # executable
-    # second run is a no-op (same content)
-    assert reg._install_post_commit(repo, dry_run=False) == "already installed"
+_HOOK_NAMES = ("post-commit", "post-merge", "post-checkout")
 
 
-def test_post_commit_does_not_clobber_foreign_hook(tmp_path):
+def test_git_hooks_install_and_idempotency(tmp_path):
     repo = _git_repo(tmp_path)
-    hook = Path(repo) / ".git" / "hooks" / "post-commit"
+    statuses = reg._install_git_hooks(repo, dry_run=False)
+    assert set(statuses) == set(_HOOK_NAMES)
+    for name in _HOOK_NAMES:
+        assert statuses[name] == "installed"
+        hook = Path(repo) / ".git" / "hooks" / name
+        assert hook.exists() and (hook.stat().st_mode & 0o111)   # executable
+    # second run is a no-op (same content) for every hook
+    statuses2 = reg._install_git_hooks(repo, dry_run=False)
+    assert all(v == "already installed" for v in statuses2.values())
+
+
+def test_git_hooks_do_not_clobber_foreign_hooks(tmp_path):
+    repo = _git_repo(tmp_path)
+    hook = Path(repo) / ".git" / "hooks" / "post-merge"
+    hook.parent.mkdir(parents=True, exist_ok=True)
     hook.write_text("#!/bin/sh\necho mine\n")
-    status = reg._install_post_commit(repo, dry_run=False)
-    assert "kept existing" in status
-    assert hook.read_text() == "#!/bin/sh\necho mine\n"             # untouched
+    statuses = reg._install_git_hooks(repo, dry_run=False)
+    assert "kept existing" in statuses["post-merge"]
+    assert hook.read_text() == "#!/bin/sh\necho mine\n"          # untouched
+    # the other two, with no foreign hook in the way, still install normally
+    assert statuses["post-commit"] == "installed"
+    assert statuses["post-checkout"] == "installed"
 
 
-def test_post_commit_skips_non_git(tmp_path):
-    assert "not a git repo" in reg._install_post_commit(str(tmp_path), dry_run=False)
+def test_git_hooks_skip_non_git(tmp_path):
+    statuses = reg._install_git_hooks(str(tmp_path), dry_run=False)
+    assert all("not a git repo" in v for v in statuses.values())
 
 
 def test_detect_test_command(tmp_path):

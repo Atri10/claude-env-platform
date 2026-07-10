@@ -362,34 +362,45 @@ def _provision_storage(slug: str, branch: str, dry_run: bool) -> str:
     return _table_name(slug, branch)
 
 
-def _install_post_commit(repo_root: str, dry_run: bool) -> str:
-    """Install scripts/post-commit into <repo>/.git/hooks so each commit triggers
-    an incremental RAG re-index. Idempotent; never clobbers a foreign hook."""
+def _install_git_hooks(repo_root: str, dry_run: bool) -> dict[str, str]:
+    """Install scripts/{post-commit,post-merge,post-checkout} into
+    <repo>/.git/hooks so commits, merges/pulls, and branch switches all
+    trigger a RAG re-index (rag/git_sync.py). Idempotent per hook; never
+    clobbers a foreign (non-claude-env) hook of the same name."""
+    hook_names = ("post-commit", "post-merge", "post-checkout")
     git_dir = Path(repo_root) / ".git"
     if not git_dir.exists():
-        return "skipped (not a git repo)"
+        return {name: "skipped (not a git repo)" for name in hook_names}
     if git_dir.is_file():                      # worktree/submodule: .git is a file
-        return "skipped (.git is a file — worktree/submodule)"
-    src = _HERE / "scripts" / "post-commit"
-    if not src.exists():
-        return "skipped (post-commit script missing)"
-    hooks = git_dir / "hooks"
-    dst = hooks / "post-commit"
+        return {name: "skipped (.git is a file — worktree/submodule)"
+                for name in hook_names}
+
+    statuses: dict[str, str] = {}
     marker = "claude-env"                       # our hooks carry this in a comment
-    if dst.exists():
-        try:
-            existing = dst.read_text(errors="ignore")
-        except Exception:
-            existing = ""
-        if marker not in existing:
-            return "kept existing non-claude-env hook (install manually if wanted)"
-        if existing == src.read_text():
-            return "already installed"
-    if not dry_run:
-        hooks.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        dst.chmod(0o755)
-    return "installed"
+    for name in hook_names:
+        src = _HERE / "scripts" / name
+        if not src.exists():
+            statuses[name] = f"skipped ({name} script missing)"
+            continue
+        hooks = git_dir / "hooks"
+        dst = hooks / name
+        if dst.exists():
+            try:
+                existing = dst.read_text(errors="ignore")
+            except Exception:
+                existing = ""
+            if marker not in existing:
+                statuses[name] = "kept existing non-claude-env hook (install manually if wanted)"
+                continue
+            if existing == src.read_text():
+                statuses[name] = "already installed"
+                continue
+        if not dry_run:
+            hooks.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+        statuses[name] = "installed"
+    return statuses
 
 
 def _install_agents(repo_root: str | Path, dry_run: bool) -> str:
@@ -557,7 +568,8 @@ def main() -> int:
     parser.add_argument("--force-policy", action="store_true",
                         help="Overwrite an existing .claude/repo-policy.yaml")
     parser.add_argument("--no-post-commit", action="store_true",
-                        help="Skip installing the git post-commit RAG re-index hook")
+                        help="Skip installing the git post-commit/post-merge/"
+                             "post-checkout RAG re-index hooks")
     args = parser.parse_args()
 
     repo_root = str(Path(args.repo_root).resolve())
@@ -606,10 +618,12 @@ def main() -> int:
         }
         _install_template(repo_root, subs, args.force_template, args.dry_run)
 
-    # 4. git post-commit hook -> incremental RAG re-index on every commit
+    # 4. git hooks (commit/merge/checkout) -> RAG git-sync re-index
     tag = f"{YELLOW}DRY RUN{RESET} " if args.dry_run else ""
     if not args.no_post_commit:
-        print(f"\n{tag}post-commit hook: {_install_post_commit(repo_root, args.dry_run)}")
+        hook_statuses = _install_git_hooks(repo_root, args.dry_run)
+        for name, status in hook_statuses.items():
+            print(f"\n{tag}{name} hook: {status}")
 
     # 4b. terminal test command (so terminal.run_tests fits the repo's toolchain)
     print(f"{tag}commands.json: {_install_commands(repo_root, args.dry_run)}")

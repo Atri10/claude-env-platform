@@ -42,7 +42,7 @@ full plan without writing anything.
 | `--no-template` | flag | off | Skips `_install_template()` entirely (no `CLAUDE.md`/`.claude/skills`/`.claude/agents` install) — namespaces, policy, and MCP env are still provisioned. |
 | `--force-template` | flag | off | Passed to `_install_dot_claude()`; lets it overwrite existing skill/agent files it would otherwise skip. |
 | `--force-policy` | flag | off | Passed to `_write_repo_policy()`; without it an existing `repo-policy.yaml` is never touched (`"kept-existing (use --force-policy to regenerate)"`). |
-| `--no-post-commit` | flag | off | Skips installing the git `post-commit` hook. |
+| `--no-post-commit` | flag | off | Skips installing all three git hooks (`post-commit`/`post-merge`/`post-checkout`) that trigger RAG re-indexing. |
 
 ### Interactivity
 
@@ -224,12 +224,16 @@ itself. See [`native-tool-hooks.md`](native-tool-hooks.md) for the full wiring.
 
 ### 5. Idempotent extras (not gated by `--no-template`)
 
-- **`.git/hooks/post-commit`** (`_install_post_commit`) — copies
-  `scripts/post-commit` into the target repo's git hooks dir, `chmod 0o755`.
-  Skipped if `.git` doesn't exist or is a file (worktree/submodule). If a
-  `post-commit` hook already exists and does **not** contain the literal
-  string `"claude-env"`, it's left alone (`"kept existing non-claude-env
-  hook"`) — the script never silently overwrites a foreign hook.
+- **`.git/hooks/{post-commit,post-merge,post-checkout}`**
+  (`_install_git_hooks`) — copies `scripts/post-commit`, `scripts/post-merge`,
+  and `scripts/post-checkout` into the target repo's git hooks dir, each
+  `chmod 0o755`, so commits, merges/pulls, and branch switches all keep the
+  RAG index current via `rag/git_sync.py`. Skipped (for all three) if `.git`
+  doesn't exist or is a file (worktree/submodule). Each hook is installed
+  independently: if e.g. a `post-merge` hook already exists and does **not**
+  contain the literal string `"claude-env"`, only that one is left alone
+  (`"kept existing non-claude-env hook"`) — the others still install
+  normally, and the script never silently overwrites a foreign hook.
 - **`.claude/commands.json`** (`_install_commands`) — a scaffold with
   `run_tests` / `run_benchmarks` / `run_audit` keys for the terminal MCP
   server. `_detect_test_command()` checks, in order, `go.mod` → `go test
@@ -295,9 +299,9 @@ network, imported by loading `scripts/register_repo.py` via
 | Test | What it proves |
 |---|---|
 | `test_slugify` | `"My Cool Repo"` → `"my-cool-repo"`; `"weird  name!!"` → `"weird-name"` (collapsed, not double-hyphenated); `"keeps_underscores.ok"` passes through unchanged; `""` → `"repo"`. |
-| `test_post_commit_install_and_idempotency` | First install returns `"installed"` and the hook file is executable (`st_mode & 0o111`); a second run on identical content returns `"already installed"`. |
-| `test_post_commit_does_not_clobber_foreign_hook` | A pre-existing hook without the `claude-env` marker is left byte-for-byte untouched, status contains `"kept existing"`. |
-| `test_post_commit_skips_non_git` | A non-git directory returns a status containing `"not a git repo"`. |
+| `test_git_hooks_install_and_idempotency` | First install returns `"installed"` for all three hooks (`post-commit`/`post-merge`/`post-checkout`), each executable (`st_mode & 0o111`); a second run on identical content returns `"already installed"` for all three. |
+| `test_git_hooks_do_not_clobber_foreign_hooks` | A pre-existing `post-merge` hook without the `claude-env` marker is left byte-for-byte untouched (status contains `"kept existing"`), while `post-commit`/`post-checkout` still install normally. |
+| `test_git_hooks_skip_non_git` | A non-git directory returns a status containing `"not a git repo"` for all three hooks. |
 | `test_detect_test_command` | `go.mod` present → `"go test ./..."`; after removing it and adding `package.json` → `"npm test"`; a nonexistent subdirectory → `None`. |
 | `test_install_commands_detected` | With `go.mod` present, the written `commands.json` has `run_tests == "go test ./..."` and `run_benchmarks`/`run_audit` left as `""`. |
 | `test_install_commands_scaffold_when_undetected` | With no toolchain markers, all three keys are written but empty. |
