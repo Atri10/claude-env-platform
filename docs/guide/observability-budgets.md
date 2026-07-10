@@ -24,8 +24,10 @@ None of them talk to the network; all three read from the SQLite DB via
 - **`budgets.py`** — sums `metrics_sessions.est_cost_usd` per repo for the calendar
   month to date, compares it against a configured USD cap, and prints a status table
   (`ok` / `warning` / `EXCEEDED` / `unlimited`). It is advisory: exceeding a budget
-  never blocks an agent from running, it only exits non-zero and fires a
-  best-effort macOS notification, so a CI job or shell prompt can act on it.
+  never blocks an agent from running, it only exits non-zero, so a CI job or shell
+  prompt can act on it. Cost data populates itself with zero configuration —
+  `hooks/session_metrics_hook.py` records it automatically on every session start
+  and end (see "How cost data gets populated" below).
 - **`feedback.py`** — records which RAG chunks were `retrieved` and, separately (via
   `memory/session_ingestor.py`), which of the underlying files were actually `used`
   (edited soon after retrieval). It turns the `used` counts into a small logarithmic
@@ -82,28 +84,44 @@ claude-env budget --repo payments
 
 # Machine-readable output for a CI job or script
 claude-env budget --format json
-
-# Suppress the local macOS notification (e.g. running from a script/cron)
-claude-env budget --format json --no-notify
 ```
 
 The plain `claude-env budget` form is what you'd run from a shell prompt to eyeball
 spend; `--format json` is the one to parse in a script or CI step (check `overall` in
-the returned object, or the process exit code, for `EXCEEDED`). `--no-notify` is worth
-adding whenever budget is invoked non-interactively, since the notification is
-best-effort and meant for a human at the machine, not an automated caller.
+the returned object, or the process exit code, for `EXCEEDED`).
 
 ---
 
 ## How `budgets.py` works
 
-### Cost tracking mechanism
+### How cost data gets populated
 
-There is no separate cost-tracking table or accumulator process. `budgets.py` does
-not compute cost itself — it only *reads* `est_cost_usd`, a column already populated
-per-session in `metrics_sessions` (`sql/001_schema.sql`) by whatever writes
-session metrics (session ingestion). `budgets.py` is a pure aggregation + comparison
-step over that existing column:
+`budgets.py` never computes cost itself — it only *reads* `est_cost_usd`.
+That column is written by `hooks/session_metrics_hook.py`, a native
+`SessionStart`/`SessionEnd` hook installed by the same `claude-env hooks`
+step that installs `policy_hook.py`/`audit_hook.py` — no separate
+scheduling, no cron job, no config:
+
+```python
+# hooks/session_metrics_hook.py
+if event == "SessionStart":
+    start_session(session, _repo_slug(cwd))
+elif event == "SessionEnd":
+    start_session(session, _repo_slug(cwd))  # ensure a row exists either way
+    total_in, total_out = _sum_transcript_usage(payload.get("transcript_path", ""))
+    set_usage_totals(session, total_in, total_out)
+    end_session(session)
+```
+
+`SessionStart` opens a row keyed by `session_id`/`repo`; `SessionEnd` sums
+`usage.input_tokens`/`output_tokens` across every assistant message in
+that session's own transcript JSONL and **overwrites** (not increments)
+the row's totals via `observability.collectors.set_usage_totals()` — safe
+if the hook ever fires more than once for the same session. This is
+unrelated to `memory/session_ingestor.py`'s nightly job, which populates
+the memory graph and retrieval-feedback signals, not cost.
+
+`budgets.py` is a pure aggregation + comparison step over that existing column:
 
 ```python
 # observability/budgets.py
@@ -159,10 +177,6 @@ for r in rows:
   alone still exits `0`. This is what makes it CI-gateable *if* a caller chooses to
   check the exit code; nothing in this repo currently wires that check into a hook or
   pipeline.
-- On `warning` or `EXCEEDED` (and unless `--no-notify`), `_notify()` fires a macOS
-  notification via `osascript`, wrapped in a bare `try/except Exception: pass` and a
-  `sys.platform != "darwin"` early return — it is unconditionally best-effort and
-  never raises, on any platform (`observability/budgets.py`).
 
 ![budgets.py evaluate() flow](../assets/guide/observability-budgets/budget-check-flow.svg)
 
@@ -172,7 +186,6 @@ for r in rows:
 python observability/budgets.py                 # status table, all repos
 python observability/budgets.py --repo payments  # filter to one repo
 python observability/budgets.py --format json    # machine-readable
-python observability/budgets.py --no-notify      # suppress the osascript notification
 ```
 
 `--format json` dumps the exact `evaluate()` return shape: `{month, warn_at, repos:
