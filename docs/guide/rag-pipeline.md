@@ -645,7 +645,31 @@ fallback, except the model path itself, which has no fallback and fails loud via
   clean pooling error** — `_embed()` (`rag/embeddings/llama_embedder.py`) detects
   unpooled per-token output and raises `TypeError` naming `pooling_type`
   specifically, rather than letting the wrong shape propagate into the LanceDB
-  upsert as an unrelated-looking error (see above).
+  upsert as an unrelated-looking error (see above). `LlamaEmbedder.__init__` also
+  runs a one-time `_self_check()` — a real embed call against a throwaway string —
+  so a misconfigured `pooling_type`/`embedding_dim` fails at model-construction
+  time, not partway through embedding a large repo.
+- **A model can emit NaN for a given input** — observed indexing real repos with
+  Qwen3-VL-Embedding-8B against small config/template files. `_embed()`'s
+  L2-normalize step (`x / norm`) propagates a single NaN into every component of
+  that vector; LanceDB's Arrow layer rejects a NaN vector with an opaque error
+  naming no file or chunk, and (before this was fixed) aborted the entire
+  upsert batch for that file. `Indexer._index_one()`
+  (`rag/indexers/indexer.py`) now filters non-finite (NaN/Inf) vectors per-chunk
+  before building rows, audit-logs which file was affected via
+  `security_event("indexing", ...)`, and keeps indexing the rest of the file/repo
+  — a chunk with a non-finite vector is simply not indexed, not a crash.
+- **`Indexer._validate_embedder_dim(branch)` is read-only** — it must never create
+  a table. An earlier version called `LanceStore.open()` (which auto-creates a
+  table matching the *current* embedder's schema if missing) using a hardcoded
+  `"master"` branch regardless of the repo's actual branch; this both left behind
+  a spurious empty table for a branch that was never indexed, and made the
+  dimension check a structural no-op (a raised `ValueError` was even swallowed by
+  the method's own broad `except Exception`, so it never stopped indexing on a
+  real mismatch). The fixed version checks `table_names()` before opening, is
+  keyed by the repo's real current branch (computed before `_lazy()` is called in
+  `full_index()`/`incremental()`), and a genuine dimension conflict now
+  propagates and halts indexing.
 - **Vectors are always L2-normalized before storage or query**, so LanceDB's
   cosine metric and a raw dot product agree (`rag/embeddings/llama_embedder.py`,
   see above).
@@ -688,9 +712,13 @@ fallback, except the model path itself, which has no fallback and fails loud via
   covers `rag/pipelines/retrieve.py::_relevance` (the score-selection helper used
   after `LanceStore.search()` returns); `tests/test_rag_model_backends.py` covers
   the embedder/reranker registry dispatch, the interface contract, the
-  `(backend, path)` cache key, `reload_embedder()`/`reload_reranker()`, and the
-  pooling-mismatch guard in `LlamaEmbedder._embed()` (via a stub `Llama`, not a
-  real GGUF). Chunkers and `LanceStore` itself remain uncovered.
+  `(backend, path)` cache key, `reload_embedder()`/`reload_reranker()`, the
+  pooling-mismatch guard, and the construction-time self-check in
+  `LlamaEmbedder` (via a stub `Llama`, not a real GGUF);
+  `tests/test_indexer_dim_validation.py` covers `_validate_embedder_dim()`'s
+  read-only/real-branch/mismatch-propagates behavior; `tests/test_indexer_nan_vectors.py`
+  covers the per-chunk NaN/Inf skip in `_index_one()`. Chunkers and `LanceStore`
+  itself remain uncovered.
 
 ---
 
