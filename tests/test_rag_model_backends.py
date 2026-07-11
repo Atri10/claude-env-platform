@@ -260,6 +260,7 @@ def _make_embedder_with_stub_llm(embedding_output):
     emb.model_name = "stub"
     emb._doc_prefix = ""
     emb._query_prefix = ""
+    emb._pooling_type_name = "mean"
     emb.llm = _StubLlama(embedding_output)
     return emb
 
@@ -280,3 +281,29 @@ def test_embed_succeeds_on_properly_pooled_output():
     # L2-normalized
     norm = sum(x * x for x in vec) ** 0.5
     assert abs(norm - 1.0) < 1e-6
+
+
+# --- construction-time self-check --------------------------------------------
+# Regression: previously a pooling/dim misconfiguration only surfaced deep into
+# a real indexing run (partway through embedding hundreds of files). The
+# self-check embeds one throwaway string at construction time so misconfig
+# fails immediately and cheaply instead.
+
+def test_self_check_passes_when_dim_matches():
+    emb = _make_embedder_with_stub_llm([0.1] * 4096)
+    emb._self_check()  # must not raise
+
+
+def test_self_check_raises_when_dim_mismatches_configured_embedding_dim():
+    import pytest
+    emb = _make_embedder_with_stub_llm([0.1] * 4096)
+    emb.dim = 768  # simulate rag.yaml's embedding_dim disagreeing with the real model
+    with pytest.raises(ValueError, match="self-check failed"):
+        emb._self_check()
+
+
+def test_self_check_raises_on_unpooled_output():
+    import pytest
+    emb = _make_embedder_with_stub_llm([[0.1, 0.2] for _ in range(3)])
+    with pytest.raises(TypeError, match="pooling_type"):
+        emb._self_check()

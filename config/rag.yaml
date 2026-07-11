@@ -34,10 +34,32 @@ embedding:
   document_prefix: ""
   query_prefix: ""
 
-  # Pooling applied to raw model output to get one vector per input: mean|cls|last|none.
-  # Most embedding-tuned GGUFs want "mean". Leaving this wrong (or "none" when the
-  # model needs pooling) produces one vector PER TOKEN instead of one per input, which
-  # surfaces as a dimension/type mismatch during indexing. Override with EMBED_POOLING_TYPE.
+  # Pooling applied to raw model output to get ONE vector per input, instead of
+  # one per token:
+  #   mean  — average all token vectors. Right for most embedding-tuned models
+  #           (nomic-embed-text, bge-*, gte-*, most sentence-transformers ports,
+  #           Qwen3 embedding variants). Start here if unsure.
+  #   cls   — use the [CLS]/first-token vector only. BERT-family encoders
+  #           originally trained with a classification head sometimes expect this.
+  #   last  — use the last token's vector. Decoder-style/causal models adapted
+  #           for embeddings (some Qwen/Mistral-based embedders) can expect this.
+  #   none  — apply no pooling in llama.cpp; only correct if the GGUF itself
+  #           already bakes in pooling at conversion time. This is what silently
+  #           breaks most often: a GGUF converted WITHOUT baked-in pooling, run
+  #           with pooling_type: none, returns one vector PER TOKEN, and every
+  #           downstream embed call fails or (worse) silently mis-normalizes.
+  #
+  # Getting this wrong is caught in two places rather than deep in an indexing
+  # run: LlamaEmbedder does one real embed call at construction time and fails
+  # immediately if the output isn't a single pooled vector of the configured
+  # embedding_dim; _embed() also detects per-token (list-of-lists) output on
+  # every call and raises instead of silently normalizing the wrong shape.
+  #
+  # Don't guess from the model card — verify against the actual GGUF before
+  # setting this (a conversion can behave differently than the source model).
+  # See the `rag-model-setup` skill for the exact probe snippet: force each
+  # pooling_type in turn via llama_cpp directly and check which one returns a
+  # flat list[float] of the right length. Override with EMBED_POOLING_TYPE.
   pooling_type: "mean"
 
   # Context window (tokens). Override with EMBED_CTX.
