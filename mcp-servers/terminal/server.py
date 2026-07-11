@@ -11,14 +11,22 @@ commands run automatically, each mapped to a vetted argv template:
 
 Commands run with:
   * a hard timeout
-  * the repo root as cwd (no escaping)
+  * the repo root as cwd (no escaping, including via `cd`)
   * a scrubbed environment (no inherited secrets)
-  * shell=False, argv lists only (no shell interpolation, no pipes)
+  * shell=False, argv lists only -- NO bash/sh process is ever spawned
+
+Within that no-shell sandbox, `;`, `&&`, `||`, `|`, and a leading `cd dir &&` are
+still supported: the command string is tokenized (shlex, punctuation-char mode)
+and each stage is run as its own argv via subprocess, piped/short-circuited in
+Python. Anything that genuinely needs a real shell -- redirection (`>`, `>>`,
+`<`), subshells (`(...)`), backgrounding (`&`), command substitution (`` ` ``,
+`$(...)`) -- is rejected with a clear error rather than silently doing nothing
+or being handed to a shell interpreter. See `_tokenize`/`_split_pipelines`/`_run`.
 
 Anything state-mutating maps to `terminal.run`, which opens a human approval,
 surfaces the approvals web UI, and BLOCKS until the operator approves or denies.
-On approval the command runs under the same sandbox (argv-only via shlex, no
-shell/pipes, scrubbed env, repo-root cwd, timeout); on denial/timeout it does not.
+On approval the command runs under the same no-shell sandbox described above
+(scrubbed env, repo-root cwd, timeout); on denial/timeout it does not.
 There is no `terminal.exec_unrestricted` tool at all.
 
 Configuration: each command must be set per-repo in `${repo}/.claude/commands.json`.
@@ -185,26 +193,181 @@ async def _await_decision(req_id: str) -> tuple[str, str | None]:
     return "pending", None
 
 
-def _run(template: str, kind: str) -> str:
-    argv = shlex.split(template)
-    if not argv:
-        return "ERROR: empty command"
-    try:
-        proc = subprocess.run(
-            argv, cwd=str(REPO_ROOT), env=_scrubbed_env(),
-            capture_output=True, text=True, timeout=TIMEOUT_S, shell=False)
-    except subprocess.TimeoutExpired:
-        _audit.tool_call(tool=f"terminal.{kind}", args={"cmd": template},
-                         result_kind="timeout")
-        return f"TIMEOUT after {TIMEOUT_S}s: {template}"
-    except FileNotFoundError:
-        return f"ERROR: command not found: {argv[0]}"
-    _audit.tool_call(tool=f"terminal.{kind}", args={"cmd": template},
-                     result_kind=f"exit{proc.returncode}")
-    tail = (proc.stdout or "")[-6000:] + (("\n[stderr]\n" + proc.stderr[-2000:])
-                                          if proc.stderr else "")
-    return f"exit={proc.returncode}\n{tail}"
+# Chaining/piping connectors we support WITHOUT a real shell (see _split_pipelines).
+_ALLOWED_OPS = {";", "&&", "||", "|"}
+# shlex's punctuation_chars mode only ever emits maximal runs of ();<>|&, so
+# every punctuation-only token not in _ALLOWED_OPS is shell-ish (redirection,
+# subshells, backgrounding, command substitution, or a malformed run like
+# ';;') and is rejected outright -- this is the line the argv-only guarantee
+# in the module docstring depends on.
+_PUNCTUATION_CHARS = set("();<>|&")
 
+
+class _CommandError(Exception):
+    """A command string used a shell feature this sandbox intentionally does
+    not support (redirection, subshells, backgrounding, substitution)."""
+
+
+def _tokenize(command: str) -> list[str]:
+    """Split a command string into words + operators, without a shell.
+
+    Uses shlex's punctuation-char mode so ';', '&&', '||', '|' come out as
+    their own tokens while quoted occurrences (e.g. "a && b") stay fused into
+    a single literal word -- this is what lets us recognize *unquoted*
+    chaining/piping without invoking bash."""
+    lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    try:
+        tokens = list(lex)
+    except ValueError as e:
+        raise _CommandError(f"could not parse command: {e}")
+    for t in tokens:
+        if t in _PUNCTUATION_CHARS or set(t) <= _PUNCTUATION_CHARS:
+            if t not in _ALLOWED_OPS:
+                raise _CommandError(
+                    f"unsupported shell operator '{t}' -- redirection, backgrounding, "
+                    f"subshells, command substitution, and stray/doubled operators are "
+                    f"not supported by this argv-only sandbox (no real shell is "
+                    f"invoked). Supported: chaining with ';', '&&', '||', and piping "
+                    f"with '|'.")
+    return tokens
+
+
+def _split_pipelines(tokens: list[str]) -> list[dict]:
+    """[[tok,...]] -> [{"connector": ";"|"&&"|"||"|None, "commands": [[argv],...]}]
+
+    Each returned pipeline is one or more argv lists joined by '|'; pipelines
+    are joined to each other by the connector that precedes them (None for
+    the first). '&&'/'||' short-circuit on the previous pipeline's exit code;
+    ';' always runs regardless."""
+    pipelines: list[dict] = []
+    cur_cmd: list[str] = []
+    cur_pipeline_cmds: list[list[str]] = []
+    pending_connector: str | None = None
+
+    def flush_cmd():
+        if not cur_cmd:
+            raise _CommandError(
+                "empty command segment -- check for a leading/trailing/doubled "
+                "';', '&&', '||' or '|'")
+        cur_pipeline_cmds.append(list(cur_cmd))
+        cur_cmd.clear()
+
+    def flush_pipeline(connector):
+        flush_cmd()
+        pipelines.append({"connector": connector, "commands": list(cur_pipeline_cmds)})
+        cur_pipeline_cmds.clear()
+
+    for t in tokens:
+        if t == "|":
+            flush_cmd()
+        elif t in (";", "&&", "||"):
+            flush_pipeline(pending_connector)
+            pending_connector = t
+        else:
+            cur_cmd.append(t)
+    if cur_cmd or cur_pipeline_cmds:
+        flush_pipeline(pending_connector)
+    if not pipelines:
+        raise _CommandError("empty command")
+    return pipelines
+
+
+def _run_pipeline(argvs: list[list[str]], cwd: str) -> tuple[int, str, str]:
+    """Run one or more argv lists connected by '|', piping stdout->stdin
+    between them via Python (never a shell). Returns (exit_code, stdout, stderr)
+    of the LAST stage, matching bash pipeline exit-status semantics."""
+    procs: list[subprocess.Popen] = []
+    try:
+        prev_stdout = None
+        for i, argv in enumerate(argvs):
+            is_last = i == len(argvs) - 1
+            p = subprocess.Popen(
+                argv, cwd=cwd, env=_scrubbed_env(), stdin=prev_stdout,
+                stdout=subprocess.PIPE if not is_last else subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, shell=False)
+            if prev_stdout is not None:
+                prev_stdout.close()
+            prev_stdout = p.stdout
+            procs.append(p)
+        out, err = procs[-1].communicate(timeout=TIMEOUT_S)
+        for p in procs[:-1]:
+            p.wait(timeout=TIMEOUT_S)
+        return procs[-1].returncode, out or "", err or ""
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.kill()
+
+
+def _run(template: str, kind: str) -> str:
+    """Execute a command string with NO real shell involved.
+
+    Supports the chaining/piping an agent naturally writes (';', '&&', '||',
+    '|', including a leading 'cd dir && ...') by tokenizing with shlex and
+    running each stage as its own argv via subprocess, never bash -c. Anything
+    that needs a real shell -- redirection, subshells, backgrounding, command
+    substitution -- is rejected with a clear error instead of silently doing
+    nothing or (worse) being handed to a shell interpreter."""
+    try:
+        pipelines = _split_pipelines(_tokenize(template))
+    except _CommandError as e:
+        return f"ERROR: {e}"
+
+    cwd = str(REPO_ROOT)
+    last_exit = 0
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    ran_any = False
+
+    for pipeline in pipelines:
+        connector = pipeline["connector"]
+        if connector == "&&" and last_exit != 0:
+            continue
+        if connector == "||" and last_exit == 0 and ran_any:
+            continue
+
+        argvs = pipeline["commands"]
+        # 'cd' is a shell builtin, not an executable -- handle it as a cwd
+        # change for the rest of the chain instead of trying to exec it.
+        if len(argvs) == 1 and argvs[0][0] == "cd":
+            target = argvs[0][1] if len(argvs[0]) > 1 else str(REPO_ROOT)
+            new_cwd = (Path(cwd) / target).resolve()
+            try:
+                if new_cwd != REPO_ROOT and REPO_ROOT not in new_cwd.parents:
+                    raise _CommandError(f"cd target '{target}' escapes the repo root")
+                if not new_cwd.is_dir():
+                    raise _CommandError(f"cd: no such directory: {target}")
+            except _CommandError as e:
+                last_exit = 1
+                stderr_parts.append(f"[cd] {e}")
+                ran_any = True
+                continue
+            cwd = str(new_cwd)
+            last_exit = 0
+            ran_any = True
+            continue
+
+        ran_any = True
+        try:
+            last_exit, out, err = _run_pipeline(argvs, cwd)
+        except subprocess.TimeoutExpired:
+            _audit.tool_call(tool=f"terminal.{kind}", args={"cmd": template},
+                             result_kind="timeout")
+            return f"TIMEOUT after {TIMEOUT_S}s: {template}"
+        except FileNotFoundError as e:
+            missing = argvs[0][0] if len(argvs) == 1 else str(e)
+            return f"ERROR: command not found: {missing}"
+        stdout_parts.append(out)
+        if err:
+            stderr_parts.append(err)
+
+    _audit.tool_call(tool=f"terminal.{kind}", args={"cmd": template},
+                     result_kind=f"exit{last_exit}")
+    stdout_tail = "".join(stdout_parts)[-6000:]
+    stderr_tail = "\n".join(stderr_parts)[-2000:]
+    tail = stdout_tail + (f"\n[stderr]\n{stderr_tail}" if stderr_tail else "")
+    return f"exit={last_exit}\n{tail}"
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
@@ -212,24 +375,28 @@ async def list_tools() -> list[Tool]:
         Tool(name="terminal.run_tests",
              description="Run this repo's configured test command (from "
                          "<repo>/.claude/commands.json) in a sandbox: repo-root cwd, "
-                         "scrubbed env (no inherited secrets), shell=False argv-only (no "
-                         "pipes/interpolation), hard timeout. Takes no arguments — you cannot "
-                         "choose the command, only trigger the vetted one. If no test command "
-                         "is configured it runs NOTHING and returns a 'NOT CONFIGURED' "
-                         "directive. Returns exit code + truncated stdout/stderr; audited.",
+                         "scrubbed env (no inherited secrets), no real shell is spawned "
+                         "(';'/'&&'/'||'/'|'/'cd' are supported without one; redirection/"
+                         "subshells/backgrounding/substitution are rejected), hard timeout. "
+                         "Takes no arguments — you cannot choose the command, only trigger the "
+                         "vetted one. If no test command is configured it runs NOTHING and "
+                         "returns a 'NOT CONFIGURED' directive. Returns exit code + truncated "
+                         "stdout/stderr; audited.",
              inputSchema={"type": "object", "properties": {}}),
         Tool(name="terminal.run_benchmarks",
              description="Run this repo's configured benchmark command from "
-                         "<repo>/.claude/commands.json, in the same sandbox as run_tests "
-                         "(repo-root cwd, scrubbed env, argv-only, timeout). Takes no "
-                         "arguments. Returns 'NOT CONFIGURED' and runs nothing if unset; "
+                         "<repo>/.claude/commands.json, in the same no-shell sandbox as "
+                         "run_tests (repo-root cwd, scrubbed env, timeout; ';'/'&&'/'||'/'|'/"
+                         "'cd' supported, redirection/subshells/substitution rejected). Takes "
+                         "no arguments. Returns 'NOT CONFIGURED' and runs nothing if unset; "
                          "otherwise returns exit code + truncated output. Audited.",
              inputSchema={"type": "object", "properties": {}}),
         Tool(name="terminal.run_audit",
              description="Run this repo's configured security-audit command (e.g. pip-audit) "
-                         "from <repo>/.claude/commands.json, in the same sandbox as run_tests "
-                         "(repo-root cwd, scrubbed env, argv-only, timeout). Takes no "
-                         "arguments. Returns 'NOT CONFIGURED' and runs nothing if unset; "
+                         "from <repo>/.claude/commands.json, in the same no-shell sandbox as "
+                         "run_tests (repo-root cwd, scrubbed env, timeout; ';'/'&&'/'||'/'|'/"
+                         "'cd' supported, redirection/subshells/substitution rejected). Takes "
+                         "no arguments. Returns 'NOT CONFIGURED' and runs nothing if unset; "
                          "otherwise returns exit code + truncated output. Audited.",
              inputSchema={"type": "object", "properties": {}}),
         Tool(name="terminal.run",
@@ -237,18 +404,23 @@ async def list_tools() -> list[Tool]:
                          "that isn't one of the vetted run_tests/benchmarks/audit templates. "
                          "This opens a human-approval request, surfaces the approvals web UI, "
                          "and BLOCKS until an operator approves or denies (or it times out, "
-                         "~120s). On approval it runs in the SAME sandbox — repo-root cwd, "
-                         "scrubbed env, shell=False argv-only (no pipes/redirection/shell "
-                         "features), timeout — and returns who approved plus exit code and "
+                         "~120s). On approval it runs in the SAME no-shell sandbox — repo-root "
+                         "cwd, scrubbed env, timeout, no bash/sh process ever spawned; "
+                         "';'/'&&'/'||'/'|'/'cd' chaining is supported without a real shell, "
+                         "while redirection/subshells/backgrounding/command substitution are "
+                         "rejected outright — and it returns who approved plus exit code and "
                          "output; on denial/timeout nothing runs. Use only when a human is "
                          "available to approve; the whole request is audited.",
              inputSchema={"type": "object",
                           "properties": {"command": {"type": "string",
                                           "description": "The command line to request, e.g. "
-                                          "'npm install' or 'ruff format .'. Parsed with "
-                                          "shlex into an argv list and run WITHOUT a shell, so "
-                                          "pipes, redirects, '&&', globs and env-var expansion "
-                                          "are NOT interpreted."}},
+                                          "'npm install' or 'grep foo file.txt | wc -l'. "
+                                          "Parsed with shlex into argv stages joined by "
+                                          "';'/'&&'/'||'/'|' -- no real shell is ever invoked, so "
+                                          "redirection ('>', '<'), subshells, backgrounding "
+                                          "('&'), command substitution ('`'/'$()'), globs, and "
+                                          "env-var expansion are NOT interpreted and are "
+                                          "rejected with an error."}},
                           "required": ["command"]}),
     ]
 
