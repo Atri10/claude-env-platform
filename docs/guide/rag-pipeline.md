@@ -5,7 +5,11 @@
 
 **Source:** [`rag/config.py`](../../rag/config.py),
 [`rag/chunkers/chunkers.py`](../../rag/chunkers/chunkers.py),
+[`rag/embeddings/base.py`](../../rag/embeddings/base.py),
+[`rag/embeddings/registry.py`](../../rag/embeddings/registry.py),
 [`rag/embeddings/llama_embedder.py`](../../rag/embeddings/llama_embedder.py),
+[`rag/rerankers/base.py`](../../rag/rerankers/base.py),
+[`rag/rerankers/registry.py`](../../rag/rerankers/registry.py),
 [`rag/rerankers/cross_encoder.py`](../../rag/rerankers/cross_encoder.py),
 [`rag/retrievers/lance_store.py`](../../rag/retrievers/lance_store.py).
 **Config:** [`config/rag.yaml`](../../config/rag.yaml).
@@ -23,13 +27,20 @@ model configuration, chunking, embedding, reranking, and the LanceDB store. It d
 
 A file becomes searchable in four steps: `chunk_file()` splits it into
 semantically coherent pieces (AST units for code, header sections for markdown, a
-sliding window otherwise); `LlamaEmbedder` turns each chunk's text into a
-normalized vector with a local GGUF model via llama.cpp; `LanceStore` upserts the
+sliding window otherwise); the configured `EmbedderBackend` (`LlamaEmbedder` by
+default) turns each chunk's text into a normalized vector; `LanceStore` upserts the
 vectors + metadata into a per-`(repo, branch)` LanceDB table on local disk; at query
-time the same store runs a hybrid vector+FTS search and `CrossEncoderReranker`
-re-orders the top candidates with a local ONNX cross-encoder. Every model is
-configured — never hardcoded — in `config/rag.yaml` or an env var, resolved by
-`rag/config.py`. Nothing leaves the machine.
+time the same store runs a hybrid vector+FTS search and the configured
+`RerankerBackend` (`CrossEncoderReranker` by default) re-orders the top candidates.
+Every model **and backend** is configured — never hardcoded — in `config/rag.yaml`
+or an env var, resolved by `rag/config.py`. Nothing leaves the machine.
+
+Both the embedder and reranker sit behind a small interface + registry
+(`rag/embeddings/base.py`+`registry.py`, `rag/rerankers/base.py`+`registry.py`) so a
+new backend — a different runtime, not just a different model file — can be added
+by implementing the interface and registering it, with zero changes to
+`rag/config.py`'s factories or any caller. See
+["Swapping backends, not just models"](#swapping-backends-not-just-models) below.
 
 ---
 
@@ -42,13 +53,16 @@ guessing (`rag/config.py`).
 
 | Key | Env override | Type | Built-in fallback | Effect |
 |---|---|---|---|---|
+| `embedding.backend` | `EMBED_BACKEND` | str | `"llama_cpp"` | Registry key (`rag/embeddings/registry.py`) selecting which `EmbedderBackend` implementation to construct. Unknown key raises `ValueError` listing valid keys. |
 | `embedding.model_path` | `EMBED_MODEL_PATH` | str | `""` (none) | Path to a local GGUF embedding model. Empty means unconfigured; `get_embedder()` raises `RuntimeError` rather than picking a default. |
 | `embedding.model_name` | `EMBED_MODEL_NAME` | str | derived | Label stored in `rag_index_state.embed_model`. If unset, derived as `Path(model_path).stem` (`rag/config.py`); empty path → empty name. |
 | `embedding.document_prefix` | `EMBED_DOC_PREFIX` | str | `""` | Prepended verbatim to text before embedding a document (some models need a task prefix, e.g. nomic-embed-text's `"search_document: "`). |
 | `embedding.query_prefix` | `EMBED_QUERY_PREFIX` | str | `""` | Prepended verbatim to text before embedding a query. |
+| `embedding.pooling_type` | `EMBED_POOLING_TYPE` | str | `"mean"` | One of `mean\|cls\|last\|none`, passed to llama.cpp's `pooling_type`. Wrong for the model → `embed_documents()`/`embed_query()` returns one vector *per token* instead of one pooled vector per input; `_embed()` detects this shape and raises `TypeError` rather than silently normalizing the wrong thing. |
 | `embedding.n_ctx` | `EMBED_CTX` | int | `2048` | llama.cpp context window in tokens. |
 | `embedding.n_gpu_layers` | `EMBED_GPU_LAYERS` | int | `-1` | `-1` offloads all layers to Metal on Apple Silicon; `0` forces CPU only. |
 | `embedding.embedding_dim` | `EMBED_DIM` | int | `768` | Output vector dimension; must match the configured model. Changing it requires a full re-index (it's baked into the LanceDB table schema). |
+| `reranker.backend` | `RERANKER_BACKEND` | str | `"onnx_cross_encoder"` | Registry key (`rag/rerankers/registry.py`) selecting which `RerankerBackend` implementation to construct. |
 | `reranker.model_dir` | `RERANKER_DIR` | str | `""` (disabled) | Directory containing an ONNX cross-encoder (`model.onnx` + tokenizer files). Empty disables reranking; the pipeline falls back to fusion order. |
 | `RAG_CONFIG_YAML` | (this **is** the env var) | path | — | Explicit override for where `rag.yaml` itself is read from; see resolution order below. |
 | `LANCEDB_PATH` | (this **is** the env var) | path | `~/.claude-env/knowledge/lancedb` | Where LanceDB tables live on disk (`rag/retrievers/lance_store.py`). |
@@ -132,7 +146,7 @@ up redundant work.
 # rag/config.py
 def get_embedder(cfg: RagConfig | None = None):
     global _EMBEDDER, _EMBEDDER_KEY
-    from rag.embeddings.llama_embedder import LlamaEmbedder
+    from rag.embeddings.registry import get_backend_class
     cfg = cfg or get_config()
     if not cfg.embedding.model_path:
         raise RuntimeError(
@@ -140,21 +154,77 @@ def get_embedder(cfg: RagConfig | None = None):
             "config/rag.yaml (or the EMBED_MODEL_PATH env var) to point at a local "
             "model file. See README §4 'Install local models' for download "
             "instructions and suggested models.")
-    if _EMBEDDER is None or _EMBEDDER_KEY != cfg.embedding.model_path:
-        _EMBEDDER = LlamaEmbedder.from_config(cfg.embedding)
-        _EMBEDDER_KEY = cfg.embedding.model_path
+    key = (cfg.embedding.backend, cfg.embedding.model_path)
+    if _EMBEDDER is None or _EMBEDDER_KEY != key:
+        backend_cls = get_backend_class(cfg.embedding.backend)
+        _EMBEDDER = backend_cls.from_config(cfg.embedding)
+        _EMBEDDER_KEY = key
+        _audit_model_load("embedder", _EMBEDDER.info())
     return _EMBEDDER
 ```
 
 `get_embedder()` and `get_reranker()` (`rag/config.py`) are the **only**
 sanctioned way to construct these classes — every caller (indexer, retriever,
-memory writes) goes through them, so a model swap is a one-line yaml/env change,
-never a code change. The embedder instance is cached at module level keyed by
-`model_path` (`_EMBEDDER` / `_EMBEDDER_KEY`, `rag/config.py`) because
-loading a GGUF file is expensive; `get_reranker()` has no such cache — it's cheap
-enough (or disabled) that `CrossEncoderReranker.__init__` runs fresh each call.
-`RagConfig.load()` itself is memoized too (`_CONFIG` singleton, `get_config()`,
-`rag/config.py`) and only re-reads yaml when called with `reload=True`.
+memory writes) goes through them, so a model **or backend** swap is a one-line
+yaml/env change, never a code change. Both instances are cached at module level,
+keyed by `(backend, model_path)` for the embedder (`_EMBEDDER`/`_EMBEDDER_KEY`) and
+`(backend, model_dir)` for the reranker (`_RERANKER`/`_RERANKER_KEY`) — including
+`backend` in the key (not just the path) means switching backends while the path
+happens to stay the same still rebuilds rather than silently reusing a stale
+instance of the wrong class. `RagConfig.load()` itself is memoized too (`_CONFIG`
+singleton, `get_config()`, `rag/config.py`) and only re-reads yaml when called with
+`reload=True`.
+
+Every successful load (or reload) is recorded via `_audit_model_load()` →
+`AuditLogger("rag-config", actor="rag_factory").agent_action(...)`, so which
+model/backend was active for a given indexing or retrieval run is traceable in the
+`agent_actions` audit projection — logging failures are swallowed (best-effort;
+must never block RAG from working).
+
+### Swapping backends, not just models
+
+Historically "swap the model" meant "point `model_path` at a different GGUF" —
+still true, and still the common case (see §4 in the README). But swapping the
+**backend** — e.g. adding a non-llama.cpp embedder, or a reranker that isn't the
+ONNX cross-encoder — used to mean editing `rag/config.py`'s factory functions
+directly. It no longer does:
+
+- `rag/embeddings/base.py` defines `EmbedderBackend` (`embed_documents`,
+  `embed_query`, `dim`, `model_name`, `backend_name`, `info()`); `LlamaEmbedder`
+  is the one built-in implementation.
+- `rag/rerankers/base.py` defines `RerankerBackend` (`rerank`, `ok`, `model_name`,
+  `backend_name`, `status()`); `CrossEncoderReranker` is the one built-in
+  implementation.
+- `rag/embeddings/registry.py` / `rag/rerankers/registry.py` each hold a
+  `dict[str, type[...Backend]]` (`BACKENDS`) mapping the config string
+  (`embedding.backend` / `reranker.backend`) to the class. `get_backend_class()`
+  raises a clear `ValueError` listing the valid keys if the configured one isn't
+  registered.
+
+To add a backend: implement the interface, add one line to the registry dict. No
+changes to `rag/config.py`'s factories, and no changes to any caller (indexer,
+retriever, memory) — they only ever call `get_embedder()`/`get_reranker()` and use
+the interface's methods. See the `rag-model-setup` skill
+(`.claude/skills/rag-model-setup/SKILL.md`) for the checklist to follow when
+adding or switching a model, including how to probe a GGUF's real output
+dimension and required `pooling_type` before touching `rag.yaml`.
+
+### Hot-reload without a process restart
+
+```python
+# rag/config.py
+def reload_embedder() -> None:
+    global _EMBEDDER, _EMBEDDER_KEY
+    _EMBEDDER = None
+    _EMBEDDER_KEY = None
+    get_config(reload=True)
+```
+
+`reload_embedder()`/`reload_reranker()` clear the cached instance and force
+`get_config(reload=True)` to re-read `rag.yaml`, so a long-running process (an MCP
+server, not a one-shot `scan`/`index`/`reindex` CLI script) can pick up a
+`rag.yaml` edit — new model, new backend, new `pooling_type` — on the next
+`get_embedder()`/`get_reranker()` call, without restarting the process.
 
 ---
 
@@ -285,7 +355,7 @@ the indexer, not here. Empty/whitespace-only parts are dropped before becoming
 
 ---
 
-## Embedding — `rag/embeddings/llama_embedder.py`
+## Embedding — `rag/embeddings/base.py`, `llama_embedder.py`
 
 ```python
 from rag.config import get_embedder
@@ -294,27 +364,43 @@ vecs = emb.embed_documents(["def f(): ..."])
 qv   = emb.embed_query("how is jwt validated")
 ```
 
+`EmbedderBackend` (`rag/embeddings/base.py`) is the ABC every embedder backend
+implements: `embed_documents`, `embed_query` (abstract), plus `dim`, `model_name`,
+`backend_name` attributes and an `info()` method returning
+`{backend, model_name, dim}` for audit logging. `LlamaEmbedder` is the one
+built-in implementation (`backend_name = "llama_cpp"`).
+
 Constructor signature (`rag/embeddings/llama_embedder.py`):
 
 ```python
 def __init__(self, model_path: str, model_name: str, embedding_dim: int,
              n_ctx: int = 2048, n_gpu_layers: int = -1,
              n_threads: int | None = None,
-             document_prefix: str = "", query_prefix: str = ""):
+             document_prefix: str = "", query_prefix: str = "",
+             pooling_type: str = "mean"):
 ```
 
-It wraps `llama_cpp.Llama(model_path=..., embedding=True, n_ctx=..., n_threads=...,
-n_gpu_layers=..., verbose=False)`. If `llama_cpp` isn't importable, `Llama` is set
-to `None` at import time and the constructor raises `RuntimeError` with the exact
-install command (`CMAKE_ARGS='-DLLAMA_METAL=on' pip install llama-cpp-python`) —
-this is a hard failure, not a silent no-op embedder. `n_threads` defaults to
-`os.cpu_count() or 8` when not given.
+It wraps `llama_cpp.Llama(model_path=..., embedding=True, pooling_type=...,
+n_ctx=..., n_threads=..., n_gpu_layers=..., verbose=False)`. `pooling_type` (a
+string — `mean`/`cls`/`last`/`none`) is mapped to the matching
+`llama_cpp.llama_cpp.LLAMA_POOLING_TYPE_*` constant; an unrecognized string raises
+`ValueError` listing the valid options before the model is even loaded. If
+`llama_cpp` isn't importable, `Llama` is set to `None` at import time and the
+constructor raises `RuntimeError` with the exact install command
+(`CMAKE_ARGS='-DLLAMA_METAL=on' pip install llama-cpp-python`) — this is a hard
+failure, not a silent no-op embedder. `n_threads` defaults to `os.cpu_count() or 8`
+when not given.
 
 ```python
 # rag/embeddings/llama_embedder.py
 def _embed(self, text: str) -> list[float]:
     out = self.llm.create_embedding(text)
     vec = out["data"][0]["embedding"]
+    if vec and isinstance(vec[0], list):
+        raise TypeError(
+            f"Embedding model returned {len(vec)} per-token vectors instead of one "
+            f"pooled vector. Set embedding.pooling_type in rag.yaml (e.g. 'mean') "
+            f"to match your model.")
     # L2 normalize for cosine == dot
     norm = sum(x * x for x in vec) ** 0.5 or 1.0
     return [x / norm for x in vec]
@@ -326,20 +412,27 @@ def embed_query(self, text: str) -> list[float]:
     return self._embed(self._query(text))
 ```
 
-Every vector is L2-normalized before it's returned (the `or 1.0` guards a
-theoretical all-zero vector from dividing by zero), so LanceDB's cosine similarity
-and a plain dot product are interchangeable downstream. `embed_documents` and
-`embed_query` differ only in which configured prefix
-(`self._doc_prefix`/`self._query_prefix`) gets prepended — the model itself is not
-inspected to decide whether a prefix is needed; that's a config decision, per the
-module's own docstring (`rag/embeddings/llama_embedder.py`). Two static
-helpers, `to_blob`/`from_blob` (`rag/embeddings/llama_embedder.py`), pack/unpack
-a vector as little-endian float32 — for storing raw vectors in a SQLite BLOB
-column if a caller needs that instead of LanceDB.
+The `isinstance(vec[0], list)` guard exists because a GGUF that doesn't bake in
+pooling — combined with `pooling_type` left at its config default or set wrong for
+that model — makes `llama_cpp` return one embedding *per token* instead of one
+pooled vector for the whole input; without the guard, `_embed()` would silently
+treat the token count as the vector length and L2-normalize the wrong shape, which
+surfaces much later as a dimension mismatch against the LanceDB schema instead of
+a clear error here. Every (correctly pooled) vector is L2-normalized before it's
+returned (the `or 1.0` guards a theoretical all-zero vector from dividing by
+zero), so LanceDB's cosine similarity and a plain dot product are interchangeable
+downstream. `embed_documents` and `embed_query` differ only in which configured
+prefix (`self._doc_prefix`/`self._query_prefix`) gets prepended — the model itself
+is not inspected to decide whether a prefix (or a pooling type) is needed; that's
+a config decision, per the module's own docstring
+(`rag/embeddings/llama_embedder.py`). Two static helpers, `to_blob`/`from_blob`
+(`rag/embeddings/llama_embedder.py`), pack/unpack a vector as little-endian
+float32 — for storing raw vectors in a SQLite BLOB column if a caller needs that
+instead of LanceDB.
 
 ---
 
-## Reranking — `rag/rerankers/cross_encoder.py`
+## Reranking — `rag/rerankers/base.py`, `cross_encoder.py`
 
 ```python
 from rag.config import get_reranker
@@ -347,6 +440,12 @@ rr = get_reranker()
 if not rr.ok:
     print(rr.status())   # explains why reranking is inactive
 ```
+
+`RerankerBackend` (`rag/rerankers/base.py`) is the ABC every reranker backend
+implements: `rerank` (abstract), plus `ok`, `model_name`, `backend_name`
+attributes and a `status()` method returning `{ok, backend, model_name, error}`.
+`CrossEncoderReranker` is the one built-in implementation
+(`backend_name = "onnx_cross_encoder"`).
 
 Construction never raises — `CrossEncoderReranker.__init__` catches everything and
 sets `self.ok = False` with `self._load_error` on any failure (missing
@@ -532,9 +631,45 @@ fallback, except the model path itself, which has no fallback and fails loud via
   embedder, `CrossEncoderReranker` never raises on construction; `ok=False` plus
   identity-order passthrough in `rerank()` is the designed fallback (see above),
   since reranking is explicitly optional.
-- **The embedder instance is cached; the reranker is not** (see above) — worth
-  knowing if `get_reranker()` runs per-query in a hot path, since it reloads the
-  ONNX session on every call.
+- **Both the embedder and reranker instances are cached** at module level in
+  `rag/config.py`, keyed by `(backend, model_path)` / `(backend, model_dir)` (see
+  above) — a `rag.yaml` edit alone doesn't take effect on an already-running
+  process; call `reload_embedder()`/`reload_reranker()` or restart it.
+- **Adding a new embedder/reranker backend never touches `rag/config.py`'s
+  factories** — implement `EmbedderBackend`/`RerankerBackend` (`base.py`) and
+  register the class in the matching `registry.py`'s `BACKENDS` dict (see
+  ["Swapping backends, not just models"](#swapping-backends-not-just-models)
+  above). An unregistered `backend` string in `rag.yaml` raises `ValueError`
+  listing the valid keys, rather than silently falling back to something else.
+- **A wrong `embedding.pooling_type` produces a dimension/type mismatch, not a
+  clean pooling error** — `_embed()` (`rag/embeddings/llama_embedder.py`) detects
+  unpooled per-token output and raises `TypeError` naming `pooling_type`
+  specifically, rather than letting the wrong shape propagate into the LanceDB
+  upsert as an unrelated-looking error (see above). `LlamaEmbedder.__init__` also
+  runs a one-time `_self_check()` — a real embed call against a throwaway string —
+  so a misconfigured `pooling_type`/`embedding_dim` fails at model-construction
+  time, not partway through embedding a large repo.
+- **A model can emit NaN for a given input** — observed indexing real repos with
+  Qwen3-VL-Embedding-8B against small config/template files. `_embed()`'s
+  L2-normalize step (`x / norm`) propagates a single NaN into every component of
+  that vector; LanceDB's Arrow layer rejects a NaN vector with an opaque error
+  naming no file or chunk, and (before this was fixed) aborted the entire
+  upsert batch for that file. `Indexer._index_one()`
+  (`rag/indexers/indexer.py`) now filters non-finite (NaN/Inf) vectors per-chunk
+  before building rows, audit-logs which file was affected via
+  `security_event("indexing", ...)`, and keeps indexing the rest of the file/repo
+  — a chunk with a non-finite vector is simply not indexed, not a crash.
+- **`Indexer._validate_embedder_dim(branch)` is read-only** — it must never create
+  a table. An earlier version called `LanceStore.open()` (which auto-creates a
+  table matching the *current* embedder's schema if missing) using a hardcoded
+  `"master"` branch regardless of the repo's actual branch; this both left behind
+  a spurious empty table for a branch that was never indexed, and made the
+  dimension check a structural no-op (a raised `ValueError` was even swallowed by
+  the method's own broad `except Exception`, so it never stopped indexing on a
+  real mismatch). The fixed version checks `table_names()` before opening, is
+  keyed by the repo's real current branch (computed before `_lazy()` is called in
+  `full_index()`/`incremental()`), and a genuine dimension conflict now
+  propagates and halts indexing.
 - **Vectors are always L2-normalized before storage or query**, so LanceDB's
   cosine metric and a raw dot product agree (`rag/embeddings/llama_embedder.py`,
   see above).
@@ -573,10 +708,17 @@ fallback, except the model path itself, which has no fallback and fails loud via
 - **File paths with single quotes are escaped for `delete_file()`** (see above)
   — without it, a path like `docs/what's-new.md` would break the generated
   filter and crash indexing mid-run.
-- **No test file exists for chunkers, embedder, reranker, or `LanceStore`.** The
-  only RAG-adjacent test in `tests/` is `test_retrieve_ranking.py`, which covers
-  `rag/pipelines/retrieve.py::_relevance` (the score-selection helper used after
-  `LanceStore.search()` returns), not any module in this doc directly.
+- **No test file exists for chunkers or `LanceStore`.** `tests/test_retrieve_ranking.py`
+  covers `rag/pipelines/retrieve.py::_relevance` (the score-selection helper used
+  after `LanceStore.search()` returns); `tests/test_rag_model_backends.py` covers
+  the embedder/reranker registry dispatch, the interface contract, the
+  `(backend, path)` cache key, `reload_embedder()`/`reload_reranker()`, the
+  pooling-mismatch guard, and the construction-time self-check in
+  `LlamaEmbedder` (via a stub `Llama`, not a real GGUF);
+  `tests/test_indexer_dim_validation.py` covers `_validate_embedder_dim()`'s
+  read-only/real-branch/mismatch-propagates behavior; `tests/test_indexer_nan_vectors.py`
+  covers the per-chunk NaN/Inf skip in `_index_one()`. Chunkers and `LanceStore`
+  itself remain uncovered.
 
 ---
 

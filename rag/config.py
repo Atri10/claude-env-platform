@@ -34,14 +34,17 @@ from pathlib import Path
 # model fails loud rather than silently pointing at some assumed file.
 _BUILTIN = {
     "embedding": {
+        "backend": "llama_cpp",    # registry key — see rag/embeddings/registry.py
         "model_path": "",          # REQUIRED — set in config/rag.yaml at setup
         "n_ctx": 2048,
         "n_gpu_layers": -1,
         "embedding_dim": 768,
         "document_prefix": "",     # optional task prefix; set in config/rag.yaml
         "query_prefix": "",        # optional task prefix; set in config/rag.yaml
+        "pooling_type": "mean",    # mean|cls|last|none; must match the GGUF's expected pooling
     },
     "reranker": {
+        "backend": "onnx_cross_encoder",  # registry key — see rag/rerankers/registry.py
         "model_dir": "",           # optional — empty disables reranking
     },
 }
@@ -108,13 +111,16 @@ class EmbeddingConfig:
     n_ctx: int
     n_gpu_layers: int
     embedding_dim: int
+    backend: str = "llama_cpp"  # registry key — see rag/embeddings/registry.py
     document_prefix: str = ""   # prepended to documents before embedding
     query_prefix: str = ""      # prepended to queries before embedding
+    pooling_type: str = "mean"  # mean|cls|last|none; must match the GGUF's expected pooling
 
 
 @dataclass
 class RerankerConfig:
-    model_dir: str   # "" disables reranking
+    model_dir: str                            # "" disables reranking
+    backend: str = "onnx_cross_encoder"       # registry key — see rag/rerankers/registry.py
 
 
 @dataclass
@@ -129,6 +135,7 @@ class RagConfig:
         rer = merged["reranker"]
 
         # --- env overrides (highest priority) ---
+        embedding_backend = os.environ.get("EMBED_BACKEND", emb.get("backend", "llama_cpp"))
         model_path = _expand(os.environ.get("EMBED_MODEL_PATH", emb["model_path"]))
         # The label written to rag_index_state. Explicit EMBED_MODEL_NAME wins;
         # otherwise derive from the resolved path so it tracks the model. Empty
@@ -140,15 +147,18 @@ class RagConfig:
         embedding_dim = int(os.environ.get("EMBED_DIM", emb["embedding_dim"]))
         document_prefix = os.environ.get("EMBED_DOC_PREFIX", emb.get("document_prefix", ""))
         query_prefix = os.environ.get("EMBED_QUERY_PREFIX", emb.get("query_prefix", ""))
+        pooling_type = os.environ.get("EMBED_POOLING_TYPE", emb.get("pooling_type", "mean"))
 
         # RERANKER_DIR explicitly set to "" disables reranking.
         rer_dir = os.environ.get("RERANKER_DIR")
         if rer_dir is None:
             rer_dir = rer.get("model_dir", "")
         rer_dir = _expand(rer_dir) if rer_dir else ""
+        reranker_backend = os.environ.get("RERANKER_BACKEND", rer.get("backend", "onnx_cross_encoder"))
 
         return cls(
             embedding=EmbeddingConfig(
+                backend=embedding_backend,
                 model_path=model_path,
                 model_name=model_name,
                 n_ctx=n_ctx,
@@ -156,8 +166,9 @@ class RagConfig:
                 embedding_dim=embedding_dim,
                 document_prefix=document_prefix,
                 query_prefix=query_prefix,
+                pooling_type=pooling_type,
             ),
-            reranker=RerankerConfig(model_dir=rer_dir),
+            reranker=RerankerConfig(model_dir=rer_dir, backend=reranker_backend),
         )
 
 
@@ -172,19 +183,38 @@ def get_config(reload: bool = False) -> RagConfig:
     return _CONFIG
 
 
+def _audit_model_load(kind: str, info: dict) -> None:
+    """Record which backend/model got loaded — audit trail for RAG model identity.
+
+    Best-effort: a logging failure must never block RAG from working, so any
+    exception here is swallowed (there is no repo/session context available at
+    this layer to attribute the failure to).
+    """
+    try:
+        from audit.audit_logger import AuditLogger
+        AuditLogger("rag-config", actor="rag_factory").agent_action(
+            "rag_config", f"{kind}_loaded",
+            target=info.get("model_name") or info.get("backend"),
+            summary=str(info))
+    except Exception:
+        pass
+
+
 _EMBEDDER = None          # cached instance (loading the GGUF model is expensive)
-_EMBEDDER_KEY = None       # model_path the cached instance was built for
+_EMBEDDER_KEY = None       # (backend, model_path) the cached instance was built for
 
 
 def get_embedder(cfg: RagConfig | None = None):
     """Factory: return the configured embedder. Decoupled from model identity.
 
-    The built instance is cached per model_path, so repeated callers (indexer,
-    retriever, memory writes) reuse one loaded model instead of reloading the
-    GGUF each call. Raises a clear error if no embedding model is configured.
+    Dispatches to the backend named by `embedding.backend` (rag/embeddings/registry.py),
+    so swapping backends is a config change, not a code change. The built instance is
+    cached per (backend, model_path), so repeated callers (indexer, retriever, memory
+    writes) reuse one loaded model instead of reloading it each call. Raises a clear
+    error if no embedding model is configured.
     """
     global _EMBEDDER, _EMBEDDER_KEY
-    from rag.embeddings.llama_embedder import LlamaEmbedder
+    from rag.embeddings.registry import get_backend_class
     cfg = cfg or get_config()
     if not cfg.embedding.model_path:
         raise RuntimeError(
@@ -192,14 +222,52 @@ def get_embedder(cfg: RagConfig | None = None):
             "config/rag.yaml (or the EMBED_MODEL_PATH env var) to point at a local "
             "model file. See README §4 'Install local models' for download "
             "instructions and suggested models.")
-    if _EMBEDDER is None or _EMBEDDER_KEY != cfg.embedding.model_path:
-        _EMBEDDER = LlamaEmbedder.from_config(cfg.embedding)
-        _EMBEDDER_KEY = cfg.embedding.model_path
+    key = (cfg.embedding.backend, cfg.embedding.model_path)
+    if _EMBEDDER is None or _EMBEDDER_KEY != key:
+        backend_cls = get_backend_class(cfg.embedding.backend)
+        _EMBEDDER = backend_cls.from_config(cfg.embedding)
+        _EMBEDDER_KEY = key
+        _audit_model_load("embedder", _EMBEDDER.info())
     return _EMBEDDER
 
 
+def reload_embedder() -> None:
+    """Force the next get_embedder() call to re-read config and rebuild the backend.
+
+    Lets a long-running process (MCP server) pick up a rag.yaml edit — new model,
+    new backend, new pooling type — without a process restart.
+    """
+    global _EMBEDDER, _EMBEDDER_KEY
+    _EMBEDDER = None
+    _EMBEDDER_KEY = None
+    get_config(reload=True)
+
+
+_RERANKER = None           # cached instance
+_RERANKER_KEY = None        # (backend, model_dir) the cached instance was built for
+
+
 def get_reranker(cfg: RagConfig | None = None):
-    """Factory: build the configured reranker. Returns an identity reranker if disabled."""
-    from rag.rerankers.cross_encoder import CrossEncoderReranker
+    """Factory: build the configured reranker. Returns an identity-fallback reranker if disabled.
+
+    Dispatches to the backend named by `reranker.backend` (rag/rerankers/registry.py).
+    Cached per (backend, model_dir) like get_embedder().
+    """
+    global _RERANKER, _RERANKER_KEY
+    from rag.rerankers.registry import get_backend_class
     cfg = cfg or get_config()
-    return CrossEncoderReranker.from_config(cfg.reranker)
+    key = (cfg.reranker.backend, cfg.reranker.model_dir)
+    if _RERANKER is None or _RERANKER_KEY != key:
+        backend_cls = get_backend_class(cfg.reranker.backend)
+        _RERANKER = backend_cls.from_config(cfg.reranker)
+        _RERANKER_KEY = key
+        _audit_model_load("reranker", _RERANKER.status())
+    return _RERANKER
+
+
+def reload_reranker() -> None:
+    """Force the next get_reranker() call to re-read config and rebuild the backend."""
+    global _RERANKER, _RERANKER_KEY
+    _RERANKER = None
+    _RERANKER_KEY = None
+    get_config(reload=True)

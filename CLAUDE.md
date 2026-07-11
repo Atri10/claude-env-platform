@@ -103,6 +103,11 @@ Skills (`.claude/skills/`):
 - **`solid-design`** — SOLID applied, with the smell + refactoring for each.
 - **`design-patterns`** — pattern selection (and when *not* to), to decouple real axes of change
   without over-engineering.
+- **`rag-model-setup`** — checklist for configuring/swapping the RAG embedding or reranker
+  model/backend: probing a GGUF's real output dimension and required `pooling_type` before
+  editing `rag.yaml`, checking for an existing-index dimension conflict, and validating
+  end-to-end before a full re-index. Load when adding a model, switching model family, or
+  debugging a dimension/type mismatch during indexing.
 
 Subagents (`.claude/agents/`):
 - **`code-reviewer`**, **`architecture-reviewer`**, **`governance-reviewer`** (the last checks the

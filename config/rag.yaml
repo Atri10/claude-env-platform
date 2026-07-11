@@ -11,6 +11,10 @@
 # No symlinks: point each path straight at the file/directory wherever it lives.
 
 embedding:
+  # Which embedder backend to use — a key in rag/embeddings/registry.py.
+  # Built in: "llama_cpp" (GGUF models via llama-cpp-python). Override with EMBED_BACKEND.
+  backend: "llama_cpp"
+
   # REQUIRED. Absolute (or ~-prefixed) path to a local GGUF embedding model file,
   # compatible with llama-cpp-python. There is no default — leaving this empty
   # makes the RAG stack raise a clear "configure config/rag.yaml" error.
@@ -30,6 +34,34 @@ embedding:
   document_prefix: ""
   query_prefix: ""
 
+  # Pooling applied to raw model output to get ONE vector per input, instead of
+  # one per token:
+  #   mean  — average all token vectors. Right for most embedding-tuned models
+  #           (nomic-embed-text, bge-*, gte-*, most sentence-transformers ports,
+  #           Qwen3 embedding variants). Start here if unsure.
+  #   cls   — use the [CLS]/first-token vector only. BERT-family encoders
+  #           originally trained with a classification head sometimes expect this.
+  #   last  — use the last token's vector. Decoder-style/causal models adapted
+  #           for embeddings (some Qwen/Mistral-based embedders) can expect this.
+  #   none  — apply no pooling in llama.cpp; only correct if the GGUF itself
+  #           already bakes in pooling at conversion time. This is what silently
+  #           breaks most often: a GGUF converted WITHOUT baked-in pooling, run
+  #           with pooling_type: none, returns one vector PER TOKEN, and every
+  #           downstream embed call fails or (worse) silently mis-normalizes.
+  #
+  # Getting this wrong is caught in two places rather than deep in an indexing
+  # run: LlamaEmbedder does one real embed call at construction time and fails
+  # immediately if the output isn't a single pooled vector of the configured
+  # embedding_dim; _embed() also detects per-token (list-of-lists) output on
+  # every call and raises instead of silently normalizing the wrong shape.
+  #
+  # Don't guess from the model card — verify against the actual GGUF before
+  # setting this (a conversion can behave differently than the source model).
+  # See the `rag-model-setup` skill for the exact probe snippet: force each
+  # pooling_type in turn via llama_cpp directly and check which one returns a
+  # flat list[float] of the right length. Override with EMBED_POOLING_TYPE.
+  pooling_type: "mean"
+
   # Context window (tokens). Override with EMBED_CTX.
   n_ctx: 2048
   # -1 = offload all layers to Metal on Apple Silicon; 0 = CPU only.
@@ -40,6 +72,10 @@ embedding:
   embedding_dim: 768
 
 reranker:
+  # Which reranker backend to use — a key in rag/rerankers/registry.py.
+  # Built in: "onnx_cross_encoder". Override with RERANKER_BACKEND.
+  backend: "onnx_cross_encoder"
+
   # OPTIONAL. Directory containing an ONNX cross-encoder: model.onnx + the
   # tokenizer side-files. Leave empty ("") to disable reranking — the pipeline
   # then falls back to fusion order. Override with the RERANKER_DIR env var.

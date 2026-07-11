@@ -74,10 +74,11 @@ class Indexer:
         self.exclude_paths = rag.get("exclude_paths", [])
         self.only_committed = rag.get("index_only_committed", True)
 
-    def _lazy(self):
+    def _lazy(self, branch: str) -> None:
         if self.embedder is None:
             self.embedder = get_embedder()
             self.store = LanceStore(dim=self.embedder.dim)
+        self._validate_embedder_dim(branch)
 
     def _candidate_files(self) -> list[str]:
         if self.only_committed:
@@ -98,6 +99,44 @@ class Indexer:
             self.audit.policy_violation(rel, dec.rule or dec.reason, "block", self.tier)
             return False
         return True
+
+    def _validate_embedder_dim(self, branch: str) -> None:
+        """Raise if the configured embedder's dim conflicts with an EXISTING table's
+        schema for (self.repo, branch). Read-only: unlike LanceStore.open(), this never
+        creates a table -- checking the wrong (e.g. hardcoded) branch name would silently
+        create a bogus empty table and make the check a no-op, which is what the original
+        version of this method did.
+        """
+        try:
+            existing_tables = self.store.db.table_names()
+        except Exception as e:
+            # Infra problem listing tables -- not a dimension mismatch. Log and continue;
+            # a real mismatch will still surface (less clearly) at upsert time.
+            self.audit.security_event("indexing", "medium",
+                                      f"Could not check existing RAG index tables: {e}")
+            return
+
+        name = table_name(self.repo, branch)
+        if name not in existing_tables:
+            return   # nothing indexed yet for this repo+branch -- no conflict possible
+
+        try:
+            tbl = self.store.db.open_table(name)
+            expected_dim = next(
+                (f.type.list_size for f in tbl.schema if f.name == "vector"), None)
+        except Exception as e:
+            self.audit.security_event("indexing", "medium",
+                                      f"Could not read schema for {name}: {e}")
+            return
+
+        if expected_dim is not None and expected_dim != self.embedder.dim:
+            raise ValueError(
+                f"Embedder dimension mismatch for {self.repo}@{branch}: the configured "
+                f"model ({self.embedder.model_name}) produces {self.embedder.dim}-dim "
+                f"vectors, but the existing LanceDB table '{name}' was built with "
+                f"{expected_dim}-dim vectors. Vectors from different models/dimensions "
+                f"are not comparable -- back up or delete the old table and run a full "
+                f"re-index to switch models. See the rag-model-setup skill.")
 
     def scan(self) -> dict:
         """Dry-run: report what WOULD be indexed vs blocked. No model load."""
@@ -138,9 +177,36 @@ class Indexer:
         chunks = chunk_file(rel, text, self.repo, branch, commit)
         if not chunks:
             return 0
-        vectors = self.embedder.embed_documents([c.text for c in chunks])
+        texts_to_embed = [c.text for c in chunks]
+        try:
+            vectors = self.embedder.embed_documents(texts_to_embed)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to embed {len(texts_to_embed)} chunks for {rel}: {e}. "
+                f"Check that the embedding model configured in rag.yaml is valid and loaded.") from e
+        if not vectors or not isinstance(vectors, list):
+            return 0
+        if not isinstance(vectors[0], list):
+            raise TypeError(
+                f"embedder.embed_documents() returned {type(vectors[0])}, "
+                f"expected list[list[float]]. Check your embedder model configuration.")
+        if len(vectors[0]) != self.embedder.dim:
+            raise ValueError(
+                f"Vector dimension mismatch: embedder produced {len(vectors[0])}-dim vectors "
+                f"but is configured for {self.embedder.dim}. "
+                f"This usually means the embedding model path in rag.yaml points to an incompatible model.")
         rows = []
+        skipped_nonfinite = 0
         for c, v in zip(chunks, vectors):
+            # A model can occasionally emit NaN/Inf for a given input (seen with
+            # unusual token sequences, e.g. templating syntax in .gotmpl files).
+            # LanceDB's Arrow layer rejects NaN with an opaque error that names no
+            # file/chunk -- catch it here instead, where we can identify and skip
+            # just the bad chunk without losing the rest of the file's chunks or
+            # aborting the whole indexing run.
+            if any(x != x or x in (float("inf"), float("-inf")) for x in v):
+                skipped_nonfinite += 1
+                continue
             m = c.as_metadata()
             rows.append({
                 "chunk_id": m["chunk_id"], "vector": v, "text": m["text"],
@@ -150,6 +216,13 @@ class Indexer:
                 "start_line": m["start_line"], "end_line": m["end_line"],
                 "content_hash": m["content_hash"], "tier": self.tier,
             })
+        if skipped_nonfinite:
+            self.audit.security_event(
+                "indexing", "medium",
+                f"{skipped_nonfinite} chunk(s) in {rel} produced a non-finite "
+                f"(NaN/Inf) embedding vector and were skipped", source=rel)
+        if not rows:
+            return 0
         self.store.delete_file(self.repo, branch, rel)  # replace prior chunks
         self.store.upsert(self.repo, branch, rows)
         self.db.execute(
@@ -164,9 +237,9 @@ class Indexer:
     def full_index(self) -> dict:
         if not self.rag_enabled:
             return {"skipped": True, "reason": "rag disabled for this tier/repo"}
-        self._lazy()
         branch = _git(self.root, "rev-parse", "--abbrev-ref", "HEAD") or "main"
         commit = _git(self.root, "rev-parse", "HEAD") or "0"
+        self._lazy(branch)
         t0 = time.perf_counter()
         total_chunks = total_files = skipped = 0
         candidates = [r for r in self._candidate_files() if self._allowed(r)]
@@ -192,9 +265,9 @@ class Indexer:
     def incremental(self, changed: list[str]) -> dict:
         if not self.rag_enabled:
             return {"skipped": True}
-        self._lazy()
         branch = _git(self.root, "rev-parse", "--abbrev-ref", "HEAD") or "main"
         commit = _git(self.root, "rev-parse", "HEAD") or "0"
+        self._lazy(branch)
         files = chunks = 0
         total = len(changed)
         sys.stderr.write(f"Incremental index: {total} changed files ...\n")

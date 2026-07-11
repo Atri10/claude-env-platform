@@ -171,9 +171,18 @@ repo's copy — so it looks like this:
 embedding:
   model_path: "~/.claude-env/models/nomic-embed-text-v1.5.Q8_0.gguf"
   embedding_dim: 768                     # MUST match your model (nomic = 768)
+  pooling_type: "mean"                   # mean|cls|last|none — must match how the GGUF pools
   document_prefix: "search_document: "   # nomic needs task prefixes; leave empty if yours doesn't
   query_prefix:    "search_query: "
 ```
+
+> [!TIP]
+> **`pooling_type` matters more than it looks.** If a GGUF doesn't bake in
+> pooling, leaving this wrong (or `"none"` when the model needs pooling) makes
+> the embedder return one vector *per token* instead of one per input — this
+> surfaces as a confusing dimension/type error during indexing, not a clean
+> pooling error. Before trusting a model card's claim, probe it directly (see
+> the `rag-model-setup` skill, or [§12 troubleshooting](#12-troubleshooting)).
 
 **3. Verify:**
 
@@ -231,12 +240,21 @@ Resolution order: **environment variable > `config/rag.yaml` > numeric fallback.
 
 | Variable | Meaning | Default |
 |---|---|---|
+| `EMBED_BACKEND` | Which embedder backend to use (registry key, `rag/embeddings/registry.py`) | `llama_cpp` |
 | `EMBED_MODEL_PATH` | Path to the `.gguf` file | **required** — unset raises a clear error |
 | `EMBED_MODEL_NAME` | Provenance label recorded in `rag_index_state` | filename |
 | `EMBED_DOC_PREFIX` / `EMBED_QUERY_PREFIX` | Per-task input prefixes | `""` |
+| `EMBED_POOLING_TYPE` | Pooling applied to raw model output: `mean`\|`cls`\|`last`\|`none` | `mean` |
 | `EMBED_CTX` / `EMBED_GPU_LAYERS` / `EMBED_DIM` | Context window / GPU offload / vector dim | `2048` / `-1` / `768` |
+| `RERANKER_BACKEND` | Which reranker backend to use (registry key, `rag/rerankers/registry.py`) | `onnx_cross_encoder` |
 | `RERANKER_DIR` | ONNX cross-encoder directory (`""` disables) | `""` |
 | `LANCEDB_PATH` | Vector store location | `~/.claude-env/knowledge/lancedb` |
+
+Both `backend` fields select an implementation registered in
+`rag/embeddings/registry.py` / `rag/rerankers/registry.py` — the platform ships
+one built-in backend per slot (`llama_cpp`, `onnx_cross_encoder`); adding another
+is a code change behind those registries, not a config value that already exists
+today. See `docs/guide/rag-pipeline.md#swapping-backends-not-just-models`.
 
 Check either model is live: `claude-env validate installation` (the "embedding model
 file present" and "reranker loads + runs" lines) or in Python:
