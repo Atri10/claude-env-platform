@@ -78,6 +78,7 @@ class Indexer:
         if self.embedder is None:
             self.embedder = get_embedder()
             self.store = LanceStore(dim=self.embedder.dim)
+            self._validate_embedder_dim()
 
     def _candidate_files(self) -> list[str]:
         if self.only_committed:
@@ -98,6 +99,31 @@ class Indexer:
             self.audit.policy_violation(rel, dec.rule or dec.reason, "block", self.tier)
             return False
         return True
+
+    def _validate_embedder_dim(self) -> None:
+        """Verify embedder dimension matches existing LanceDB schema. Raises if mismatch."""
+        try:
+            # Try to load an existing table and check its vector dimension.
+            existing = self.store.open(self.repo, "master")
+            schema = existing.schema
+            # Find the vector column in the schema
+            for field in schema:
+                if field.name == "vector":
+                    # Vector field list_size tells us the expected dimension
+                    expected_dim = field.type.list_size
+                    if expected_dim != self.embedder.dim:
+                        raise ValueError(
+                            f"Embedder dimension mismatch: current model produces {self.embedder.dim}-dim vectors, "
+                            f"but LanceDB table expects {expected_dim}-dim. "
+                            f"To use a different embedding model, re-run full indexing or delete the index and re-create it.")
+                    break
+        except FileNotFoundError:
+            # No existing table yet; dimension validation will happen on first upsert.
+            pass
+        except Exception as e:
+            # Log the error but don't fail hard; dimension mismatch will surface during upsert.
+            self.audit.security_event("indexing", "medium",
+                                      f"Could not validate embedder dimension: {e}")
 
     def scan(self) -> dict:
         """Dry-run: report what WOULD be indexed vs blocked. No model load."""
@@ -138,7 +164,24 @@ class Indexer:
         chunks = chunk_file(rel, text, self.repo, branch, commit)
         if not chunks:
             return 0
-        vectors = self.embedder.embed_documents([c.text for c in chunks])
+        texts_to_embed = [c.text for c in chunks]
+        try:
+            vectors = self.embedder.embed_documents(texts_to_embed)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to embed {len(texts_to_embed)} chunks for {rel}: {e}. "
+                f"Check that the embedding model configured in rag.yaml is valid and loaded.") from e
+        if not vectors or not isinstance(vectors, list):
+            return 0
+        if not isinstance(vectors[0], list):
+            raise TypeError(
+                f"embedder.embed_documents() returned {type(vectors[0])}, "
+                f"expected list[list[float]]. Check your embedder model configuration.")
+        if len(vectors[0]) != self.embedder.dim:
+            raise ValueError(
+                f"Vector dimension mismatch: embedder produced {len(vectors[0])}-dim vectors "
+                f"but is configured for {self.embedder.dim}. "
+                f"This usually means the embedding model path in rag.yaml points to an incompatible model.")
         rows = []
         for c, v in zip(chunks, vectors):
             m = c.as_metadata()

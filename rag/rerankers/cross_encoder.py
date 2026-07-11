@@ -28,8 +28,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rag.rerankers.base import RerankerBackend
 
-class CrossEncoderReranker:
+
+class CrossEncoderReranker(RerankerBackend):
+    backend_name = "onnx_cross_encoder"
+
     def __init__(self, model_dir: str = ""):
         self.model_dir = model_dir
         self.model_name = Path(model_dir).name if model_dir else ""

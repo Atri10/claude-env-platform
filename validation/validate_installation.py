@@ -141,8 +141,8 @@ def main() -> int:
                   "(set reranker.model_dir in config/rag.yaml to enable)")
             _warnings += 1
         else:
-            from rag.rerankers.cross_encoder import CrossEncoderReranker
-            rr = CrossEncoderReranker.from_config(cfg.reranker)
+            from rag.rerankers.registry import get_backend_class
+            rr = get_backend_class(cfg.reranker.backend).from_config(cfg.reranker)
             check(f"reranker loads + runs ({rr.model_name})", rr.ok, soft=True)
             if not rr.ok:
                 print(f"     reranker inactive: {rr.status()['error']}")

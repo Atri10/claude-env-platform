@@ -11,6 +11,10 @@
 # No symlinks: point each path straight at the file/directory wherever it lives.
 
 embedding:
+  # Which embedder backend to use — a key in rag/embeddings/registry.py.
+  # Built in: "llama_cpp" (GGUF models via llama-cpp-python). Override with EMBED_BACKEND.
+  backend: "llama_cpp"
+
   # REQUIRED. Absolute (or ~-prefixed) path to a local GGUF embedding model file,
   # compatible with llama-cpp-python. There is no default — leaving this empty
   # makes the RAG stack raise a clear "configure config/rag.yaml" error.
@@ -30,6 +34,12 @@ embedding:
   document_prefix: ""
   query_prefix: ""
 
+  # Pooling applied to raw model output to get one vector per input: mean|cls|last|none.
+  # Most embedding-tuned GGUFs want "mean". Leaving this wrong (or "none" when the
+  # model needs pooling) produces one vector PER TOKEN instead of one per input, which
+  # surfaces as a dimension/type mismatch during indexing. Override with EMBED_POOLING_TYPE.
+  pooling_type: "mean"
+
   # Context window (tokens). Override with EMBED_CTX.
   n_ctx: 2048
   # -1 = offload all layers to Metal on Apple Silicon; 0 = CPU only.
@@ -40,6 +50,10 @@ embedding:
   embedding_dim: 768
 
 reranker:
+  # Which reranker backend to use — a key in rag/rerankers/registry.py.
+  # Built in: "onnx_cross_encoder". Override with RERANKER_BACKEND.
+  backend: "onnx_cross_encoder"
+
   # OPTIONAL. Directory containing an ONNX cross-encoder: model.onnx + the
   # tokenizer side-files. Leave empty ("") to disable reranking — the pipeline
   # then falls back to fusion order. Override with the RERANKER_DIR env var.

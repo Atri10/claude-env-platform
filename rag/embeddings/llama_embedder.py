@@ -23,17 +23,37 @@ import os
 import struct
 from pathlib import Path
 
+from rag.embeddings.base import EmbedderBackend
+
 try:
     from llama_cpp import Llama
+    from llama_cpp.llama_cpp import (
+        LLAMA_POOLING_TYPE_CLS, LLAMA_POOLING_TYPE_LAST,
+        LLAMA_POOLING_TYPE_MEAN, LLAMA_POOLING_TYPE_NONE,
+    )
 except ImportError:  # pragma: no cover - allow import without binary installed
     Llama = None
 
+# Maps the human-readable `embedding.pooling_type` string in rag.yaml to the
+# llama.cpp enum. "none" means the model's own GGUF-declared default is used
+# (some GGUFs bake in pooling; others don't, which is what causes unpooled
+# per-token output when nothing is specified).
+_POOLING_TYPES = {
+    "mean": LLAMA_POOLING_TYPE_MEAN if Llama else None,
+    "cls": LLAMA_POOLING_TYPE_CLS if Llama else None,
+    "last": LLAMA_POOLING_TYPE_LAST if Llama else None,
+    "none": LLAMA_POOLING_TYPE_NONE if Llama else None,
+} if Llama else {}
 
-class LlamaEmbedder:
+
+class LlamaEmbedder(EmbedderBackend):
+    backend_name = "llama_cpp"
+
     def __init__(self, model_path: str, model_name: str, embedding_dim: int,
                  n_ctx: int = 2048, n_gpu_layers: int = -1,
                  n_threads: int | None = None,
-                 document_prefix: str = "", query_prefix: str = ""):
+                 document_prefix: str = "", query_prefix: str = "",
+                 pooling_type: str = "mean"):
         self.dim = embedding_dim
         self._model_path = model_path
         self.model_name = model_name or Path(model_path).stem
@@ -44,9 +64,14 @@ class LlamaEmbedder:
             raise RuntimeError(
                 "llama-cpp-python not installed. "
                 "Install: CMAKE_ARGS='-DLLAMA_METAL=on' pip install llama-cpp-python")
+        if pooling_type not in _POOLING_TYPES:
+            raise ValueError(
+                f"Unknown embedding.pooling_type '{pooling_type}'. "
+                f"Valid values: {sorted(_POOLING_TYPES)}.")
         self.llm = Llama(
             model_path=self._model_path,
             embedding=True,
+            pooling_type=_POOLING_TYPES[pooling_type],
             n_ctx=n_ctx,
             n_threads=n_threads or os.cpu_count() or 8,
             n_gpu_layers=n_gpu_layers,
@@ -64,6 +89,7 @@ class LlamaEmbedder:
             n_gpu_layers=cfg.n_gpu_layers,
             document_prefix=cfg.document_prefix,
             query_prefix=cfg.query_prefix,
+            pooling_type=getattr(cfg, "pooling_type", "mean"),
         )
 
     def _doc(self, t: str) -> str:
@@ -75,6 +101,11 @@ class LlamaEmbedder:
     def _embed(self, text: str) -> list[float]:
         out = self.llm.create_embedding(text)
         vec = out["data"][0]["embedding"]
+        if vec and isinstance(vec[0], list):
+            raise TypeError(
+                f"Embedding model returned {len(vec)} per-token vectors instead of one "
+                f"pooled vector. Set embedding.pooling_type in rag.yaml (e.g. 'mean') "
+                f"to match your model.")
         # L2 normalize for cosine == dot
         norm = sum(x * x for x in vec) ** 0.5 or 1.0
         return [x / norm for x in vec]
