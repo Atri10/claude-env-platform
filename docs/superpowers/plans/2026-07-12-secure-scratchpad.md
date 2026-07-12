@@ -2,26 +2,51 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let agents run unattended (no human-approval) shell commands in a
-per-repo scratch directory, while mechanically preventing the commands from
-reading denied paths (`.env`, `secrets/**`, `.ssh/**`, etc.), leaking secret
-material in their output, or reaching the network beyond what the repo's tier
-already allows.
+> **OUTCOME UPDATE (post-implementation):** Task 3 (`terminal.run_scratch`,
+> unattended command execution) was implemented, security-reviewed twice, and
+> ultimately **reverted**. The path-confinement approach used to sandbox it
+> (deny file arguments outside `REPO_ROOT`/`SCRATCH_ROOT`) could not contain a
+> general interpreter (`python3 -c`/`perl -e`/`ruby -e`/`node -e`/`awk`)
+> computing its own file path or performing network I/O at runtime — this
+> defeats both the path-deny and network-egress checks simultaneously with no
+> human in the loop, which would have broken the platform's "no network
+> egress by default" invariant. Closing that gap needs OS-level sandboxing
+> (`sandbox-exec`/namespaces/seccomp) or restricting the tool to a
+> non-interpreter executable allow-list — both larger changes than this
+> plan's scope. The user decided to descope: `terminal.run`'s existing
+> human-approval gate remains the only path for arbitrary command execution.
+> **What actually shipped from this plan: Tasks 1-2 only** —
+> `security/command_inspector.py` (shared parsing logic, used today by the
+> existing native-tool hook) and the `scratch://` read/write/list filesystem
+> scheme (no execution surface, so none of the interpreter-bypass concerns
+> apply to it). The steps below are left as originally written for the
+> historical record of what was attempted and why it didn't ship, except
+> where later steps (Task 5/6) have been updated in-place to describe the
+> final, actually-shipped state.
 
-**Architecture:** Extract the Bash-command-parsing/policy logic that
-`hooks/policy_hook.py` already has for Claude Code's native Bash tool into a
-new shared module `security/command_inspector.py`. Add a `scratch://` path
-scheme to the `filesystem-policy` MCP server, resolving to
-`$CLAUDE_ENV_HOME/scratch/<repo_name>/`. Add a new `terminal.run_scratch` MCP
-tool that reuses the existing no-shell command-chaining engine
-(`_tokenize`/`_split_pipelines`/`_run_pipeline` in `mcp-servers/terminal/server.py`)
-but skips the human-approval gate, wrapping it in a pre-execution path/egress
-check (Layer 1, via `command_inspector`) and a post-execution secret-redaction
-pass over stdout/stderr (Layer 2, via the existing
-`PolicyEngine.scan_content()` — the same method `filesystem.read`/`write`
-already use, so scratch output is redacted with the exact same pattern set
-and audit convention, not a second divergent one).
-Add a TTL-based reaper in `bootstrap.py` as a cleanup backstop.
+**Goal (as originally scoped):** Let agents run unattended (no human-approval)
+shell commands in a per-repo scratch directory, while mechanically preventing
+the commands from reading denied paths (`.env`, `secrets/**`, `.ssh/**`,
+etc.), leaking secret material in their output, or reaching the network
+beyond what the repo's tier already allows. **See the outcome update above —
+this goal was not achieved safely and the execution tool was reverted.**
+
+**Architecture (as originally scoped, Task 3 later reverted):** Extract the
+Bash-command-parsing/policy logic that `hooks/policy_hook.py` already has for
+Claude Code's native Bash tool into a new shared module
+`security/command_inspector.py` (shipped). Add a `scratch://` path scheme to
+the `filesystem-policy` MCP server, resolving to
+`$CLAUDE_ENV_HOME/scratch/<repo_name>/` (shipped). Add a new
+`terminal.run_scratch` MCP tool that reuses the existing no-shell
+command-chaining engine (`_tokenize`/`_split_pipelines`/`_run_pipeline` in
+`mcp-servers/terminal/server.py`) but skips the human-approval gate, wrapping
+it in a pre-execution path/egress check (Layer 1, via `command_inspector`)
+and a post-execution secret-redaction pass over stdout/stderr (Layer 2, via
+`PolicyEngine.scan_content()`) — **implemented, security-reviewed, found
+unsafe against interpreter-based bypass, and reverted; not shipped.**
+Add a TTL-based reaper in `bootstrap.py` as a cleanup backstop (shipped —
+useful regardless of Task 3's outcome, since the scratch:// filesystem scheme
+still creates directories that need cleanup).
 
 **Tech Stack:** Python 3.13, pytest, the existing `security.policy_engine.PolicyEngine`
 (specifically `scan_content()`), `audit.audit_logger.AuditLogger`, the `mcp`
@@ -45,8 +70,10 @@ SDK's low-level `Server`/`stdio_server` (no network, stdio transport only).
   `tests/test_policy_hook_scope_egress.py`) must continue passing byte-for-byte
   unmodified after the extraction in Task 1 — this proves the native-tool hook's
   behavior did not regress.
-- `terminal.run`'s existing approval-gated behavior is untouched by this plan;
-  `terminal.run_scratch` is purely additive (a new tool, new code path).
+- `terminal.run`'s existing approval-gated behavior is untouched by this plan
+  (`terminal.run_scratch` was planned as purely additive, but was reverted —
+  see the OUTCOME UPDATE above; `terminal.run` remains the only execution
+  path, exactly as before this plan).
 - Per the approved design (`docs/superpowers/specs/2026-07-12-secure-scratchpad-design.md`),
   scratch is scoped **per-repo** (keyed off `CLAUDE_ENV_REPO_NAME`), not
   per-session — `CLAUDE_ENV_SESSION` is not wired to a shared value across MCP
@@ -1676,12 +1703,20 @@ the end of the file, current line 90):
 
 ```yaml
 
-# scratch pad (mcp-servers/filesystem-policy's scratch:// scheme +
-# terminal.run_scratch): a per-repo disposable working directory for
-# unattended agent commands. Enforcement lives in code (security/
-# command_inspector.py's path-deny + egress checks, security/detectors.py's
-# output secret-redaction) -- this section only toggles the feature and sets
-# the TTL-reaper backstop threshold (bootstrap.py::reap_stale_scratch_dirs).
+# scratch pad (mcp-servers/filesystem-policy's scratch:// scheme): a per-repo
+# disposable working directory for filesystem.read/write/list, wiped clean at
+# server start. This section only toggles the feature and sets the
+# TTL-reaper backstop threshold (bootstrap.py::reap_stale_scratch_dirs).
+#
+# NOTE: an unattended command-execution tool (terminal.run_scratch) was
+# planned and implemented but was REVERTED after security review: the
+# path-confinement approach used to sandbox it could not contain a general
+# interpreter (python3 -c/perl -e/ruby -e/node -e/awk) computing its own file
+# path or performing network I/O at runtime, defeating both the path-deny and
+# network-egress checks simultaneously with no human in the loop. Closing
+# that gap needs OS-level sandboxing or a non-interpreter executable
+# allow-list -- both out of scope here. terminal.run's existing
+# human-approval gate remains the only path for arbitrary command execution.
 scratch:
   enabled: true
   ttl_hours: 24
@@ -1689,11 +1724,8 @@ scratch:
 
 Note: `enabled` is documentation/intent only in this v1 — no code currently
 reads `scratch.enabled` to gate the feature (the design's decision 3/4 puts
-enforcement in code, not config toggles). If a future task wires this up,
-it would read `global-policy.yaml`'s `scratch.enabled` in
-`mcp-servers/terminal/server.py` before registering the `terminal.run_scratch`
-tool in `list_tools()`. Not built here — flagged so it's not mistaken for
-already-functional.
+enforcement in code, not config toggles). This section only affects the
+scratch:// filesystem scheme now that terminal.run_scratch is reverted.
 
 - [ ] **Step 2: Update `README.md`'s Approvals section**
 
@@ -1701,19 +1733,13 @@ In the existing "### Approvals" section (current lines 575-586), the bullet
 list already distinguishes `terminal.run` (approval-gated) from hard-deny
 tools. Add a third bullet after the `terminal.run` one (current lines 579-583):
 
-```markdown
-- **`terminal.run_scratch` runs unattended in a disposable per-repo scratch
-  directory** (`$CLAUDE_ENV_HOME/scratch/<repo>/`) — no approval, no blocking
-  wait. Safety comes from two mechanical layers instead of a human checkpoint:
-  every file-looking argument in the command is checked against this repo's
-  policy engine before anything executes (a command touching `.env`,
-  `secrets/**`, `.ssh/**`, etc. anywhere — including via `../` out of scratch
-  — is refused), and stdout/stderr are secret-scanned and redacted afterward.
-  Network egress is denied outright at tier≥2. Destructive commands (`rm`,
-  `dd`) are allowed here (unlike the native-tool hook) since disposable
-  cleanup is the point of a scratch pad, but their path arguments are still
-  checked.
-```
+Do NOT add a bullet for `terminal.run_scratch` — it was reverted (see the
+plan's Task 3 outcome and the ledger). `terminal.run`'s existing
+approval-gated behavior is the only execution path documented here; no
+change to this bullet list is needed for this plan. (The scratch:// path
+scheme itself, used only by `filesystem.read/write/list`, doesn't need an
+Approvals-section mention since it's not an execution surface — it has no
+approval gate to describe.)
 
 - [ ] **Step 3: Check whether `CLAUDE.md`'s repo map needs updating**
 
@@ -1765,7 +1791,8 @@ reconcile manually rather than overwriting.
 ```bash
 pytest tests/ -q
 ```
-Expected: `257 passed` (unchanged from Task 4 — this task touches no code).
+Expected: pass count unchanged from whatever Task 4 left the suite at — this
+task touches no test-bearing code (only config + docs).
 
 - [ ] **Step 6: Commit**
 
@@ -1773,14 +1800,17 @@ Expected: `257 passed` (unchanged from Task 4 — this task touches no code).
 git branch --show-current   # confirm: feat/secure-scratchpad
 git add config/global-policy.yaml README.md
 git commit -m "$(cat <<'EOF'
-Document terminal.run_scratch and the scratch pad's global-policy section
+Document the scratch:// filesystem scheme's global-policy section
 
 Adds config/global-policy.yaml's scratch: section (enabled flag + TTL
-default, matching bootstrap.py's reap_stale_scratch_dirs default) and
-documents terminal.run_scratch alongside terminal.run in README.md's
-Approvals section so operators understand why it's safe to run
-unattended: mechanical path-deny + egress checking before execution,
-secret redaction after.
+default, matching bootstrap.py's reap_stale_scratch_dirs default), with
+a note explaining that the originally-planned terminal.run_scratch
+(unattended command execution) was reverted after security review found
+its path-confinement approach couldn't contain a general interpreter
+(python3 -c/perl -e/etc.) computing its own file path or network calls at
+runtime. terminal.run's existing human-approval gate remains the only
+path for arbitrary command execution; only the read/write/list scratch
+scheme (Tasks 1-2) ships from this plan.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 EOF
@@ -1795,12 +1825,24 @@ EOF
 
 **Interfaces:** None.
 
+Note: `terminal.run_scratch` (originally planned as this plan's Task 3) was
+implemented, security-reviewed, and REVERTED — its path-confinement approach
+could not contain a general interpreter (`python3 -c`/`perl -e`/etc.)
+computing its own file path or network calls at runtime, defeating both the
+path-deny and network-egress checks with no human in the loop. This task
+verifies what actually ships: `security/command_inspector.py` (Task 1, used
+today only by the existing native-tool hook) and the `scratch://` filesystem
+scheme (Task 2, read/write/list only — no execution surface). `terminal.run`
+is completely unchanged by this plan.
+
 - [ ] **Step 1: Full test suite one final time**
 
 ```bash
 pytest tests/ -q
 ```
-Expected: `257 passed`, 0 failures.
+Expected: 0 failures. Confirm the exact count matches what Task 5 left the
+suite at (Tasks 1-2 added tests; Task 3's tests were removed on revert;
+Tasks 4-5 add their own).
 
 - [ ] **Step 2: Verify the audit chain is still intact**
 
@@ -1809,7 +1851,7 @@ Expected: `257 passed`, 0 failures.
 ```
 Expected: `(True, None)`.
 
-- [ ] **Step 3: Real end-to-end smoke test — the exact scenario from the design's worked examples**
+- [ ] **Step 3: Real end-to-end smoke test — scratch:// filesystem behavior**
 
 ```bash
 mkdir -p /tmp/scratch-e2e-test/.claude
@@ -1828,25 +1870,26 @@ async def main():
     from mcp.client.stdio import stdio_client
     params = StdioServerParameters(
         command=str(os.path.expanduser("~/.claude-env/venv/bin/python")),
-        args=["mcp-servers/terminal/server.py"], env=env, cwd=os.getcwd())
+        args=["mcp-servers/filesystem-policy/server.py"], env=env, cwd=os.getcwd())
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            # 1. blocked: reading a denied path
-            r1 = await session.call_tool("terminal.run_scratch", {"command": "cat ../.env"})
-            print("1 (expect BLOCKED):", r1.content[0].text[:120])
-            # 2. allowed: ordinary scratch work, unattended, no approval.
-            #    Uses 'tee' (not '>' redirection -- the no-shell engine
-            #    rejects redirection operators outright, see _PUNCTUATION_CHARS
-            #    in mcp-servers/terminal/server.py) to write a file.
-            r2 = await session.call_tool("terminal.run_scratch",
-                {"command": "echo building && echo done | tee result.txt"})
-            print("2 (expect exit=0/building/done):", r2.content[0].text)
-            # 3. secret-shaped output redacted. AKIA... matches unquoted --
-            #    unlike generic_api_key, which requires the value itself quoted.
-            r3 = await session.call_tool("terminal.run_scratch",
-                {"command": "echo AKIAABCDEFGHIJ12345K"})
-            print("3 (expect REDACTED, no raw secret):", r3.content[0].text)
+            # 1. write + read a scratch-local file -- allow-all inside scratch
+            w1 = await session.call_tool("filesystem.write",
+                {"path": "scratch://notes.txt", "content": "hello scratch"})
+            print("1 (expect WROTE):", w1.content[0].text)
+            r1 = await session.call_tool("filesystem.read", {"path": "scratch://notes.txt"})
+            print("2 (expect hello scratch):", r1.content[0].text)
+            # 2. list a non-empty scratch subdirectory (the bug the Task 2 fix
+            #    pass closed -- must not error)
+            await session.call_tool("filesystem.write",
+                {"path": "scratch://sub/f.txt", "content": "x"})
+            l1 = await session.call_tool("filesystem.list", {"path": "scratch://sub"})
+            print("3 (expect scratch://sub/f.txt):", l1.content[0].text)
+            # 3. ordinary repo path unaffected: reading the repo's real .env
+            #    still goes through the normal deny check (unchanged behavior)
+            r2 = await session.call_tool("filesystem.read", {"path": ".env"})
+            print("4 (expect BLOCKED):", r2.content[0].text[:80])
 asyncio.run(main())
 PYEOF
 cd -
@@ -1854,24 +1897,25 @@ rm -rf /tmp/scratch-e2e-test
 ```
 
 Expected:
-1. `1 (expect BLOCKED): BLOCKED: blocked by claude-env policy (...) — command touches a protected path`
-2. `2 (expect exit=0/building/done): exit=0\nbuilding\ndone\n`
-3. `3 (expect REDACTED, no raw secret): exit=0\n[REDACTED:aws_access_key]\n` (no raw `AKIAABCDEFGHIJ12345K` in the output)
+1. `1 (expect WROTE): WROTE scratch://notes.txt (13 bytes)`
+2. `2 (expect hello scratch): hello scratch`
+3. `3 (expect scratch://sub/f.txt): scratch://sub/f.txt`
+4. `4 (expect BLOCKED): BLOCKED: policy blocked '.env': ...`
 
-- [ ] **Step 4: Confirm `terminal.run`'s existing approval-gated behavior is unchanged**
+- [ ] **Step 4: Confirm `terminal.run` and the existing native-tool hook are completely unchanged**
 
 ```bash
-pytest tests/test_terminal_command_chaining.py -v 2>&1 | tail -5
+pytest tests/test_terminal_command_chaining.py tests/test_policy_hook_bash.py tests/test_policy_hook_scope_egress.py -v 2>&1 | tail -10
 ```
-Expected: all pass — confirms Task 3's `_run(template, kind, base_cwd=None)`
-signature change didn't alter `terminal.run`'s default behavior.
+Expected: all pass — confirms this plan's net effect on `mcp-servers/terminal/server.py` and `hooks/policy_hook.py` is zero (Task 3's `_run()` signature change was fully reverted; Task 1's extraction into `security/command_inspector.py` is the only change to the native-tool hook, and it's behavior-preserving).
 
 - [ ] **Step 5: Final branch check (no commit needed — this task is verification-only)**
 
 ```bash
 git branch --show-current   # confirm: feat/secure-scratchpad
-git log --oneline -6
+git log --oneline -10
 ```
-Expected: 5 new commits on top of the pre-existing history (Task 1 through
-Task 5's commits), branch still `feat/secure-scratchpad`, nothing pushed
-(push/PR only when the user explicitly asks).
+Expected: branch still `feat/secure-scratchpad`, history shows Tasks 1-2's
+commits, Task 3's implementation + fix commits followed by a revert commit,
+and Tasks 4-5's commits — nothing pushed (push/PR only when the user
+explicitly asks).
