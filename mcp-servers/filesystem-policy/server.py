@@ -237,11 +237,19 @@ def _do_list(path: str) -> list[TextContent]:
     rel, abs_path = _resolve(path or ".")
     if not abs_path.is_dir():
         raise PolicyBlocked(f"not a directory: {rel}")
+    is_scratch = rel.startswith(SCRATCH_PREFIX)
     entries = []
     for child in sorted(abs_path.iterdir()):
-        crel = str(child.relative_to(REPO_ROOT)).replace("\\", "/")
-        if _engine.evaluate_path(crel).action == "block":
-            continue                                   # hide blocked paths entirely
+        if is_scratch:
+            # scratch is allow-all by construction (mirrors _enforce_path);
+            # keep the scratch:// prefix intact and skip policy evaluation,
+            # which would otherwise be run against a nonsensical repo-relative
+            # path since child isn't under REPO_ROOT at all.
+            crel = f"{SCRATCH_PREFIX}{child.relative_to(SCRATCH_ROOT)}".replace("\\", "/")
+        else:
+            crel = str(child.relative_to(REPO_ROOT)).replace("\\", "/")
+            if _engine.evaluate_path(crel).action == "block":
+                continue                               # hide blocked paths entirely
         entries.append(crel + ("/" if child.is_dir() else ""))
     _audit.tool_call(tool="filesystem.list", args={"path": rel},
                      result_kind="ok")
