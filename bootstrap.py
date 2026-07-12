@@ -42,6 +42,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 import venv as _venv
 from pathlib import Path
 
@@ -294,6 +295,27 @@ def _deploy_config(src: Path, dst: Path, label: str, needed_by: str | None = Non
     ok(f"{label} -> {dst}")
 
 
+def reap_stale_scratch_dirs(home: Path, ttl_hours: float | None = None) -> list[str]:
+    """Delete any $CLAUDE_ENV_HOME/scratch/<repo> directory whose mtime is
+    older than ttl_hours (default 24, override with
+    CLAUDE_ENV_SCRATCH_TTL_HOURS). Backstop for scratch cleanup that
+    filesystem-policy's atexit/signal handlers can't reach (SIGKILL, OOM kill,
+    host crash) -- normal wipe-on-start already handles the common case.
+    Returns the names of directories removed."""
+    if ttl_hours is None:
+        ttl_hours = float(os.environ.get("CLAUDE_ENV_SCRATCH_TTL_HOURS", "24"))
+    scratch_root = home / "scratch"
+    if not scratch_root.is_dir():
+        return []
+    cutoff = time.time() - ttl_hours * 3600
+    removed = []
+    for child in scratch_root.iterdir():
+        if child.is_dir() and child.stat().st_mtime < cutoff:
+            shutil.rmtree(child, ignore_errors=True)
+            removed.append(child.name)
+    return removed
+
+
 def init_policies(force_config: bool = False) -> None:
     _deploy_config(REPO_DIR / "config" / "global-policy.yaml",
                     HOME / "config" / "global-policy.yaml",
@@ -331,6 +353,10 @@ def init_policies(force_config: bool = False) -> None:
                 shutil.rmtree(d)
             shutil.copytree(s, d,
                             ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
+
+    removed = reap_stale_scratch_dirs(HOME)
+    if removed:
+        ok(f"reaped {len(removed)} stale scratch dir(s): {', '.join(removed)}")
 
     # install the CLI into $CLAUDE_ENV_HOME/bin/claude-env
     src_cli = REPO_DIR / "bin" / "claude-env"
