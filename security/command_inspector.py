@@ -5,9 +5,15 @@ File: security/command_inspector.py
 Extracted from hooks/policy_hook.py so the SAME parsing + deny-check logic
 protects both Claude Code's native Bash tool (via policy_hook.py, which still
 owns the native-tool-specific control-plane guard, destructive-command hard
-deny, and inline-secret-in-command-string check) and any other command runner
-that needs to mechanically enforce policy on an unattended/unapproved command
-string (see mcp-servers/terminal/server.py's terminal.run_scratch).
+deny, and inline-secret-in-command-string check) and, potentially, any other
+command runner that needs to mechanically enforce policy on an
+unattended/unapproved command string. There is currently no such second
+caller: an unattended-execution tool (mcp-servers/terminal/server.py's
+planned terminal.run_scratch) was implemented against this module and then
+REVERTED after security review (see inspect_command's docstring for why).
+The scratch-pad-oriented parameters below (`exempt_root`, `CommandVerdict`)
+are retained, test-covered, for reuse if that tool is reattempted with
+additional OS-level sandboxing.
 
 Parsing is deliberately conservative: a slashless bare token is only treated
 as a candidate file path when it is an argument to a known file command AND
@@ -195,13 +201,25 @@ def inspect_command(command: str, cwd: str, engine, root: Path | None = None,
     paths are resolved relative to for policy evaluation.
 
     `exempt_root`, when given, skips the policy-deny check (step 1 below) for
-    any candidate path that resolves inside it -- e.g. a scratch pad passes
-    its own scratch directory here so an agent-created file like
+    any candidate path that resolves inside it -- e.g. a scratch pad would
+    pass its own scratch directory here so an agent-created file like
     'notes.env' inside scratch isn't blocked purely by extension, while a
     path OUTSIDE exempt_root (a relative '../' escape, or an absolute path to
     the real repo) is still checked normally. The exfiltration/egress checks
     (steps 2-3) are NOT exempted -- a network command combined with ANY file
     argument, even one inside exempt_root, is still flagged.
+
+    `exempt_root` (and the unattended, no-ask "allow" path it implies) was
+    built for terminal.run_scratch, an unattended command-execution tool that
+    was implemented and then REVERTED after security review: its
+    path-confinement approach could not contain a general interpreter
+    (python3 -c/perl -e/ruby -e/node -e/awk) computing its own file path or
+    performing network I/O at runtime, defeating the path-deny and
+    network-egress checks simultaneously with no human in the loop. That tool
+    does not exist in this codebase today; `exempt_root` has no current
+    caller and is kept here, test-covered, in case a future attempt (paired
+    with OS-level sandboxing -- a container/VM/chroot, or a syscall
+    allow-list) reuses it.
     """
     root = root if root is not None else Path(cwd or ".")
     paths, nets = bash_candidates(command, cwd)
@@ -248,9 +266,10 @@ def inspect_command(command: str, cwd: str, engine, root: Path | None = None,
             f"({', '.join(sorted(nets))}) with a file argument")
 
     # 3. plain network egress -> deny on tier>=2 (network disabled), else allow
-    #    (the scratch caller decides what "ask" means for an unattended path;
-    #    inspect_command only distinguishes deny vs allow, not ask — see
-    #    terminal.run_scratch in Task 3 for how tier<=1 egress is surfaced).
+    #    (a caller layering "ask" semantics on top of allow/deny would decide
+    #    what "ask" means for an unattended path -- inspect_command itself
+    #    only distinguishes deny vs allow, never ask. No such caller exists
+    #    in this codebase currently; see inspect_command's docstring for why).
     if nets:
         tier = getattr(engine.repo, "tier", 1)
         egress = ", ".join(sorted(nets))
