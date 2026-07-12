@@ -120,53 +120,77 @@ def _enforce_path(rel: str) -> None:
 async def list_tools() -> list[Tool]:
     return [
         Tool(name="filesystem.read",
-             description="Read a single repo-relative file's text through the policy "
-                         "chokepoint. The path is resolved inside the repo root "
-                         "(traversal / absolute escapes are rejected), evaluated by the "
-                         "policy engine, and the content is secret-scanned: matched "
-                         "secrets are redacted in-line, and if a hard-block secret is "
-                         "found the whole read is refused. Fails closed on policy-blocked "
-                         "paths (returns 'BLOCKED: ...') and on files over the max read "
-                         "size (~2 MB). Every call is audited. Use this instead of the "
-                         "native file reader for repo files so policy + redaction apply.",
+             description="Read a single file's text through the policy chokepoint. The path "
+                         "is resolved inside the repo root (traversal / absolute escapes are "
+                         "rejected), evaluated by the policy engine, and the content is "
+                         "secret-scanned: matched secrets are redacted in-line, and if a "
+                         "hard-block secret is found the whole read is refused. Fails closed "
+                         "on policy-blocked paths (returns 'BLOCKED: ...') and on files over "
+                         "the max read size (~2 MB). Every call is audited. Use this instead "
+                         "of the native file reader for repo files so policy + redaction "
+                         "apply.\n\n"
+                         "For disposable/intermediate work (downloaded artifacts, scratch "
+                         "notes, throwaway output) that shouldn't live in the repo tree, use a "
+                         "path prefixed 'scratch://' instead of a repo-relative path — e.g. "
+                         "'scratch://notes.txt'. This resolves to a per-repo directory "
+                         "($CLAUDE_ENV_HOME/scratch/<repo>/) that's allow-all for its own "
+                         "contents (no repo policy allow-list to match), still secret-scanned "
+                         "on every read, and wiped clean at the start of each new session. "
+                         "'terminal.run' can also start an approved command inside this same "
+                         "directory via its 'in_scratch' argument, so you can stage a file "
+                         "here and then run something against it.",
              inputSchema={"type": "object",
                           "properties": {"path": {"type": "string",
                                           "description": "Repo-relative path, e.g. "
                                           "'src/app.py' or 'docs/readme.md'. Absolute paths "
                                           "and '..' segments that escape the repo root are "
-                                          "rejected."}},
+                                          "rejected. Prefix with 'scratch://' (e.g. "
+                                          "'scratch://notes.txt') to read from the disposable "
+                                          "per-repo scratch directory instead of the repo."}},
                           "required": ["path"]}),
         Tool(name="filesystem.write",
-             description="Write text to a repo-relative file through the policy chokepoint "
-                         "(creating parent directories as needed, overwriting if it "
-                         "exists). The destination is policy-evaluated and the payload is "
-                         "secret-scanned before writing: detected secrets are scrubbed, and "
-                         "a hard-block secret refuses the write entirely. Policy-blocked "
-                         "destinations fail closed. The write is audited (tool_call + "
-                         "agent_action). Higher-risk writes may additionally be gated by an "
-                         "upstream human-approval step.",
+             description="Write text to a file through the policy chokepoint (creating parent "
+                         "directories as needed, overwriting if it exists). The destination is "
+                         "policy-evaluated and the payload is secret-scanned before writing: "
+                         "detected secrets are scrubbed, and a hard-block secret refuses the "
+                         "write entirely. Policy-blocked destinations fail closed. The write is "
+                         "audited (tool_call + agent_action). Higher-risk writes may "
+                         "additionally be gated by an upstream human-approval step.\n\n"
+                         "For disposable/intermediate work, prefix the path with 'scratch://' "
+                         "(e.g. 'scratch://notes.txt') to write into a per-repo scratch "
+                         "directory instead of the repo tree — allow-all for its own contents "
+                         "(no repo allow-list to match), still secret-scanned before writing, "
+                         "wiped clean at the start of each new session. Nothing written to "
+                         "scratch:// persists past the current session.",
              inputSchema={"type": "object",
                           "properties": {"path": {"type": "string",
                                           "description": "Repo-relative destination path, "
                                           "e.g. 'src/new_module.py'. Escapes above the repo "
-                                          "root are rejected."},
+                                          "root are rejected. Prefix with 'scratch://' (e.g. "
+                                          "'scratch://notes.txt') to write into the disposable "
+                                          "per-repo scratch directory instead of the repo."},
                                          "content": {"type": "string",
                                           "description": "Full UTF-8 text to write; replaces "
                                           "any existing file contents. Secrets are scrubbed "
                                           "before it hits disk."}},
                           "required": ["path", "content"]}),
         Tool(name="filesystem.list",
-             description="List the immediate entries of a repo-relative directory (one level, "
+             description="List the immediate entries of a directory (one level, "
                          "non-recursive), with a trailing '/' on subdirectories. "
                          "Policy-blocked children are hidden entirely, so this doubles as a "
                          "way to see what an agent is actually permitted to reach. Returns "
                          "'BLOCKED: not a directory' if the path is a file. The call is "
-                         "audited.",
+                         "audited.\n\n"
+                         "Pass 'scratch://' (or 'scratch://<subdir>') to list the per-repo "
+                         "disposable scratch directory instead of the repo — every entry is "
+                         "shown (allow-all, no policy filtering applied to scratch listings).",
              inputSchema={"type": "object",
                           "properties": {"path": {"type": "string",
                                           "description": "Repo-relative directory path, e.g. "
                                           "'.' for the repo root or 'src/'. Escapes above the "
-                                          "repo root are rejected."}},
+                                          "repo root are rejected. Use 'scratch://' (or "
+                                          "'scratch://<subdir>') to list the disposable "
+                                          "per-repo scratch directory instead."}},
                           "required": ["path"]}),
     ]
 
