@@ -51,6 +51,14 @@ GLOBAL_POLICY = os.environ.get(
 SESSION_ID = os.environ.get("CLAUDE_ENV_SESSION", "mcp-fs")
 MAX_READ_BYTES = int(os.environ.get("CLAUDE_ENV_MAX_READ_BYTES", str(2_000_000)))
 
+# scratch:// scheme -- a per-repo disposable working directory (NOT
+# per-session: CLAUDE_ENV_SESSION isn't wired to a shared value across MCP
+# server processes today, so the repo name is the reliable, already-shared
+# key every server resolves identically). Wiped at process start; see
+# _reset_scratch_dir().
+SCRATCH_PREFIX = "scratch://"
+SCRATCH_ROOT = (_HOME / "scratch" / REPO_ROOT.name).resolve()
+
 _engine = PolicyEngine.load(REPO_ROOT, GLOBAL_POLICY)
 _audit = AuditLogger(session_id=SESSION_ID, actor="filesystem-policy",
                      repo=REPO_ROOT.name, tier=_engine.repo.tier)
@@ -64,7 +72,11 @@ class PolicyBlocked(Exception):
 
 
 def _resolve(rel_path: str) -> tuple[str, Path]:
-    """Resolve a repo-relative path, rejecting escapes. Returns (rel, abs)."""
+    """Resolve a repo-relative OR scratch:// path, rejecting escapes.
+    Returns (rel, abs); 'rel' for a scratch path keeps the 'scratch://' prefix
+    so callers (audit logging, _enforce_path) can tell the two apart."""
+    if rel_path.startswith(SCRATCH_PREFIX):
+        return _resolve_scratch(rel_path)
     candidate = (REPO_ROOT / rel_path).resolve()
     try:
         rel = candidate.relative_to(REPO_ROOT)
@@ -73,7 +85,29 @@ def _resolve(rel_path: str) -> tuple[str, Path]:
     return str(rel).replace("\\", "/"), candidate
 
 
+def _resolve_scratch(rel_path: str) -> tuple[str, Path]:
+    subpath = rel_path[len(SCRATCH_PREFIX):]
+    candidate = (SCRATCH_ROOT / subpath).resolve()
+    try:
+        rel = candidate.relative_to(SCRATCH_ROOT)
+    except ValueError:
+        raise PolicyBlocked(f"scratch path escapes scratch root: {rel_path}")
+    return f"{SCRATCH_PREFIX}{rel}".replace("\\", "/"), candidate
+
+
+def _reset_scratch_dir() -> None:
+    """Wipe and recreate the scratch directory. Called once at process start
+    (see bottom of this file) so each new Claude Code session for this repo
+    gets a clean scratch area; also directly callable from tests."""
+    import shutil
+    if SCRATCH_ROOT.exists():
+        shutil.rmtree(SCRATCH_ROOT, ignore_errors=True)
+    SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+
+
 def _enforce_path(rel: str) -> None:
+    if rel.startswith(SCRATCH_PREFIX):
+        return   # scratch is allow-all by construction (resolver blocks escapes)
     d = _engine.evaluate_path(rel)
     if d.action == "block":
         _audit.policy_violation(path=rel, rule=d.rule or d.reason,
@@ -86,53 +120,77 @@ def _enforce_path(rel: str) -> None:
 async def list_tools() -> list[Tool]:
     return [
         Tool(name="filesystem.read",
-             description="Read a single repo-relative file's text through the policy "
-                         "chokepoint. The path is resolved inside the repo root "
-                         "(traversal / absolute escapes are rejected), evaluated by the "
-                         "policy engine, and the content is secret-scanned: matched "
-                         "secrets are redacted in-line, and if a hard-block secret is "
-                         "found the whole read is refused. Fails closed on policy-blocked "
-                         "paths (returns 'BLOCKED: ...') and on files over the max read "
-                         "size (~2 MB). Every call is audited. Use this instead of the "
-                         "native file reader for repo files so policy + redaction apply.",
+             description="Read a single file's text through the policy chokepoint. The path "
+                         "is resolved inside the repo root (traversal / absolute escapes are "
+                         "rejected), evaluated by the policy engine, and the content is "
+                         "secret-scanned: matched secrets are redacted in-line, and if a "
+                         "hard-block secret is found the whole read is refused. Fails closed "
+                         "on policy-blocked paths (returns 'BLOCKED: ...') and on files over "
+                         "the max read size (~2 MB). Every call is audited. Use this instead "
+                         "of the native file reader for repo files so policy + redaction "
+                         "apply.\n\n"
+                         "For disposable/intermediate work (downloaded artifacts, scratch "
+                         "notes, throwaway output) that shouldn't live in the repo tree, use a "
+                         "path prefixed 'scratch://' instead of a repo-relative path — e.g. "
+                         "'scratch://notes.txt'. This resolves to a per-repo directory "
+                         "($CLAUDE_ENV_HOME/scratch/<repo>/) that's allow-all for its own "
+                         "contents (no repo policy allow-list to match), still secret-scanned "
+                         "on every read, and wiped clean at the start of each new session. "
+                         "'terminal.run' can also start an approved command inside this same "
+                         "directory via its 'in_scratch' argument, so you can stage a file "
+                         "here and then run something against it.",
              inputSchema={"type": "object",
                           "properties": {"path": {"type": "string",
                                           "description": "Repo-relative path, e.g. "
                                           "'src/app.py' or 'docs/readme.md'. Absolute paths "
                                           "and '..' segments that escape the repo root are "
-                                          "rejected."}},
+                                          "rejected. Prefix with 'scratch://' (e.g. "
+                                          "'scratch://notes.txt') to read from the disposable "
+                                          "per-repo scratch directory instead of the repo."}},
                           "required": ["path"]}),
         Tool(name="filesystem.write",
-             description="Write text to a repo-relative file through the policy chokepoint "
-                         "(creating parent directories as needed, overwriting if it "
-                         "exists). The destination is policy-evaluated and the payload is "
-                         "secret-scanned before writing: detected secrets are scrubbed, and "
-                         "a hard-block secret refuses the write entirely. Policy-blocked "
-                         "destinations fail closed. The write is audited (tool_call + "
-                         "agent_action). Higher-risk writes may additionally be gated by an "
-                         "upstream human-approval step.",
+             description="Write text to a file through the policy chokepoint (creating parent "
+                         "directories as needed, overwriting if it exists). The destination is "
+                         "policy-evaluated and the payload is secret-scanned before writing: "
+                         "detected secrets are scrubbed, and a hard-block secret refuses the "
+                         "write entirely. Policy-blocked destinations fail closed. The write is "
+                         "audited (tool_call + agent_action). Higher-risk writes may "
+                         "additionally be gated by an upstream human-approval step.\n\n"
+                         "For disposable/intermediate work, prefix the path with 'scratch://' "
+                         "(e.g. 'scratch://notes.txt') to write into a per-repo scratch "
+                         "directory instead of the repo tree — allow-all for its own contents "
+                         "(no repo allow-list to match), still secret-scanned before writing, "
+                         "wiped clean at the start of each new session. Nothing written to "
+                         "scratch:// persists past the current session.",
              inputSchema={"type": "object",
                           "properties": {"path": {"type": "string",
                                           "description": "Repo-relative destination path, "
                                           "e.g. 'src/new_module.py'. Escapes above the repo "
-                                          "root are rejected."},
+                                          "root are rejected. Prefix with 'scratch://' (e.g. "
+                                          "'scratch://notes.txt') to write into the disposable "
+                                          "per-repo scratch directory instead of the repo."},
                                          "content": {"type": "string",
                                           "description": "Full UTF-8 text to write; replaces "
                                           "any existing file contents. Secrets are scrubbed "
                                           "before it hits disk."}},
                           "required": ["path", "content"]}),
         Tool(name="filesystem.list",
-             description="List the immediate entries of a repo-relative directory (one level, "
+             description="List the immediate entries of a directory (one level, "
                          "non-recursive), with a trailing '/' on subdirectories. "
                          "Policy-blocked children are hidden entirely, so this doubles as a "
                          "way to see what an agent is actually permitted to reach. Returns "
                          "'BLOCKED: not a directory' if the path is a file. The call is "
-                         "audited.",
+                         "audited.\n\n"
+                         "Pass 'scratch://' (or 'scratch://<subdir>') to list the per-repo "
+                         "disposable scratch directory instead of the repo — every entry is "
+                         "shown (allow-all, no policy filtering applied to scratch listings).",
              inputSchema={"type": "object",
                           "properties": {"path": {"type": "string",
                                           "description": "Repo-relative directory path, e.g. "
                                           "'.' for the repo root or 'src/'. Escapes above the "
-                                          "repo root are rejected."}},
+                                          "repo root are rejected. Use 'scratch://' (or "
+                                          "'scratch://<subdir>') to list the disposable "
+                                          "per-repo scratch directory instead."}},
                           "required": ["path"]}),
     ]
 
@@ -203,15 +261,39 @@ def _do_list(path: str) -> list[TextContent]:
     rel, abs_path = _resolve(path or ".")
     if not abs_path.is_dir():
         raise PolicyBlocked(f"not a directory: {rel}")
+    is_scratch = rel.startswith(SCRATCH_PREFIX)
     entries = []
     for child in sorted(abs_path.iterdir()):
-        crel = str(child.relative_to(REPO_ROOT)).replace("\\", "/")
-        if _engine.evaluate_path(crel).action == "block":
-            continue                                   # hide blocked paths entirely
+        if is_scratch:
+            # scratch is allow-all by construction (mirrors _enforce_path);
+            # keep the scratch:// prefix intact and skip policy evaluation,
+            # which would otherwise be run against a nonsensical repo-relative
+            # path since child isn't under REPO_ROOT at all.
+            crel = f"{SCRATCH_PREFIX}{child.relative_to(SCRATCH_ROOT)}".replace("\\", "/")
+        else:
+            crel = str(child.relative_to(REPO_ROOT)).replace("\\", "/")
+            if _engine.evaluate_path(crel).action == "block":
+                continue                               # hide blocked paths entirely
         entries.append(crel + ("/" if child.is_dir() else ""))
     _audit.tool_call(tool="filesystem.list", args={"path": rel},
                      result_kind="ok")
     return [TextContent(type="text", text="\n".join(entries))]
+
+
+def _register_scratch_cleanup() -> None:
+    import atexit
+    import signal
+    import shutil
+
+    def _cleanup(*_args) -> None:
+        shutil.rmtree(SCRATCH_ROOT, ignore_errors=True)
+
+    atexit.register(_cleanup)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda s, f: (_cleanup(), os._exit(1)))
+        except (ValueError, OSError):
+            pass   # not the main thread / unsupported platform -- best-effort
 
 
 async def _run() -> None:
@@ -221,4 +303,6 @@ async def _run() -> None:
 
 if __name__ == "__main__":
     import asyncio
+    _reset_scratch_dir()
+    _register_scratch_cleanup()
     asyncio.run(_run())

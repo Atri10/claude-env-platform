@@ -87,3 +87,24 @@ tiers:
     memory_isolated: true
     default_deny: true            # only explicit allow-listed paths are readable
     extra_deny_ext: [".sql", ".csv", ".parquet", ".db", ".dump", ".yaml", ".yml", ".json"]
+
+# scratch pad (mcp-servers/filesystem-policy's scratch:// scheme): a per-repo
+# disposable working directory for filesystem.read/write/list, wiped clean at
+# server start. The scheme is ALWAYS active -- there is no config toggle here
+# (or anywhere) that disables it, so this file intentionally has no
+# `scratch.enabled` key. The TTL-reaper backstop
+# (bootstrap.py::reap_stale_scratch_dirs) is controlled solely by the
+# CLAUDE_ENV_SCRATCH_TTL_HOURS environment variable (default 24h if unset)
+# -- NOT by a `scratch.ttl_hours` key here, since no code reads one. Do not
+# add `enabled`/`ttl_hours` keys under a `scratch:` section expecting them
+# to have any effect.
+#
+# NOTE: an unattended command-execution tool (terminal.run_scratch) was
+# planned and implemented but was REVERTED after security review: the
+# path-confinement approach used to sandbox it could not contain a general
+# interpreter (python3 -c/perl -e/ruby -e/node -e/awk) computing its own file
+# path or performing network I/O at runtime, defeating both the path-deny and
+# network-egress checks simultaneously with no human in the loop. Closing
+# that gap needs OS-level sandboxing or a non-interpreter executable
+# allow-list -- both out of scope here. terminal.run's existing
+# human-approval gate remains the only path for arbitrary command execution.

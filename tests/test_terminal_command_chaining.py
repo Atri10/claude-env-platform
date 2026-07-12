@@ -173,7 +173,7 @@ def test_cd_changes_cwd_for_rest_of_chain(server):
 
 def test_cd_escaping_repo_root_is_rejected(server):
     out = server._run("cd ../../../.. && pwd", "run_tests")
-    assert "escapes the repo root" in out
+    assert "escapes the allowed root" in out
 
 
 def test_cd_nonexistent_dir_is_rejected(server):

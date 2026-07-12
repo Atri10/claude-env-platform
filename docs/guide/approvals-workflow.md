@@ -33,14 +33,23 @@ through (`AuditLogger`, hash-chained `human_approvals` rows) is covered in
 
 `mcp-servers/terminal/server.py` opens a `pending` row in `human_approvals` directly
 (via `AuditLogger.human_approval_request()`, hash-chained like everything else) for
-any state-mutating command routed through `terminal.run`, and ensures the
-`approvals_ui.py` server is running — a stdlib-only localhost web page showing every
-pending request as a numbered queue with one-click Approve/Deny. The browser tab is
-opened once, when the server first starts, not per request (so tabs don't pile up),
-and there is no desktop notification. Approve/Deny calls
-`ApprovalGate(session_id=...).resolve()`, which writes the resolution via the same
-`AuditLogger`. `terminal.run_tests`/`run_benchmarks`/`run_audit` never go through this
-flow at all — they run immediately if configured, or refuse if not.
+any state-mutating command routed through `terminal.run`, plays a short notification
+sound (`_notify_pending_approval()`; see below — a system beep, not a browser/OS
+toast), and ensures the `approvals_ui.py` server is running — a stdlib-only localhost
+web page showing every pending request as a numbered queue with one-click
+Approve/Deny. The browser tab is opened once, when the server first starts, not per
+request (so tabs don't pile up); there is still no desktop *toast* notification, only
+the audio cue. Approve/Deny calls `ApprovalGate(session_id=...).resolve()`, which
+writes the resolution via the same `AuditLogger`. `terminal.run_tests`/
+`run_benchmarks`/`run_audit` never go through this flow at all — they run
+immediately if configured, or refuse if not.
+
+By default the approved command's cwd is the repo root; `terminal.run`'s optional
+`in_scratch: true` argument starts it in `SCRATCH_ROOT`
+(`$CLAUDE_ENV_HOME/scratch/<repo>/`) instead — the same disposable per-repo directory
+`filesystem.read/write/list` reach via `scratch://` paths. See
+[`mcp-servers.md`](mcp-servers.md) for the scratch scheme itself; this doc only
+covers how `terminal.run` reaches it.
 
 ---
 
