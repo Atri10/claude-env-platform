@@ -90,6 +90,18 @@ except Exception:  # pragma: no cover - defensive: broken/absent CLAUDE_ENV_HOME
     _log = logging.getLogger("claude-env.hooks")
     _log.addHandler(logging.NullHandler())
 
+from security.command_inspector import (  # noqa: E402
+    CMD_SEP, FILE_CMDS, NET_CMDS, REDIR, WRITE_CMDS,
+    bash_candidates as _bash_candidates,
+    bash_write_targets as _bash_write_targets,
+    looks_like_path as _looks_like_path,
+    shell_tokens as _shell_tokens,
+)
+# _mutating_reason() references _CMD_SEP directly (not via a function call), so
+# it needs the same local-name preservation the `as`-aliased functions above
+# get; alias it too so the extraction is behavior-preserving.
+_CMD_SEP = CMD_SEP
+
 # Native tools that reach the network. The Bash inspector already gates `curl`/
 # `wget`/etc, but these NATIVE tools bypass Bash entirely — so a model whose
 # shell egress is denied can otherwise reach the network by switching to them
@@ -165,20 +177,6 @@ def _mcp_first_hint(rel_path: str) -> str | None:
     return None
 
 # --- Bash command inspection -------------------------------------------------
-# Commands whose non-flag arguments are filesystem paths worth policy-checking.
-_FILE_CMDS = {
-    "cat", "tac", "nl", "less", "more", "head", "tail", "sed", "awk", "cut",
-    "sort", "uniq", "grep", "egrep", "fgrep", "rg", "ag", "strings", "xxd",
-    "od", "hexdump", "base64", "gpg", "openssl", "cp", "mv", "tee", "dd", "ln",
-    "install", "rsync", "scp", "shred", "truncate", "split", "wc", "file",
-    "stat", "readlink", "realpath", "cmp", "diff", "md5", "md5sum", "sha1sum",
-    "sha256sum", "gzip", "gunzip", "zip", "unzip", "tar",
-}
-# Commands that move data off the machine — network egress.
-_NET_CMDS = {
-    "curl", "wget", "scp", "sftp", "rsync", "nc", "ncat", "netcat", "ssh",
-    "telnet", "ftp", "socat", "http", "https", "aws", "gcloud", "az",
-}
 # Destructive / state-mutating native shell commands. These are HARD-DENIED in the
 # hook regardless of path: an agent must not delete/overwrite/change perms/kill via
 # raw Bash. Route file edits through the Write/Edit tools and any real command
@@ -191,137 +189,6 @@ _MUTATING_CMDS = {
 }
 # git subcommands that delete/rewrite history or mutate the remote.
 _GIT_MUTATING = {"push", "reset", "rebase", "clean", "filter-branch", "gc", "prune"}
-# Shell tokens that separate one simple command from the next.
-# command separators AND grouping/subshell delimiters: each starts a fresh
-# simple-command segment so the inner command's leading token is identified
-# (e.g. `(rm -rf x)` / `{ rm x; }` must not hide `rm` behind the `(`/`{`).
-_CMD_SEP = {";", "|", "&", "&&", "||", "|&", "\n", "(", ")", "{", "}"}
-# Redirection operators; the following token is a path being written/read.
-_REDIR = {">", ">>", "<", ">|", "&>", "&>>", "2>", "2>>", "1>", "1>>"}
-
-
-def _looks_like_path(tok: str) -> bool:
-    """A token that is structurally a path (absolute, relative, home, dotfile)."""
-    return ("/" in tok) or tok.startswith(("~", "."))
-
-
-def _shell_tokens(command: str) -> list[str]:
-    """Tokenize a shell command, respecting quotes AND surfacing operators
-    (`;` `|` `&` `&&` `||` `<` `>` `>>`) as their own tokens.
-
-    `shlex.split()` does NOT split operators glued to a word, so `echo hi;rm x`
-    tokenizes as `['echo', 'hi;rm', 'x']` — the `rm` is never seen as a command
-    and the destructive/segment/redirect checks below are silently bypassed.
-    A shlex.shlex with punctuation_chars fixes that while still honoring quotes
-    (so `echo "a;b"` keeps `a;b` intact)."""
-    try:
-        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        lex.commenters = ""            # '#' is not a comment mid-command
-        return list(lex)
-    except ValueError:
-        return [t for t in re.split(r"\s+", command) if t]
-
-
-def _bash_candidates(command: str, cwd: str) -> tuple[list[str], set[str]]:
-    """Parse a Bash command into (candidate file paths, network-egress cmds).
-
-    Conservative on purpose: a slashless bare token is only a candidate path
-    when it is an argument to a file command AND exists on disk, so arbitrary
-    args (grep patterns, subcommands like `git log`) are not mistaken for files
-    under tier-3 default-deny.
-    """
-    tokens = _shell_tokens(command)
-
-    # break into simple-command segments so each segment's leading token is a cmd
-    segments: list[list[str]] = [[]]
-    for t in tokens:
-        if t in _CMD_SEP:
-            segments.append([])
-        else:
-            segments[-1].append(t)
-
-    paths: list[str] = []
-    nets: set[str] = set()
-    base = Path(cwd or ".")
-    for seg in segments:
-        if not seg:
-            continue
-        cmd = os.path.basename(seg[0])
-        if cmd in _NET_CMDS:
-            nets.add(cmd)
-        is_file_cmd = cmd in _FILE_CMDS
-        expect_target = False
-        for tok in seg[1:]:
-            if tok in _REDIR:
-                expect_target = True
-                continue
-            if expect_target:                      # `> file`
-                paths.append(tok)
-                expect_target = False
-                continue
-            m = re.match(r"^(?:\d*>>?|<)(.+)$", tok)  # `>file` / `2>file` glued
-            if m:
-                paths.append(m.group(1))
-                continue
-            if tok.startswith("-"):                # flag
-                continue
-            if re.match(r"^[a-z][a-z0-9+.\-]*://", tok):  # URL, not a local path
-                continue
-            if _looks_like_path(tok):
-                paths.append(tok)
-            elif is_file_cmd and (base / tok).exists():
-                paths.append(tok)
-    return paths, nets
-
-
-# commands whose non-flag arguments name files they WRITE (last arg is the dest
-# for cp/mv/install/ln; tee/dd write all their file args). Used by the
-# control-plane guard so reads (cat/grep/…) don't trip it.
-_WRITE_CMDS = {"cp", "mv", "tee", "dd", "install", "ln", "rsync"}
-
-
-def _bash_write_targets(command: str, cwd: str) -> list[str]:
-    """File paths a Bash command WRITES to: redirection destinations (`>`/`>>`,
-    glued or spaced) plus the target args of file-writing commands. Read-only
-    args (cat/grep/sed -n/…) are deliberately excluded."""
-    tokens = _shell_tokens(command)
-    segments: list[list[str]] = [[]]
-    for t in tokens:
-        (segments.append([]) if t in _CMD_SEP else segments[-1].append(t))
-
-    out: list[str] = []
-    for seg in segments:
-        if not seg:
-            continue
-        cmd = os.path.basename(seg[0])
-        expect_target = False
-        args_after: list[str] = []
-        for tok in seg[1:]:
-            if tok in _REDIR:                        # `> file`
-                expect_target = True
-                continue
-            if expect_target:
-                out.append(tok)
-                expect_target = False
-                continue
-            m = re.match(r"^(?:\d*>>?|>\|)(.+)$", tok)   # `>file` / `2>file` glued
-            if m:
-                out.append(m.group(1))
-                continue
-            if not tok.startswith("-"):
-                args_after.append(tok)
-        # dd uses of=<file>; handle explicitly
-        if cmd == "dd":
-            out += [a.split("=", 1)[1] for a in args_after if a.startswith("of=")]
-        elif cmd in _WRITE_CMDS:
-            # cp/mv/install/ln/rsync write their destination (last non-flag arg);
-            # tee writes ALL its file args.
-            if cmd == "tee":
-                out += args_after
-            elif args_after:
-                out.append(args_after[-1])
-    return out
 
 
 def _mutating_reason(command: str) -> str | None:
