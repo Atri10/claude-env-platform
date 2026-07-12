@@ -577,10 +577,14 @@ PY=~/.claude-env/venv/bin/python
 Governance has two enforcement layers:
 
 - **`terminal.run` opens a human approval and blocks on it.** A free-form/state-mutating
-  command opens a pending approval, auto-opens the approvals web UI, and waits (up to
+  command opens a pending approval, plays a notification sound (disable with
+  `CLAUDE_ENV_APPROVAL_SOUND=false`), auto-opens the approvals web UI, and waits (up to
   `CLAUDE_ENV_APPROVAL_WAIT_S`, default 120s) until you Approve/Deny. The decision
   records the OS `user@host` automatically. On approve, the command runs in the same
-  sandbox (argv-only, no shell/pipes, scrubbed env, repo-root cwd, timeout).
+  sandbox (argv-only, no shell/pipes, scrubbed env, timeout) — cwd defaults to the repo
+  root, or pass `in_scratch: true` to start it in this repo's disposable scratch
+  directory (`$CLAUDE_ENV_HOME/scratch/<repo>/`, the same directory
+  `filesystem.read/write/list` reach via `scratch://` paths) instead.
 - **Hard-deny (no gate)** — `git push`/`amend`/`rebase`/`reset --hard`, and the
   native-tool hooks ([§5](#extend-governance-to-native-tools-readwriteeditbash)) simply
   refuse rather than opening an approval.

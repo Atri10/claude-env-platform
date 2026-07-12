@@ -119,9 +119,9 @@ Three things worth being precise about:
 
 | Server | Tool | Args (from `inputSchema`) | One key behavior |
 |---|---|---|---|
-| **filesystem-policy** | `filesystem.read` | `path` (required) | Resolves path inside repo root, runs `PolicyEngine.evaluate_path`, then `scan_content` on the bytes; redacts or blocks. See [`policy-engine.md`](policy-engine.md). |
-| | `filesystem.write` | `path`, `content` (both required) | Re-evaluates the *destination* path AND scans the outgoing payload for secrets before writing — a write to an allowed path with secret content is still refused (`mcp-servers/filesystem-policy/server.py`). |
-| | `filesystem.list` | `path` (required) | Silently omits any child path whose `evaluate_path` is `block` — blocked entries don't even appear in the listing (`server.py`). |
+| **filesystem-policy** | `filesystem.read` | `path` (required) | Resolves path inside repo root, runs `PolicyEngine.evaluate_path`, then `scan_content` on the bytes; redacts or blocks. See [`policy-engine.md`](policy-engine.md). A `path` prefixed `scratch://` resolves instead under `$CLAUDE_ENV_HOME/scratch/<repo>/`, a disposable per-repo directory that's allow-all for its own contents (still secret-scanned) — see the scratch note below. |
+| | `filesystem.write` | `path`, `content` (both required) | Re-evaluates the *destination* path AND scans the outgoing payload for secrets before writing — a write to an allowed path with secret content is still refused (`mcp-servers/filesystem-policy/server.py`). Same `scratch://` scheme as `filesystem.read`. |
+| | `filesystem.list` | `path` (required) | Silently omits any child path whose `evaluate_path` is `block` — blocked entries don't even appear in the listing (`server.py`); for a `scratch://` path, entries are listed with the `scratch://` prefix preserved and the block-filter is skipped (scratch is allow-all by construction). |
 | **git** | `git.log` | `max_count` (int, optional), `path` (optional) | Read-only wrapper; `--oneline --decorate -n<max_count>`. |
 | | `git.diff` | `ref_a`, `ref_b`, `path` (all optional) | Plain `git diff` with optional refs/pathspec appended. |
 | | `git.blame` | `path` (required) | `git blame -- <path>`. |
@@ -136,7 +136,7 @@ Three things worth being precise about:
 | **terminal** | `terminal.run_tests` | *(none)* | Runs only if `.claude/commands.json` explicitly sets `run_tests`; otherwise returns a "NOT CONFIGURED" directive and runs nothing (`mcp-servers/terminal/server.py`). |
 | | `terminal.run_benchmarks` | *(none)* | Same configured-or-refuse pattern, key `run_benchmarks`. |
 | | `terminal.run_audit` | *(none)* | Same pattern, key `run_audit`. |
-| | `terminal.run` | `command` (required) | Opens a `human_approvals` request and **blocks the call** until a human decides or `CLAUDE_ENV_APPROVAL_WAIT_S` elapses; full flow in [`approvals-workflow.md`](approvals-workflow.md). There is no `terminal.exec_unrestricted` tool. |
+| | `terminal.run` | `command` (required), `in_scratch` (bool, optional, default `false`) | Opens a `human_approvals` request, plays a notification sound (`CLAUDE_ENV_APPROVAL_SOUND=false` to disable), and **blocks the call** until a human decides or `CLAUDE_ENV_APPROVAL_WAIT_S` elapses; full flow in [`approvals-workflow.md`](approvals-workflow.md). `in_scratch: true` starts the approved command in `SCRATCH_ROOT` instead of the repo root — the same directory `filesystem.read/write/list` reach via `scratch://`. There is no `terminal.exec_unrestricted` tool, and no unattended/unapproved path for scratch or anywhere else. |
 | **documentation** | `documentation.search` | `query` (required) | Always registered; greps `${CLAUDE_ENV_HOME}/knowledge/docs` (`.md`/`.txt`/`.rst`) by term frequency — pure local file scan, no index. |
 | | `documentation.fetch` *(conditional)* | `url` (required) | Only appended to `list_tools()`'s return value when `FETCH_ALLOWED` (`TIER in (0, 1)`, `mcp-servers/documentation/server.py,81-89`) — in tier 2/3 repos the tool doesn't exist in the schema at all, not merely "denied at call time." |
 
@@ -150,7 +150,13 @@ Three things worth being precise about:
   rel_path).resolve()` then `candidate.relative_to(REPO_ROOT)` in a `try/except
   ValueError`, so any `../` escape or absolute-path trick that would land outside
   `REPO_ROOT` raises `PolicyBlocked` before `evaluate_path` is even called
-  (`mcp-servers/filesystem-policy/server.py`).
+  (`mcp-servers/filesystem-policy/server.py`). A `scratch://` path uses the identical
+  containment pattern against `SCRATCH_ROOT` (`$CLAUDE_ENV_HOME/scratch/<repo>/`)
+  instead — allow-all for what's inside it (the containment check is what does the
+  work, not a policy allow-list), wiped clean on server start, cleaned up via
+  atexit/signal handlers plus a `bootstrap.py` TTL-reaper backstop. Read/write/list
+  only — no command-execution surface reaches this directory through
+  filesystem-policy itself (see `terminal.run`'s `in_scratch` below for that).
 - **git** — defense in depth via a plain substring denylist checked *before* any
   subprocess runs: `_DENY = ("push", "reset", "rebase", "--amend", "--force", "-f",
   "filter-branch", "remote add", "config")` (`mcp-servers/git/server.py`), matched
@@ -221,10 +227,17 @@ Three things worth being precise about:
   `status`, `show` — `git.commit` in the config's `requires_approval` block currently
   describes an intended/future gate, not a tool `call_tool()` actually dispatches
   today. Worth knowing if you go looking for it by name.
-- **No test file under `tests/` currently exercises `mcp-servers/*/server.py` directly**
-  (confirmed by search — none matched); the servers are smoke-tested manually with a
-  real stdio client per the `claude-env-development` skill's guidance, not by the
-  pytest suite. State this as a gap rather than inventing coverage that isn't there.
+- **`terminal/server.py` and `filesystem-policy/server.py` now have direct pytest
+  coverage**, added alongside the no-shell command-chaining fix and the `scratch://`
+  scheme: `tests/test_terminal_command_chaining.py`,
+  `tests/test_terminal_run_in_scratch.py`, `tests/test_terminal_approval_sound.py`,
+  and `tests/test_scratch_fs.py` all `importlib`-load the real `server.py` module
+  (with `mcp`/`audit`/`lib` stubbed via `monkeypatch.setitem(sys.modules, ...)`) and
+  call its functions directly — no stdio client needed for these paths. The other
+  four servers (`git`, `lancedb-rag`, `memory-graph`, `documentation`) still have no
+  direct pytest coverage as of this writing and are smoke-tested manually with a
+  real stdio client per the `claude-env-development` skill's guidance — state that
+  remaining gap accurately rather than assuming it covers `terminal`/`filesystem-policy` too.
 - **`lancedb-rag` and `memory-graph` both cache expensive objects at module scope.**
   `lancedb-rag` keys a `_retrievers` dict by `(repo, branch)` so the embedder/reranker
   loads once per pair (`mcp-servers/lancedb-rag/server.py`); `memory-graph`
