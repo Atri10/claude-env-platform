@@ -51,6 +51,14 @@ GLOBAL_POLICY = os.environ.get(
 SESSION_ID = os.environ.get("CLAUDE_ENV_SESSION", "mcp-fs")
 MAX_READ_BYTES = int(os.environ.get("CLAUDE_ENV_MAX_READ_BYTES", str(2_000_000)))
 
+# scratch:// scheme -- a per-repo disposable working directory (NOT
+# per-session: CLAUDE_ENV_SESSION isn't wired to a shared value across MCP
+# server processes today, so the repo name is the reliable, already-shared
+# key every server resolves identically). Wiped at process start; see
+# _reset_scratch_dir().
+SCRATCH_PREFIX = "scratch://"
+SCRATCH_ROOT = (_HOME / "scratch" / REPO_ROOT.name).resolve()
+
 _engine = PolicyEngine.load(REPO_ROOT, GLOBAL_POLICY)
 _audit = AuditLogger(session_id=SESSION_ID, actor="filesystem-policy",
                      repo=REPO_ROOT.name, tier=_engine.repo.tier)
@@ -64,7 +72,11 @@ class PolicyBlocked(Exception):
 
 
 def _resolve(rel_path: str) -> tuple[str, Path]:
-    """Resolve a repo-relative path, rejecting escapes. Returns (rel, abs)."""
+    """Resolve a repo-relative OR scratch:// path, rejecting escapes.
+    Returns (rel, abs); 'rel' for a scratch path keeps the 'scratch://' prefix
+    so callers (audit logging, _enforce_path) can tell the two apart."""
+    if rel_path.startswith(SCRATCH_PREFIX):
+        return _resolve_scratch(rel_path)
     candidate = (REPO_ROOT / rel_path).resolve()
     try:
         rel = candidate.relative_to(REPO_ROOT)
@@ -73,7 +85,29 @@ def _resolve(rel_path: str) -> tuple[str, Path]:
     return str(rel).replace("\\", "/"), candidate
 
 
+def _resolve_scratch(rel_path: str) -> tuple[str, Path]:
+    subpath = rel_path[len(SCRATCH_PREFIX):]
+    candidate = (SCRATCH_ROOT / subpath).resolve()
+    try:
+        rel = candidate.relative_to(SCRATCH_ROOT)
+    except ValueError:
+        raise PolicyBlocked(f"scratch path escapes scratch root: {rel_path}")
+    return f"{SCRATCH_PREFIX}{rel}".replace("\\", "/"), candidate
+
+
+def _reset_scratch_dir() -> None:
+    """Wipe and recreate the scratch directory. Called once at process start
+    (see bottom of this file) so each new Claude Code session for this repo
+    gets a clean scratch area; also directly callable from tests."""
+    import shutil
+    if SCRATCH_ROOT.exists():
+        shutil.rmtree(SCRATCH_ROOT, ignore_errors=True)
+    SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+
+
 def _enforce_path(rel: str) -> None:
+    if rel.startswith(SCRATCH_PREFIX):
+        return   # scratch is allow-all by construction (resolver blocks escapes)
     d = _engine.evaluate_path(rel)
     if d.action == "block":
         _audit.policy_violation(path=rel, rule=d.rule or d.reason,
@@ -214,6 +248,22 @@ def _do_list(path: str) -> list[TextContent]:
     return [TextContent(type="text", text="\n".join(entries))]
 
 
+def _register_scratch_cleanup() -> None:
+    import atexit
+    import signal
+    import shutil
+
+    def _cleanup(*_args) -> None:
+        shutil.rmtree(SCRATCH_ROOT, ignore_errors=True)
+
+    atexit.register(_cleanup)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda s, f: (_cleanup(), os._exit(1)))
+        except (ValueError, OSError):
+            pass   # not the main thread / unsupported platform -- best-effort
+
+
 async def _run() -> None:
     async with stdio_server() as (read, write):
         await server.run(read, write, server.create_initialization_options())
@@ -221,4 +271,6 @@ async def _run() -> None:
 
 if __name__ == "__main__":
     import asyncio
+    _reset_scratch_dir()
+    _register_scratch_cleanup()
     asyncio.run(_run())
