@@ -89,6 +89,19 @@ _audit = AuditLogger(session_id=SESSION_ID, actor="terminal-mcp",
                      repo=REPO_ROOT.name)
 server = Server("terminal")
 
+from security.command_inspector import inspect_command  # noqa: E402
+from security.policy_engine import PolicyEngine  # noqa: E402
+
+# Per-repo scratch directory -- matches the SAME formula
+# mcp-servers/filesystem-policy/server.py uses (SCRATCH_ROOT = $CLAUDE_ENV_HOME/
+# scratch/<repo_name>/), computed independently here since terminal MCP is a
+# separate process; both servers agree without needing IPC because
+# CLAUDE_ENV_REPO_ROOT/CLAUDE_ENV_HOME are resolved identically for every MCP
+# server (scripts/register_repo.py fills them into each server's env block).
+SCRATCH_ROOT = (_HOME / "scratch" / REPO_ROOT.name).resolve()
+
+_policy_engine = PolicyEngine.load(REPO_ROOT, _HOME / "config" / "global-policy.yaml")
+
 
 def _load_commands() -> tuple[dict, set]:
     """Return (commands, explicitly_configured_keys). A key is 'configured' only
@@ -300,7 +313,7 @@ def _run_pipeline(argvs: list[list[str]], cwd: str) -> tuple[int, str, str]:
                 p.kill()
 
 
-def _run(template: str, kind: str) -> str:
+def _run(template: str, kind: str, base_cwd: str | None = None) -> str:
     """Execute a command string with NO real shell involved.
 
     Supports the chaining/piping an agent naturally writes (';', '&&', '||',
@@ -308,13 +321,18 @@ def _run(template: str, kind: str) -> str:
     running each stage as its own argv via subprocess, never bash -c. Anything
     that needs a real shell -- redirection, subshells, backgrounding, command
     substitution -- is rejected with a clear error instead of silently doing
-    nothing or (worse) being handed to a shell interpreter."""
+    nothing or (worse) being handed to a shell interpreter.
+
+    base_cwd defaults to REPO_ROOT (terminal.run/run_tests/etc.); pass a
+    different directory (e.g. SCRATCH_ROOT) to confine the initial cwd and any
+    'cd' escapes to that directory instead -- see _run_in_dir."""
     try:
         pipelines = _split_pipelines(_tokenize(template))
     except _CommandError as e:
         return f"ERROR: {e}"
 
-    cwd = str(REPO_ROOT)
+    root = Path(base_cwd) if base_cwd else REPO_ROOT
+    cwd = str(root)
     last_exit = 0
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
@@ -331,10 +349,10 @@ def _run(template: str, kind: str) -> str:
         # 'cd' is a shell builtin, not an executable -- handle it as a cwd
         # change for the rest of the chain instead of trying to exec it.
         if len(argvs) == 1 and argvs[0][0] == "cd":
-            target = argvs[0][1] if len(argvs[0]) > 1 else str(REPO_ROOT)
+            target = argvs[0][1] if len(argvs[0]) > 1 else str(root)
             new_cwd = (Path(cwd) / target).resolve()
             try:
-                if new_cwd != REPO_ROOT and REPO_ROOT not in new_cwd.parents:
+                if new_cwd != root and root not in new_cwd.parents:
                     raise _CommandError(f"cd target '{target}' escapes the repo root")
                 if not new_cwd.is_dir():
                     raise _CommandError(f"cd: no such directory: {target}")
@@ -368,6 +386,68 @@ def _run(template: str, kind: str) -> str:
     stderr_tail = "\n".join(stderr_parts)[-2000:]
     tail = stdout_tail + (f"\n[stderr]\n{stderr_tail}" if stderr_tail else "")
     return f"exit={last_exit}\n{tail}"
+
+
+def _run_in_dir(template: str, kind: str, cwd: str) -> str:
+    """Thin wrapper so callers with a non-default cwd (only run_scratch today)
+    read clearly at the call site without every _run() caller needing to pass
+    base_cwd explicitly."""
+    return _run(template, kind, base_cwd=cwd)
+
+
+def _run_scratch(command: str) -> str:
+    """Execute a command UNATTENDED (no human approval) in the per-repo
+    scratch directory, protected by two enforcement layers instead of the
+    approval gate terminal.run uses:
+
+      Layer 1 (pre-execution): inspect_command() checks every file-looking
+      argument in the command against the SAME policy engine that protects
+      filesystem.read/write. A command that touches a denied path (.env,
+      secrets/**, .ssh/**, etc.) anywhere -- including outside the scratch
+      directory via a relative '../' or absolute path -- is refused before
+      anything executes. Network egress is denied at tier>=2, matching the
+      native-tool hook's posture.
+
+      Layer 2 (post-execution): stdout/stderr are run through the SAME
+      PolicyEngine.scan_content() that filesystem.read/write already use, so
+      `env | grep API_KEY` can't leak a real key even though the command
+      itself was allowed to run -- redaction uses the one pattern set
+      configured in global-policy.yaml/repo-policy.yaml, not a second one.
+
+    Destructive commands (rm, dd, etc.) are NOT hard-denied here (unlike the
+    native-tool hook) -- a scratch pad's entire point is disposable work an
+    agent should be able to clean up itself. Their path arguments are still
+    checked by Layer 1."""
+    if not command.strip():
+        return "ERROR: empty command"
+
+    verdict = inspect_command(command, str(SCRATCH_ROOT), _policy_engine,
+                              root=REPO_ROOT, exempt_root=SCRATCH_ROOT)
+    if verdict.action == "deny":
+        _audit.policy_violation(path=verdict.denied_path or command[:200],
+                                rule=verdict.reason, decision="block",
+                                tier=_policy_engine.repo.tier)
+        return f"BLOCKED: {verdict.reason}"
+
+    SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+    out = _run_in_dir(command, "run_scratch", str(SCRATCH_ROOT))
+
+    redacted, hits = _policy_engine.scan_content(out)
+    if hits and hits[0][1] == -1:
+        # a hard-block content pattern matched (content_scan.on_match: block) --
+        # mirrors filesystem.read's posture: the command already ran (unlike a
+        # file read, execution can't be undone), but the output itself must
+        # never reach the agent.
+        _audit.security_event(category="secret_redaction", severity="high",
+                              detail=f"terminal.run_scratch output blocked: {hits}",
+                              source="terminal.run_scratch")
+        return "BLOCKED: command output contained secret content and was withheld"
+    if hits:
+        _audit.security_event(category="secret_redaction", severity="low",
+                              detail=f"terminal.run_scratch: {hits}",
+                              source="terminal.run_scratch")
+    return redacted
+
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
@@ -422,6 +502,34 @@ async def list_tools() -> list[Tool]:
                                           "env-var expansion are NOT interpreted and are "
                                           "rejected with an error."}},
                           "required": ["command"]}),
+        Tool(name="terminal.run_scratch",
+             description="Run a command UNATTENDED (no human approval, no blocking "
+                         "wait -- unlike terminal.run) in this repo's disposable "
+                         "per-repo scratch directory ($CLAUDE_ENV_HOME/scratch/<repo>/). "
+                         "Same no-shell sandbox as the other terminal tools (argv-only, "
+                         "';'/'&&'/'||'/'|'/'cd' chaining supported, redirection/subshells/"
+                         "substitution rejected). Safety without a human checkpoint comes "
+                         "from two mechanical layers: (1) before running, every file-"
+                         "looking argument in the command is checked against this repo's "
+                         "policy engine -- a command touching a denied path (.env, "
+                         "secrets/**, .ssh/**, etc.) anywhere, including outside the "
+                         "scratch dir via '../', is refused before anything executes; "
+                         "network egress is denied outright at tier>=2. (2) after "
+                         "running, stdout/stderr are scanned and secret-shaped matches "
+                         "are redacted before being returned. Destructive commands (rm, "
+                         "dd) are allowed (a scratch pad's point is disposable work) but "
+                         "their path arguments are still checked by layer (1). Every "
+                         "call is audited.",
+             inputSchema={"type": "object",
+                          "properties": {"command": {"type": "string",
+                                          "description": "The command line to run in the "
+                                          "scratch directory, e.g. 'python3 train.py -o "
+                                          "model.bin' or 'pip download requests -d .'. "
+                                          "Same parsing rules as terminal.run's command "
+                                          "field (no real shell; ';'/'&&'/'||'/'|' "
+                                          "supported, redirection/subshells/substitution "
+                                          "rejected)."}},
+                          "required": ["command"]}),
     ]
 
 
@@ -471,6 +579,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text",
                 text=f"NO DECISION within {_WAIT_S}s — request {req_id} is still pending. "
                      f"Approve it in the approvals UI, then ask me to run it again.")]
+    if name == "terminal.run_scratch":
+        command = str(arguments.get("command", "")).strip()
+        if not command:
+            return [TextContent(type="text", text="ERROR: empty command")]
+        return [TextContent(type="text", text=_run_scratch(command))]
     return [TextContent(type="text", text=f"ERROR: unknown or denied tool {name}")]
 
 
