@@ -65,6 +65,14 @@ except ImportError:
     raise
 
 REPO_ROOT = Path(os.environ.get("CLAUDE_ENV_REPO_ROOT", os.getcwd())).resolve()
+# Per-repo disposable scratch directory -- same convention
+# mcp-servers/filesystem-policy/server.py uses for its scratch:// scheme
+# (computed independently here since this is a separate process; both agree
+# without IPC because CLAUDE_ENV_REPO_ROOT/CLAUDE_ENV_HOME are resolved
+# identically for every MCP server). terminal.run can start here instead of
+# REPO_ROOT via the optional in_scratch argument -- still requires the same
+# human approval as any other terminal.run command.
+SCRATCH_ROOT = (_HOME / "scratch" / REPO_ROOT.name).resolve()
 SESSION_ID = os.environ.get("CLAUDE_ENV_SESSION", "mcp-terminal")
 TIMEOUT_S = int(os.environ.get("CLAUDE_ENV_CMD_TIMEOUT", "600"))
 # Approval flow: how long terminal.run blocks waiting for a human decision, how
@@ -300,7 +308,7 @@ def _run_pipeline(argvs: list[list[str]], cwd: str) -> tuple[int, str, str]:
                 p.kill()
 
 
-def _run(template: str, kind: str) -> str:
+def _run(template: str, kind: str, root: Path | None = None) -> str:
     """Execute a command string with NO real shell involved.
 
     Supports the chaining/piping an agent naturally writes (';', '&&', '||',
@@ -308,13 +316,22 @@ def _run(template: str, kind: str) -> str:
     running each stage as its own argv via subprocess, never bash -c. Anything
     that needs a real shell -- redirection, subshells, backgrounding, command
     substitution -- is rejected with a clear error instead of silently doing
-    nothing or (worse) being handed to a shell interpreter."""
+    nothing or (worse) being handed to a shell interpreter.
+
+    root defaults to REPO_ROOT (terminal.run_tests/run_benchmarks/run_audit,
+    and terminal.run's normal case). Pass SCRATCH_ROOT to start the command
+    inside the per-repo scratch directory instead -- 'cd' escapes are then
+    checked against THAT root, not REPO_ROOT, so a scratch-rooted command
+    can move around inside scratch but still can't 'cd' out of it (or into
+    the real repo)."""
+    if root is None:
+        root = REPO_ROOT
     try:
         pipelines = _split_pipelines(_tokenize(template))
     except _CommandError as e:
         return f"ERROR: {e}"
 
-    cwd = str(REPO_ROOT)
+    cwd = str(root)
     last_exit = 0
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
@@ -331,11 +348,11 @@ def _run(template: str, kind: str) -> str:
         # 'cd' is a shell builtin, not an executable -- handle it as a cwd
         # change for the rest of the chain instead of trying to exec it.
         if len(argvs) == 1 and argvs[0][0] == "cd":
-            target = argvs[0][1] if len(argvs[0]) > 1 else str(REPO_ROOT)
+            target = argvs[0][1] if len(argvs[0]) > 1 else str(root)
             new_cwd = (Path(cwd) / target).resolve()
             try:
-                if new_cwd != REPO_ROOT and REPO_ROOT not in new_cwd.parents:
-                    raise _CommandError(f"cd target '{target}' escapes the repo root")
+                if new_cwd != root and root not in new_cwd.parents:
+                    raise _CommandError(f"cd target '{target}' escapes the allowed root")
                 if not new_cwd.is_dir():
                     raise _CommandError(f"cd: no such directory: {target}")
             except _CommandError as e:
@@ -404,13 +421,26 @@ async def list_tools() -> list[Tool]:
                          "that isn't one of the vetted run_tests/benchmarks/audit templates. "
                          "This opens a human-approval request, surfaces the approvals web UI, "
                          "and BLOCKS until an operator approves or denies (or it times out, "
-                         "~120s). On approval it runs in the SAME no-shell sandbox — repo-root "
-                         "cwd, scrubbed env, timeout, no bash/sh process ever spawned; "
+                         "~120s). On approval it runs in the SAME no-shell sandbox — cwd, "
+                         "scrubbed env, timeout, no bash/sh process ever spawned; "
                          "';'/'&&'/'||'/'|'/'cd' chaining is supported without a real shell, "
                          "while redirection/subshells/backgrounding/command substitution are "
                          "rejected outright — and it returns who approved plus exit code and "
                          "output; on denial/timeout nothing runs. Use only when a human is "
-                         "available to approve; the whole request is audited.",
+                         "available to approve; the whole request is audited.\n\n"
+                         "By default the command starts in the repo root. Set in_scratch=true "
+                         "to start it in this repo's disposable scratch directory instead "
+                         "($CLAUDE_ENV_HOME/scratch/<repo>/ — the same directory "
+                         "filesystem.read/write/list reach via 'scratch://' paths). Use this "
+                         "for throwaway work: downloading/building intermediate artifacts, "
+                         "installing packages to inspect them, running a one-off script "
+                         "against files you've already written to scratch:// — anything you "
+                         "don't want touching the real repo tree. 'cd' within the scratch "
+                         "directory is allowed; 'cd' out of it (into the repo root or "
+                         "anywhere else) is rejected, same as the repo-root case. This still "
+                         "requires human approval like any other terminal.run call — there is "
+                         "no unattended/unapproved execution path for scratch or anywhere "
+                         "else.",
              inputSchema={"type": "object",
                           "properties": {"command": {"type": "string",
                                           "description": "The command line to request, e.g. "
@@ -420,7 +450,11 @@ async def list_tools() -> list[Tool]:
                                           "redirection ('>', '<'), subshells, backgrounding "
                                           "('&'), command substitution ('`'/'$()'), globs, and "
                                           "env-var expansion are NOT interpreted and are "
-                                          "rejected with an error."}},
+                                          "rejected with an error."},
+                                         "in_scratch": {"type": "boolean",
+                                          "description": "If true, the command starts in this "
+                                          "repo's scratch directory instead of the repo root. "
+                                          "Defaults to false (repo root)."}},
                           "required": ["command"]}),
     ]
 
@@ -449,20 +483,28 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=_run_configured(cmds, configured, "run_audit"))]
     if name == "terminal.run":
         command = str(arguments.get("command", "")).strip()
+        in_scratch = bool(arguments.get("in_scratch", False))
         if not command:
             return [TextContent(type="text", text="ERROR: empty command")]
+        root = SCRATCH_ROOT if in_scratch else REPO_ROOT
         _audit.security_event(category="terminal_gate", severity="low",
-                              detail=f"state-mutating command requested: {command}",
+                              detail=f"state-mutating command requested "
+                                     f"({'scratch' if in_scratch else 'repo root'}): {command}",
                               source="terminal.run")
         # Open a human approval, surface the real UI, then BLOCK until the operator
         # decides. On approval the command runs (same sandbox: argv-only, no shell,
-        # scrubbed env, repo-root cwd, timeout); on denial/timeout it does not.
+        # scrubbed env, timeout, cwd = repo root or scratch per in_scratch); on
+        # denial/timeout it does not.
         req_id = _audit.human_approval_request(
-            agent="terminal", action=f"terminal.run: {command}", tier=_repo_tier())
+            agent="terminal",
+            action=f"terminal.run{' (scratch)' if in_scratch else ''}: {command}",
+            tier=_repo_tier())
         _ensure_approvals_ui()
         decision, by = await _await_decision(req_id)
         if decision == "approved":
-            out = _run(command, "run")
+            if in_scratch:
+                SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+            out = _run(command, "run", root=root)
             return [TextContent(type="text",
                     text=f"APPROVED by {by} (request {req_id}). Executed:\n{out}")]
         if decision == "denied":
