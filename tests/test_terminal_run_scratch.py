@@ -207,3 +207,117 @@ def test_run_scratch_egress_denied_at_tier_2(tmp_path):
     out = srv._run_scratch("curl https://example.com")
     assert out.startswith("BLOCKED:")
     assert "network egress" in out
+
+
+# ---------------------------------------------------------------------------
+# Fix pass: Finding 1 (Critical) -- structural path confinement.
+#
+# inspect_command()'s named-pattern deny check was designed for
+# filesystem.read/write, which can only ever touch paths already inside the
+# repo. terminal.run_scratch spawns a real OS process whose arguments can
+# name ANY path the machine's user can read -- e.g. `cat ~/.aws/credentials`
+# matches no configured deny pattern at all (no rule names '.aws' or a bare
+# 'credentials' file), so the named-pattern check alone would let it sail
+# through and leak the file's contents straight back to the agent.
+# confine_to_roots() closes this by denying any command whose file arguments
+# resolve outside BOTH REPO_ROOT and SCRATCH_ROOT, regardless of the path's
+# name.
+# ---------------------------------------------------------------------------
+
+def test_run_scratch_denies_path_outside_both_roots_even_without_named_pattern(
+        repo_and_server, tmp_path):
+    """The Critical gap this fix closes: a machine-wide credential file that
+    is NOT shaped like any configured deny pattern (not named .env/secrets/
+    .ssh/etc.) but resolves outside both REPO_ROOT and SCRATCH_ROOT must still
+    be denied -- structurally, not by name. Uses a simulated credential file
+    under tmp_path (never the real ~/.aws) so the test can't touch the actual
+    machine."""
+    _repo_path, srv = repo_and_server
+    fake_home = tmp_path / "fake_home" / ".aws"
+    fake_home.mkdir(parents=True)
+    cred_file = fake_home / "credentials"
+    cred_file.write_text(
+        "[default]\naws_access_key_id = FAKEIDNOTREAL\n"
+        "aws_secret_access_key = totally-not-a-real-secret-value\n")
+
+    # Sanity check: the named-pattern layer alone would allow this path --
+    # proves the new check is doing independent work, not just re-detecting
+    # something Layer 1 already caught.
+    from security.command_inspector import inspect_command
+    named_pattern_verdict = inspect_command(
+        f"cat {cred_file}", str(srv.SCRATCH_ROOT), srv._policy_engine,
+        root=srv.REPO_ROOT, exempt_root=srv.SCRATCH_ROOT)
+    assert named_pattern_verdict.action == "allow"
+
+    out = srv._run_scratch(f"cat {cred_file}")
+    assert out.startswith("BLOCKED:")
+    assert "outside the allowed directories" in out
+    assert "totally-not-a-real-secret-value" not in out
+
+
+def test_run_scratch_still_allows_scratch_local_and_repo_relative_work(
+        repo_and_server):
+    """Regression: ordinary scratch-local work and legitimate repo-relative
+    work (absolute path to a non-denied file inside REPO_ROOT) must keep
+    working exactly as before -- the new check is additive, not a
+    replacement."""
+    repo_path, srv = repo_and_server
+
+    # scratch-local
+    out = srv._run_scratch("echo scratch-local-ok | tee note.txt")
+    assert out.startswith("exit=0")
+    out = srv._run_scratch("cat note.txt")
+    assert "scratch-local-ok" in out
+
+    # repo-relative (absolute path into REPO_ROOT, non-denied file)
+    (repo_path / "readme_ok.txt").write_text("fine to read\n")
+    out = srv._run_scratch(f"cat {repo_path / 'readme_ok.txt'}")
+    assert out.startswith("exit=0")
+    assert "fine to read" in out
+
+
+def test_run_scratch_named_pattern_deny_still_also_applies(repo_and_server):
+    """Regression: the ORIGINAL named-pattern deny check (the real repo's
+    .env, which resolves inside REPO_ROOT and so passes the new structural
+    check) must still independently deny -- this fix is IN ADDITION to Layer
+    1, not a replacement for it."""
+    repo_path, srv = repo_and_server
+    out = srv._run_scratch(f"cat {repo_path / '.env'}")
+    assert out.startswith("BLOCKED:")
+    assert "protected path" in out
+
+
+# ---------------------------------------------------------------------------
+# Fix pass: Finding 2 (Important) -- 'cd' is not supported in run_scratch.
+#
+# inspect_command() evaluates the WHOLE command string's file arguments
+# against one static cwd (SCRATCH_ROOT), but the real executor (_run()) walks
+# cwd across pipeline stages when an interior 'cd' succeeds -- a fragile
+# inconsistency that could silently defeat a future path-anchored deny rule.
+# The fix: run_scratch rejects any command containing a 'cd' token outright,
+# before either enforcement layer runs.
+# ---------------------------------------------------------------------------
+
+def test_run_scratch_rejects_cd_in_a_chain(repo_and_server):
+    _repo_path, srv = repo_and_server
+    out = srv._run_scratch("mkdir -p sub && cd sub && cat ../../etc/passwd")
+    assert out.startswith("BLOCKED:")
+    assert "cd" in out.lower()
+    assert "not supported" in out.lower()
+
+
+def test_run_scratch_rejects_bare_cd(repo_and_server):
+    _repo_path, srv = repo_and_server
+    out = srv._run_scratch("cd ..")
+    assert out.startswith("BLOCKED:")
+
+
+def test_run_scratch_cd_rejected_before_execution(repo_and_server, tmp_path):
+    """The rejection must happen BEFORE anything runs -- no side effect from
+    the part of the chain preceding 'cd'."""
+    _repo_path, srv = repo_and_server
+    out = srv._run_scratch("mkdir -p sub && cd sub && cat file.txt")
+    assert out.startswith("BLOCKED:")
+    # the 'mkdir -p sub' stage must not have run either -- the whole command
+    # is rejected atomically, not partially executed up to the 'cd'.
+    assert not (srv.SCRATCH_ROOT / "sub").exists()

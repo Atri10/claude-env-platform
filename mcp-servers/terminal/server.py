@@ -89,7 +89,8 @@ _audit = AuditLogger(session_id=SESSION_ID, actor="terminal-mcp",
                      repo=REPO_ROOT.name)
 server = Server("terminal")
 
-from security.command_inspector import inspect_command  # noqa: E402
+from security.command_inspector import (CMD_SEP, confine_to_roots,  # noqa: E402
+                                        inspect_command, shell_tokens)
 from security.policy_engine import PolicyEngine  # noqa: E402
 
 # Per-repo scratch directory -- matches the SAME formula
@@ -395,18 +396,54 @@ def _run_in_dir(template: str, kind: str, cwd: str) -> str:
     return _run(template, kind, base_cwd=cwd)
 
 
+def _contains_cd(command: str) -> bool:
+    """True if any pipeline segment's command name is 'cd'.
+
+    terminal.run_scratch does not support 'cd' at all (see _run_scratch):
+    inspect_command()'s policy-deny check evaluates every file argument in
+    the WHOLE command string against one static cwd (SCRATCH_ROOT), but the
+    real executor (_run() in this module) tracks cwd across pipeline stages
+    when an interior 'cd' actually succeeds -- e.g. in
+    'mkdir -p sub && cd sub && cat ../../X', Layer 1 would resolve '../../X'
+    relative to SCRATCH_ROOT while the real 'cat' process, after 'cd sub'
+    runs, resolves it relative to SCRATCH_ROOT/sub. That divergence isn't
+    exploitable against today's suffix/glob-anchored deny rules, but it is a
+    fragile inconsistency a future path-anchored rule could silently defeat.
+    Since run_scratch's base cwd already IS the scratch root, disallowing
+    'cd' costs nothing real: an agent needing a subdirectory can just use a
+    relative path instead of changing into it first."""
+    tokens = shell_tokens(command)
+    segments: list[list[str]] = [[]]
+    for t in tokens:
+        (segments.append([]) if t in CMD_SEP else segments[-1].append(t))
+    for seg in segments:
+        if seg and os.path.basename(seg[0]) == "cd":
+            return True
+    return False
+
+
 def _run_scratch(command: str) -> str:
     """Execute a command UNATTENDED (no human approval) in the per-repo
-    scratch directory, protected by two enforcement layers instead of the
+    scratch directory, protected by three enforcement layers instead of the
     approval gate terminal.run uses:
 
-      Layer 1 (pre-execution): inspect_command() checks every file-looking
-      argument in the command against the SAME policy engine that protects
-      filesystem.read/write. A command that touches a denied path (.env,
-      secrets/**, .ssh/**, etc.) anywhere -- including outside the scratch
-      directory via a relative '../' or absolute path -- is refused before
-      anything executes. Network egress is denied at tier>=2, matching the
-      native-tool hook's posture.
+      Layer 0 (pre-execution, structural): confine_to_roots() resolves every
+      file-looking argument to an absolute path and denies the whole command
+      if it resolves outside BOTH REPO_ROOT and SCRATCH_ROOT -- regardless of
+      what the path is named. This closes the gap the named-pattern check
+      below cannot: a command argument can name ANY path the machine's user
+      can read (e.g. `cat ~/.aws/credentials`), and a path like that matches
+      no configured deny pattern at all. 'cd' is rejected outright before
+      either layer runs (see _contains_cd) since it would let a command's
+      real cwd silently diverge from the static cwd both layers assume.
+
+      Layer 1 (pre-execution, named-pattern): inspect_command() checks every
+      file-looking argument in the command against the SAME policy engine
+      that protects filesystem.read/write. A command that touches a denied
+      path (.env, secrets/**, .ssh/**, etc.) anywhere -- including outside
+      the scratch directory via a relative '../' or absolute path -- is
+      refused before anything executes. Network egress is denied at tier>=2,
+      matching the native-tool hook's posture.
 
       Layer 2 (post-execution): stdout/stderr are run through the SAME
       PolicyEngine.scan_content() that filesystem.read/write already use, so
@@ -417,9 +454,22 @@ def _run_scratch(command: str) -> str:
     Destructive commands (rm, dd, etc.) are NOT hard-denied here (unlike the
     native-tool hook) -- a scratch pad's entire point is disposable work an
     agent should be able to clean up itself. Their path arguments are still
-    checked by Layer 1."""
+    checked by Layers 0 and 1."""
     if not command.strip():
         return "ERROR: empty command"
+
+    if _contains_cd(command):
+        return ("BLOCKED: 'cd' is not supported by terminal.run_scratch -- "
+                "the command already runs directly in the scratch directory "
+                f"({SCRATCH_ROOT}); use a relative path instead of changing "
+                "into a subdirectory first.")
+
+    confinement = confine_to_roots(command, str(SCRATCH_ROOT), [REPO_ROOT, SCRATCH_ROOT])
+    if confinement.action == "deny":
+        _audit.policy_violation(path=confinement.denied_path or command[:200],
+                                rule=confinement.reason, decision="block",
+                                tier=_policy_engine.repo.tier)
+        return f"BLOCKED: {confinement.reason}"
 
     verdict = inspect_command(command, str(SCRATCH_ROOT), _policy_engine,
                               root=REPO_ROOT, exempt_root=SCRATCH_ROOT)
@@ -507,19 +557,27 @@ async def list_tools() -> list[Tool]:
                          "wait -- unlike terminal.run) in this repo's disposable "
                          "per-repo scratch directory ($CLAUDE_ENV_HOME/scratch/<repo>/). "
                          "Same no-shell sandbox as the other terminal tools (argv-only, "
-                         "';'/'&&'/'||'/'|'/'cd' chaining supported, redirection/subshells/"
-                         "substitution rejected). Safety without a human checkpoint comes "
-                         "from two mechanical layers: (1) before running, every file-"
-                         "looking argument in the command is checked against this repo's "
-                         "policy engine -- a command touching a denied path (.env, "
-                         "secrets/**, .ssh/**, etc.) anywhere, including outside the "
-                         "scratch dir via '../', is refused before anything executes; "
-                         "network egress is denied outright at tier>=2. (2) after "
-                         "running, stdout/stderr are scanned and secret-shaped matches "
-                         "are redacted before being returned. Destructive commands (rm, "
-                         "dd) are allowed (a scratch pad's point is disposable work) but "
-                         "their path arguments are still checked by layer (1). Every "
-                         "call is audited.",
+                         "';'/'&&'/'||'/'|' chaining supported, redirection/subshells/"
+                         "substitution rejected) EXCEPT 'cd' is NOT supported here (unlike "
+                         "terminal.run/run_tests/etc.) -- any command containing a 'cd' "
+                         "token is refused before anything executes; the command already "
+                         "runs directly in the scratch directory, so use a relative path "
+                         "instead of changing into a subdirectory first. Safety without a "
+                         "human checkpoint comes from three mechanical layers: (1) every "
+                         "file-looking argument is resolved to an absolute path and the "
+                         "WHOLE command is refused if it resolves outside BOTH this repo's "
+                         "root AND the scratch directory -- a structural allowlist, so e.g. "
+                         "'cat ~/.aws/credentials' is denied even though that path isn't a "
+                         "named-sensitive pattern. (2) additionally, every file-looking "
+                         "argument is checked against this repo's policy engine -- a "
+                         "command touching a named denied path (.env, secrets/**, "
+                         ".ssh/**, etc.) anywhere inside the repo/scratch is also refused; "
+                         "network egress is denied outright at tier>=2. (3) after running, "
+                         "stdout/stderr are scanned and secret-shaped matches are redacted "
+                         "before being returned. Destructive commands (rm, dd) are allowed "
+                         "(a scratch pad's point is disposable work) but their path "
+                         "arguments are still checked by layers (1) and (2). Every call is "
+                         "audited.",
              inputSchema={"type": "object",
                           "properties": {"command": {"type": "string",
                                           "description": "The command line to run in the "
@@ -528,7 +586,11 @@ async def list_tools() -> list[Tool]:
                                           "Same parsing rules as terminal.run's command "
                                           "field (no real shell; ';'/'&&'/'||'/'|' "
                                           "supported, redirection/subshells/substitution "
-                                          "rejected)."}},
+                                          "rejected) EXCEPT 'cd' is not supported -- the "
+                                          "command runs directly in the scratch directory, "
+                                          "so use relative paths instead of 'cd'ing first. "
+                                          "File arguments must resolve inside this repo or "
+                                          "the scratch directory, or the command is denied."}},
                           "required": ["command"]}),
     ]
 

@@ -17,8 +17,8 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
-from security.command_inspector import (bash_candidates, inspect_command,
-                                        looks_like_path)
+from security.command_inspector import (bash_candidates, confine_to_roots,
+                                        inspect_command, looks_like_path)
 from security.policy_engine import PolicyEngine
 
 
@@ -129,3 +129,64 @@ def test_inspect_command_exempt_root_does_not_bypass_egress_check():
                        str(scratch), eng, root=Path(d), exempt_root=scratch)
     assert v.action == "deny"
     assert "exfiltration" in v.reason
+
+
+# ---------------------------------------------------------------------------
+# confine_to_roots() -- structural, deny-by-default path confinement.
+#
+# Unlike inspect_command()'s named-pattern deny check (a blocklist of known-
+# sensitive names, designed for filesystem.read/write which can only ever
+# touch paths inside the repo), confine_to_roots() is an allowlist of
+# directories: any file-looking argument that resolves outside ALL given
+# roots is denied, regardless of what it's named. This is what lets
+# terminal.run_scratch (which spawns a real OS process with unconstrained
+# argument paths) refuse `cat ~/.aws/credentials`-shaped commands even though
+# no configured deny pattern names '.aws' or 'credentials'.
+# ---------------------------------------------------------------------------
+
+def test_confine_to_roots_allows_paths_inside_a_root():
+    d = tempfile.mkdtemp()
+    Path(d, "inside.txt").write_text("x\n")
+    v = confine_to_roots(f"cat {Path(d) / 'inside.txt'}", d, [Path(d)])
+    assert v.action == "allow"
+
+
+def test_confine_to_roots_denies_path_outside_all_roots_even_when_unnamed():
+    """The core gap: a path that is NOT shaped like any named deny pattern
+    (e.g. a bare '.aws/credentials'-style file) but resolves outside every
+    allowed root must still be denied."""
+    root = tempfile.mkdtemp()
+    outside = Path(tempfile.mkdtemp()) / "fake_home" / ".aws"
+    outside.mkdir(parents=True)
+    cred = outside / "credentials"
+    cred.write_text("aws_secret_access_key = not-a-real-secret\n")
+
+    v = confine_to_roots(f"cat {cred}", root, [Path(root)])
+    assert v.action == "deny"
+    assert "outside the allowed directories" in v.reason
+    assert v.denied_path == str(cred)
+
+
+def test_confine_to_roots_allows_a_path_inside_the_second_root():
+    """terminal.run_scratch confines to REPO_ROOT *and* SCRATCH_ROOT -- a
+    path inside either one must be allowed."""
+    repo_root = Path(tempfile.mkdtemp())
+    scratch_root = Path(tempfile.mkdtemp())
+    (scratch_root / "work.txt").write_text("x\n")
+
+    v = confine_to_roots(f"cat {scratch_root / 'work.txt'}", str(scratch_root),
+                        [repo_root, scratch_root])
+    assert v.action == "allow"
+
+
+def test_confine_to_roots_denies_relative_escape_via_dotdot():
+    """A relative '../' path that resolves outside every root is denied even
+    though it never looks like an absolute path."""
+    scratch_root = Path(tempfile.mkdtemp())
+    outside_sibling = scratch_root.parent / "sibling_secret.txt"
+    outside_sibling.write_text("x\n")
+
+    v = confine_to_roots("cat ../sibling_secret.txt", str(scratch_root),
+                        [scratch_root])
+    assert v.action == "deny"
+    assert "outside the allowed directories" in v.reason
