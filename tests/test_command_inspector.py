@@ -1,13 +1,19 @@
 """Coverage for security/command_inspector.py — the shared command-string
-parsing + policy-deny logic used by BOTH hooks/policy_hook.py (native Bash
-tool) and mcp-servers/terminal/server.py (terminal.run_scratch). Run:
-pytest tests/ -q
+parsing + policy-deny logic used by hooks/policy_hook.py (native Bash tool).
+Run: pytest tests/ -q
 
-Regression context: this logic was extracted verbatim from
-hooks/policy_hook.py so both callers share one parser instead of two that
-could silently drift apart. inspect_command() intentionally omits the
-native-tool-specific control-plane guard and destructive-command hard-deny —
-callers that need those layer them on separately.
+Regression context: this parsing logic was extracted verbatim from
+hooks/policy_hook.py so it isn't duplicated if a future caller needs it.
+inspect_command()/CommandVerdict/exempt_root were built for an unattended
+scratch-pad command runner (terminal.run_scratch) that was implemented and
+then REVERTED after a security review found its path-confinement couldn't
+contain a general interpreter (python3 -c/perl -e/etc.) computing its own
+file path or network calls at runtime — that tool does not exist in this
+codebase today. inspect_command() has no current production caller; it's
+retained here, tested, in case a future attempt (with OS-level sandboxing)
+reuses it. It intentionally omits the native-tool-specific control-plane
+guard and destructive-command hard-deny that hooks/policy_hook.py's
+_inspect_bash still applies on top of the shared parser.
 """
 import os
 import sys
