@@ -24,10 +24,12 @@ Python. Anything that genuinely needs a real shell -- redirection (`>`, `>>`,
 or being handed to a shell interpreter. See `_tokenize`/`_split_pipelines`/`_run`.
 
 Anything state-mutating maps to `terminal.run`, which opens a human approval,
-surfaces the approvals web UI, and BLOCKS until the operator approves or denies.
-On approval the command runs under the same no-shell sandbox described above
-(scrubbed env, repo-root cwd, timeout); on denial/timeout it does not.
-There is no `terminal.exec_unrestricted` tool at all.
+plays a notification sound (CLAUDE_ENV_APPROVAL_SOUND=false to disable),
+surfaces the approvals web UI, and BLOCKS until the operator approves or
+denies. On approval the command runs under the same no-shell sandbox
+described above (scrubbed env, repo-root cwd by default, or the per-repo
+scratch directory via in_scratch=true, timeout); on denial/timeout it does
+not. There is no `terminal.exec_unrestricted` tool at all.
 
 Configuration: each command must be set per-repo in `${repo}/.claude/commands.json`.
 An unconfigured command is NOT run — it returns a directive telling the operator to
@@ -181,6 +183,31 @@ def _ensure_approvals_ui() -> None:
         # auto-opening the approval UI is a convenience; the request still blocks
         # and the operator can open the URL manually. Log the failure.
         _log.info("could not ensure/auto-open approval UI in a browser", exc_info=True)
+
+
+def _notify_pending_approval() -> None:
+    """Play a system sound the moment a command enters the approval queue, so
+    the operator notices without having to keep the approvals tab open/focused
+    (which a browser-side sound would require, subject to autoplay blocking).
+    Best-effort: a failure here must never affect the approval flow itself.
+    Disable with CLAUDE_ENV_APPROVAL_SOUND=false (on by default, matching the
+    existing CLAUDE_ENV_APPROVAL_AUTO_UI on-by-default pattern)."""
+    if os.environ.get("CLAUDE_ENV_APPROVAL_SOUND", "true").lower() == "false":
+        return
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["afplay", "/System/Library/Sounds/Ping.aiff"],
+                          capture_output=True, timeout=5)
+        elif sys.platform.startswith("linux"):
+            # canberra-gtk-play (libcanberra) is the common cross-desktop
+            # notification-sound player on Linux; not installed everywhere,
+            # so this stays best-effort like the darwin branch.
+            subprocess.run(["canberra-gtk-play", "-i", "dialog-warning"],
+                          capture_output=True, timeout=5)
+    except Exception:
+        # a missing player binary or audio device must never block/break the
+        # approval request itself -- just skip the sound silently.
+        _log.info("could not play approval-pending sound", exc_info=True)
 
 
 async def _await_decision(req_id: str) -> tuple[str, str | None]:
@@ -419,9 +446,10 @@ async def list_tools() -> list[Tool]:
         Tool(name="terminal.run",
              description="Request execution of an arbitrary (typically state-mutating) command "
                          "that isn't one of the vetted run_tests/benchmarks/audit templates. "
-                         "This opens a human-approval request, surfaces the approvals web UI, "
-                         "and BLOCKS until an operator approves or denies (or it times out, "
-                         "~120s). On approval it runs in the SAME no-shell sandbox — cwd, "
+                         "This opens a human-approval request, plays a notification sound "
+                         "(disable with CLAUDE_ENV_APPROVAL_SOUND=false), surfaces the approvals "
+                         "web UI, and BLOCKS until an operator approves or denies (or it times "
+                         "out, ~120s). On approval it runs in the SAME no-shell sandbox — cwd, "
                          "scrubbed env, timeout, no bash/sh process ever spawned; "
                          "';'/'&&'/'||'/'|'/'cd' chaining is supported without a real shell, "
                          "while redirection/subshells/backgrounding/command substitution are "
@@ -499,6 +527,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             agent="terminal",
             action=f"terminal.run{' (scratch)' if in_scratch else ''}: {command}",
             tier=_repo_tier())
+        _notify_pending_approval()
         _ensure_approvals_ui()
         decision, by = await _await_decision(req_id)
         if decision == "approved":
