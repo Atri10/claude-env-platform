@@ -3,8 +3,8 @@ claude-env :: Adapters - LanceDB Vector Store
 """
 from __future__ import annotations
 
-import os
-import sys
+import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -16,14 +16,24 @@ except ImportError:
     pa = None
 
 from claudenv.domain.rag import (
-    BranchName, Chunk, ChunkId, ContentHash, IndexState, RAGConfig,
-    RetrievalQuery, RetrievalResult, RepoSlug, TableName,
+    BranchName, Chunk, RetrievalQuery, RetrievalResult, RepoSlug,
 )
-from claudenv.ports import IRagIndexer, IRagRetriever
+from claudenv.ports import IRagRetriever
 
 
 class LanceDbVectorStore:
     """LanceDB vector store adapter."""
+
+    # The fixed pyarrow schema's core columns. Chunk.to_metadata() also
+    # includes an arbitrary `**self.metadata` dict (chunker name, markdown
+    # header, tree-sitter node type, ...) which has no column of its own --
+    # it's folded into the `metadata` JSON string column instead so
+    # `tbl.add()` doesn't reject unknown fields.
+    _CORE_FIELDS = frozenset({
+        "chunk_id", "vector", "text", "repo", "branch", "commit_sha",
+        "file_path", "file_type", "symbol_type", "symbol_name",
+        "start_line", "end_line", "content_hash", "tier",
+    })
 
     def __init__(self, path: str, dim: int = 768):
         if lancedb is None:
@@ -48,7 +58,26 @@ class LanceDbVectorStore:
             pa.field("end_line", pa.int32()),
             pa.field("content_hash", pa.string()),
             pa.field("tier", pa.int32()),
+            pa.field("metadata", pa.string()),
         ])
+
+    def _to_row(self, row: dict) -> dict:
+        """Fold any key outside the fixed schema into a `metadata` JSON blob."""
+        core = {k: row[k] for k in self._CORE_FIELDS if k in row}
+        extra = {k: v for k, v in row.items() if k not in self._CORE_FIELDS}
+        core["metadata"] = json.dumps(extra)
+        return core
+
+    @staticmethod
+    def _expand_metadata(row: dict) -> dict:
+        """Inverse of `_to_row`'s metadata folding, applied to a search-result row."""
+        blob = row.pop("metadata", None)
+        if blob:
+            try:
+                row.update(json.loads(blob))
+            except (TypeError, ValueError):
+                pass
+        return row
 
     def _table_name(self, repo: RepoSlug, branch: BranchName) -> str:
         safe = lambda s: s.replace("/", "-").replace(" ", "_")
@@ -75,7 +104,7 @@ class LanceDbVectorStore:
             tbl.delete(f"chunk_id IN ({id_list})")
         except Exception:
             pass
-        tbl.add(rows)
+        tbl.add([self._to_row(r) for r in rows])
         return len(rows)
 
     def delete_file(self, repo: RepoSlug, branch: BranchName, file_path: str) -> None:
@@ -102,6 +131,7 @@ class LanceDbVectorStore:
         results = []
         for i, r in enumerate(res):
             r.pop("vector", None)
+            r = self._expand_metadata(r)
             chunk = Chunk.from_metadata(r)
             results.append(RetrievalResult(chunk=chunk, score=r.get("_score", 0.0), rank=i + 1))
         return results
@@ -113,158 +143,9 @@ class LanceDbVectorStore:
             return 0
 
 
-class LanceDbRagIndexer(IRagIndexer):
-    """RAG indexer using LanceDB."""
-
-    def __init__(
-            self,
-            repo: RepoSlug,
-            branch: BranchName,
-            store: LanceDbVectorStore,
-            bookkeeping: Any,  # IRagBookkeeping
-            embedder: Any,  # IEmbeddingProvider
-            chunker: RAGConfig,
-    ):
-        self.repo = repo
-        self.branch = branch
-        self.store = store
-        self.bookkeeping = bookkeeping
-        self.embedder = embedder
-        self.chunker = chunker
-
-    def index_file(
-            self, repo: RepoSlug, branch: BranchName, commit: str,
-            file_path: str, text: str,
-    ) -> int:
-        # Chunk the file
-        chunks = self._chunk_file(file_path, text, repo, branch, commit)
-        if not chunks:
-            return 0
-
-        # Embed chunks
-        texts = [c.text for c in chunks]
-        vectors = self.embedder.embed_documents(texts)
-
-        # Build rows
-        rows = []
-        for chunk, vec in zip(chunks, vectors):
-            rows.append({
-                "chunk_id": str(chunk.chunk_id),
-                "vector": vec,
-                "text": chunk.text,
-                "repo": str(chunk.repo),
-                "branch": str(chunk.branch),
-                "commit_sha": chunk.commit_sha,
-                "file_path": chunk.file_path,
-                "file_type": chunk.file_type,
-                "symbol_type": chunk.symbol_type.value,
-                "symbol_name": chunk.symbol_name,
-                "start_line": chunk.start_line,
-                "end_line": chunk.end_line,
-                "content_hash": str(chunk.content_hash),
-                "tier": int(chunk.tier),
-            })
-
-        # Upsert
-        self.store.upsert(repo, branch, rows)
-
-        # Update bookkeeping
-        content_hash = ContentHash.compute(text)
-        self.bookkeeping.set_file_hash(repo, branch, file_path, content_hash, len(chunks))
-
-        return len(chunks)
-
-    def index_batch(
-            self, repo: RepoSlug, branch: BranchName, commit: str, chunks: list[Chunk],
-    ) -> int:
-        texts = [c.text for c in chunks]
-        vectors = self.embedder.embed_documents(texts)
-
-        rows = []
-        for chunk, vec in zip(chunks, vectors):
-            rows.append({
-                "chunk_id": str(chunk.chunk_id),
-                "vector": vec,
-                "text": chunk.text,
-                "repo": str(chunk.repo),
-                "branch": str(chunk.branch),
-                "commit_sha": chunk.commit_sha,
-                "file_path": chunk.file_path,
-                "file_type": chunk.file_type,
-                "symbol_type": chunk.symbol_type.value,
-                "symbol_name": chunk.symbol_name,
-                "start_line": chunk.start_line,
-                "end_line": chunk.end_line,
-                "content_hash": str(chunk.content_hash),
-                "tier": int(chunk.tier),
-            })
-
-        self.store.upsert(repo, branch, rows)
-        return len(rows)
-
-    def delete_file(self, repo: RepoSlug, branch: BranchName, file_path: str) -> None:
-        self.store.delete_file(repo, branch, file_path)
-        self.bookkeeping.delete_file_hash(repo, branch, file_path)
-
-    def full_index(
-            self, repo: RepoSlug, branch: BranchName, files: dict[str, str],
-    ) -> dict[str, Any]:
-        total_chunks = total_files = 0
-        commit = "0"  # placeholder
-
-        for file_path, text in files.items():
-            n = self.index_file(repo, branch, commit, file_path, text)
-            if n:
-                total_files += 1
-                total_chunks += n
-
-        # Record index state
-        state = IndexState.create(repo, branch, self.store._table_name(repo, branch), commit, "model")
-        state.chunk_count = total_chunks
-        self.bookkeeping.set_index_state(state)
-
-        return {"files": total_files, "chunks": total_chunks}
-
-    def _chunk_file(
-            self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
-    ) -> list[Chunk]:
-        # Simple chunking - in production use the proper chunker
-        ext = Path(file_path).suffix.lower()
-        target = self.chunker.chunk_target_tokens
-        overlap = self.chunker.chunk_overlap_tokens
-
-        # Rough token estimation
-        tokens_per_char = 0.25
-        chunk_chars = int(target / tokens_per_char)
-        overlap_chars = int(overlap / tokens_per_char)
-
-        chunks = []
-        for i in range(0, len(text), chunk_chars - overlap_chars):
-            chunk_text = text[i:i + chunk_chars]
-            if not chunk_text.strip():
-                continue
-            chunk = Chunk(
-                chunk_id=ChunkId.from_parts(repo, file_path, i // (chunk_chars - overlap_chars),
-                                            i // (chunk_chars - overlap_chars) + 1),
-                repo=repo,
-                branch=branch,
-                commit_sha=commit,
-                file_path=file_path,
-                file_type=ext.lstrip("."),
-                symbol_type="window",
-                symbol_name=f"chunk_{len(chunks)}",
-                start_line=text[:i].count("\n") + 1,
-                end_line=text[:i + len(chunk_text)].count("\n"),
-                text=chunk_text,
-                content_hash=ContentHash.compute(chunk_text),
-                tier=self.chunker.tier if hasattr(self.chunker, "tier") else 1,
-            )
-            chunks.append(chunk)
-        return chunks
-
-
 class LanceDbRagRetriever(IRagRetriever):
-    """RAG retriever using LanceDB."""
+    """RAG retriever using LanceDB — adds query embedding + reranking on top
+    of the raw vector store search."""
 
     def __init__(self, store: LanceDbVectorStore, embedder: Any, reranker: Any):
         self.store = store
@@ -272,9 +153,11 @@ class LanceDbRagRetriever(IRagRetriever):
         self.reranker = reranker
 
     def search(self, query: RetrievalQuery) -> list[RetrievalResult]:
-        # Embed query if vector not provided
+        # Embed query if vector not provided. RetrievalQuery is an immutable
+        # (frozen, slotted) value object, so build a new instance rather than
+        # mutating the one we were given.
         if query.query_vector is None and query.query:
-            query.query_vector = self.embedder.embed_query(query.query)
+            query = replace(query, query_vector=self.embedder.embed_query(query.query))
 
         results = self.store.search(query)
 

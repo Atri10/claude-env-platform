@@ -3,14 +3,14 @@ claude-env :: Application - RAG Service
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, replace
 from typing import Any
 
 from claudenv.domain.rag import (
-    BranchName, Chunk, ChunkId, ChunkType, IndexState, RetrievalMode,
+    BranchName, Chunk, IndexState, RetrievalMode,
     RetrievalQuery, RetrievalResult, RepoSlug, RAGConfig,
 )
+from claudenv.domain.rag_chunker import ChunkerFactory, ChunkingConfig, make_chunker_factory
 from claudenv.domain.value_objects import ContentHash, Tier
 from claudenv.ports import (
     IEmbeddingProvider, IRagBookkeeping, IRagIndexer,
@@ -28,7 +28,7 @@ class RagIndexer(IRagIndexer):
             store: IRagRetriever,  # Using retriever interface for upsert
             bookkeeping: IRagBookkeeping,
             embedder: IEmbeddingProvider,
-            chunker: RAGConfig,
+            chunker: RAGConfig | ChunkerFactory,
     ):
         self.repo = repo
         self.branch = branch
@@ -36,6 +36,16 @@ class RagIndexer(IRagIndexer):
         self.bookkeeping = bookkeeping
         self.embedder = embedder
         self.chunker = chunker
+        # `chunker` is the RAG config in production wiring (DI passes the whole
+        # RAGConfig), but a pre-built ChunkerFactory is accepted directly too
+        # (e.g. from tests) so callers don't have to fake a full RAGConfig.
+        if isinstance(chunker, ChunkerFactory):
+            self._chunker_factory = chunker
+        else:
+            self._chunker_factory = make_chunker_factory(ChunkingConfig(
+                chunk_target_tokens=chunker.chunk_target_tokens,
+                chunk_overlap_tokens=chunker.chunk_overlap_tokens,
+            ))
 
     def index_file(
             self, repo: RepoSlug, branch: BranchName, commit: str,
@@ -55,8 +65,9 @@ class RagIndexer(IRagIndexer):
 
         rows = []
         for chunk, vector in zip(chunks, vectors):
-            chunk.embedding = vector
-            rows.append(chunk.to_metadata())
+            row = chunk.to_metadata()
+            row["vector"] = vector
+            rows.append(row)
 
         self.store.upsert(self.repo, self.branch, rows)
         self.bookkeeping.set_file_hash(repo, branch, file_path, content_hash, len(rows))
@@ -71,10 +82,12 @@ class RagIndexer(IRagIndexer):
         texts = [c.text for c in chunks]
         vectors = self.embedder.embed_documents(texts)
 
+        rows = []
         for chunk, vector in zip(chunks, vectors):
-            chunk.embedding = vector
+            row = chunk.to_metadata()
+            row["vector"] = vector
+            rows.append(row)
 
-        rows = [c.to_metadata() for c in chunks]
         self.store.upsert(repo, branch, rows)
 
         files = {}
@@ -108,7 +121,7 @@ class RagIndexer(IRagIndexer):
             commit=commit,
             model=self.embedder.model_name if hasattr(self.embedder, 'model_name') else "unknown",
         )
-        state.chunk_count = total_chunks
+        state = replace(state, chunk_count=total_chunks)
         self.bookkeeping.set_index_state(state)
 
         return {"files": total_files, "chunks": total_chunks}
@@ -116,85 +129,10 @@ class RagIndexer(IRagIndexer):
     def _chunk_file(
             self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
     ) -> list[Chunk]:
-        from pathlib import Path
-        ext = Path(file_path).suffix.lower()
-
-        if ext in (".md", ".mdx", ".rst"):
-            return self._chunk_markdown(file_path, text, repo, branch, commit)
-        elif ext in (".py", ".js", ".ts", ".go", ".java", ".rs", ".cpp", ".c", ".h", ".cs", ".kt"):
-            return self._chunk_code(file_path, text, ext, repo, branch, commit)
-        else:
-            return self._chunk_fallback(file_path, text, repo, branch, commit)
-
-    def _chunk_markdown(
-            self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
-    ) -> list[Chunk]:
-        lines = text.splitlines()
-        chunks = []
-        current_header = "preamble"
-        current_lines = []
-        start_line = 0
-
-        for i, line in enumerate(lines):
-            if line.startswith("#"):
-                if current_lines:
-                    chunks.append(self._make_chunk(
-                        repo, branch, commit, file_path, "markdown",
-                        ChunkType.SECTION, current_header[:80],
-                        start_line + 1, i, "\n".join(current_lines),
-                    ))
-                current_header = line.lstrip("# ").strip()[:80] or "section"
-                current_lines = [line]
-                start_line = i
-            else:
-                current_lines.append(line)
-
-        if current_lines:
-            chunks.append(self._make_chunk(
-                repo, branch, commit, file_path, "markdown",
-                ChunkType.SECTION, current_header[:80],
-                start_line + 1, len(lines), "\n".join(current_lines),
-            ))
-
-        return chunks
-
-    def _chunk_code(
-            self, file_path: str, text: str, ext: str, repo: RepoSlug, branch: BranchName, commit: str,
-    ) -> list[Chunk]:
-        lines = text.splitlines()
-        target = self.chunker.chunk_target_tokens // 4
-        overlap = self.chunker.chunk_overlap_tokens // 4
-        chunks = []
-
-        for i in range(0, len(lines), target - overlap):
-            chunk_text = "\n".join(lines[i:i + target])
-            if not chunk_text.strip():
-                continue
-            chunks.append(self._make_chunk(
-                repo, branch, commit, file_path, ext.lstrip("."),
-                ChunkType.WINDOW, f"chunk_{len(chunks)}",
-                i + 1, min(i + target, len(lines)), chunk_text,
-            ))
-        return chunks
-
-    def _chunk_fallback(
-            self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
-    ) -> list[Chunk]:
-        return self._chunk_code(file_path, text, Path(file_path).suffix.lstrip("."), repo, branch, commit)
-
-    def _make_chunk(
-            self, repo: RepoSlug, branch: BranchName, commit: str, file_path: str,
-            file_type: str, sym_type: ChunkType, sym_name: str,
-            start: int, end: int, text: str,
-    ) -> Chunk:
-        return Chunk(
-            chunk_id=ChunkId.from_parts(repo, file_path, start, end),
-            repo=repo, branch=branch, commit_sha=commit,
-            file_path=file_path, file_type=file_type,
-            symbol_type=sym_type, symbol_name=sym_name,
-            start_line=start, end_line=end, text=text,
-            content_hash=ContentHash.compute(text), tier=Tier.INTERNAL,
-        )
+        # Delegate to the domain ChunkerFactory (tree-sitter code chunking,
+        # header-aware markdown chunking, sliding-window fallback) instead of
+        # re-implementing chunking here.
+        return self._chunker_factory.chunk(file_path, text, repo, branch, commit)
 
 
 @dataclass
