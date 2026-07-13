@@ -24,7 +24,7 @@ from claudenv.adapters.config import get_config
 from claudenv.adapters.persistence import SQLiteDatabase
 from claudenv.adapters.services import FileServiceRegistry
 from claudenv.domain.policy import PolicyEngine, PolicyService
-from claudenv.domain.value_objects import RepoSlug, Tier, SessionId
+from claudenv.domain.value_objects import SessionId
 from claudenv.ports import IAuditLogger, IDatabase
 
 
@@ -465,7 +465,7 @@ def create_server(
         db=db,
         session_id=SessionId.from_string(session_id),
         actor=actor,
-        repo=RepoSlug.from_string(repo_root.name),
+        repo=repo_root.name,
         tier=tier,
     )
     service_registry = FileServiceRegistry(config.get_claude_env_home())
