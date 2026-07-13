@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 from claudenv.domain.audit import ChainVerificationResult
 from claudenv.domain.value_objects import (
-    EventId, EventType, RepoSlug, RequestId, SessionId, Tier,
+    BranchName, EventId, EventType, NodeId, RepoSlug, RequestId, SessionId, Tier,
 )
 
 

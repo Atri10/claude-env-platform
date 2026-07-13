@@ -3,7 +3,6 @@ claude-env :: DI - Dependency Injection Container
 """
 from __future__ import annotations
 
-import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,16 +11,18 @@ from typing import Any, Callable, TypeVar
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
 from claudenv.adapters.embedding import get_embedder, get_reranker
+from claudenv.adapters.services import FileServiceRegistry
 from claudenv.adapters.persistence import (
     SQLiteAuditRepository, SQLiteDatabase, SQLiteMemoryRepository, SQLiteRagBookkeeping,
 )
+from claudenv.application.approval import ApprovalGate
 from claudenv.application.memory import MemoryGraph
 from claudenv.application.rag import RagIndexer, RagService
 from claudenv.domain.policy import PolicyEngine, PolicyService
 from claudenv.ports import (
-    IAuditLogger, IAuditRepository, IConfigProvider, IDatabase, IEmbeddingProvider,
-    IEventBus, IMemoryGraph, IMemoryRepository, IRagBookkeeping, IRagIndexer,
-    IRagRetriever, IReranker, IServiceRegistry,
+    IApprovalGate, IAuditLogger, IAuditRepository, IConfigProvider, IDatabase,
+    IEmbeddingProvider, IEventBus, IMemoryGraph, IMemoryRepository, IRagBookkeeping,
+    IRagIndexer, IRagRetriever, IReranker, IServiceRegistry,
 )
 
 T = TypeVar("T")
@@ -174,10 +175,13 @@ def _configure_container(c: Container) -> None:
     c.register_factory(PolicyEngine, lambda: make_policy_engine("."))
 
     # --- Approval ---
-    # TODO: register approval gate, notifier, UI
+    c.register_factory(
+        IApprovalGate,
+        lambda: ApprovalGate(make_audit_logger(session_id="approval-gate", actor="approval-gate"), db),
+    )
 
     # --- Services ---
-    c.register_singleton(IServiceRegistry, ServiceRegistry())
+    c.register_singleton(IServiceRegistry, FileServiceRegistry(config.get_claude_env_home()))
 
     # --- Event Bus ---
     c.register_singleton(IEventBus, EventBus())
@@ -186,45 +190,6 @@ def _configure_container(c: Container) -> None:
 # ============================================================================
 # Utility Classes
 # ============================================================================
-
-class ServiceRegistry:
-    """Local service discovery (ports, PIDs)."""
-
-    def __init__(self):
-        self._services: dict[str, dict] = {}
-
-    def register(self, name: str, port: int, pid: int | None = None, extra: dict | None = None) -> dict:
-        entry = {
-            "name": name, "host": "127.0.0.1", "port": port,
-            "url": f"http://127.0.0.1:{port}", "pid": pid or os.getpid(),
-            "started_at": os.environ.get("CLAUDE_ENV_SESSION", ""),
-        }
-        if extra:
-            entry.update(extra)
-        self._services[name] = entry
-        return entry
-
-    def unregister(self, name: str) -> None:
-        self._services.pop(name, None)
-
-    def get(self, name: str) -> dict | None:
-        return self._services.get(name)
-
-    def list_live(self) -> list[dict]:
-        # Filter dead services
-        live = []
-        for name, entry in self._services.items():
-            pid = entry.get("pid")
-            if pid:
-                try:
-                    os.kill(pid, 0)
-                    live.append(entry)
-                except (ProcessLookupError, PermissionError):
-                    pass
-            else:
-                live.append(entry)
-        return sorted(live, key=lambda e: e.get("name", ""))
-
 
 class EventBus:
     """Simple in-process event bus."""

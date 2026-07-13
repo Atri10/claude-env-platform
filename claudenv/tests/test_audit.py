@@ -7,9 +7,10 @@ import json
 import pytest
 
 from claudenv.domain.audit import (
-    AuditEvent, EventType, ToolCallProjection, AgentActionProjection,
+    AuditEvent, EventType, LedgerRow, ToolCallProjection, AgentActionProjection,
     RetrievalProjection, SecurityProjection, PolicyViolationProjection,
-    HumanApprovalProjection, ProjectionBuilder, verify_chain,
+    HumanApprovalProjection, ProjectionBuilder, compute_event_hash, verify_chain,
+    verify_ledger_chain,
 )
 from claudenv.domain.value_objects import (
     RepoSlug, SessionId, Tier, iso_now,
@@ -339,3 +340,175 @@ class TestChainVerification:
         result = verify_chain([event])
         assert result.ok is True
         assert result.total_events == 1
+
+
+class TestTraceMetadata:
+    """schema_version/host/pid/request_id are governance trace fields folded
+    into the hashed envelope — tampering with them must break verification
+    exactly like tampering with the body does."""
+
+    def test_create_populates_trace_fields(self):
+        event = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool1"},
+            host="build-box-1",
+            pid=4242,
+            request_id="req-abc123",
+        )
+        assert event.schema_version == 2
+        assert event.host == "build-box-1"
+        assert event.pid == 4242
+        assert event.request_id == "req-abc123"
+        assert event.verify("GENESIS")
+
+    def test_trace_fields_default_to_none(self):
+        event = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool1"},
+        )
+        assert event.host is None
+        assert event.pid is None
+        assert event.request_id is None
+        assert event.verify("GENESIS")
+
+    def test_tampered_host_breaks_verification(self):
+        event = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool1"},
+            host="real-host",
+        )
+        tampered = AuditEvent(
+            event_id=event.event_id, ts=event.ts, event_type=event.event_type,
+            actor=event.actor, session_id=event.session_id, repo=event.repo,
+            tier=event.tier, payload=event.payload, prev_hash=event.prev_hash,
+            event_hash=event.event_hash, schema_version=event.schema_version,
+            host="attacker-host",  # Changed!
+            pid=event.pid, request_id=event.request_id,
+        )
+        assert not tampered.verify("GENESIS")
+
+    def test_tampered_request_id_breaks_verification(self):
+        event = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool1"},
+            request_id="req-original",
+        )
+        tampered = AuditEvent(
+            event_id=event.event_id, ts=event.ts, event_type=event.event_type,
+            actor=event.actor, session_id=event.session_id, repo=event.repo,
+            tier=event.tier, payload=event.payload, prev_hash=event.prev_hash,
+            event_hash=event.event_hash, schema_version=event.schema_version,
+            host=event.host, pid=event.pid,
+            request_id="req-forged",  # Changed!
+        )
+        assert not tampered.verify("GENESIS")
+
+
+class TestLedgerRow:
+    """LedgerRow/verify_ledger_chain verify a *persisted* chain directly
+    against its stored canonical envelope, rather than reconstructing a
+    typed AuditEvent from separate columns — the reconstruction approach
+    previously drifted from what was actually hashed at write time and made
+    verification fail even for an untampered ledger."""
+
+    def _row_for(self, event: AuditEvent) -> LedgerRow:
+        return LedgerRow(
+            event_id=event.event_id,
+            canonical_json=event.canonical_payload(),
+            prev_hash=event.prev_hash,
+            event_hash=event.event_hash,
+        )
+
+    def test_compute_event_hash_matches_create(self):
+        event = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool1"},
+        )
+        assert compute_event_hash("GENESIS", event.canonical_payload()) == event.event_hash
+
+    def test_ledger_row_verifies_untampered_row(self):
+        event = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool1"},
+        )
+        assert self._row_for(event).verify("GENESIS")
+
+    def test_ledger_row_rejects_wrong_prev_hash(self):
+        event = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool1"},
+        )
+        assert not self._row_for(event).verify("SOME_OTHER_HASH")
+
+    def test_ledger_row_rejects_tampered_canonical_json(self):
+        event = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool1"},
+        )
+        row = self._row_for(event)
+        tampered = LedgerRow(
+            event_id=row.event_id,
+            canonical_json=row.canonical_json.replace("tool1", "tool2"),
+            prev_hash=row.prev_hash,
+            event_hash=row.event_hash,
+        )
+        assert not tampered.verify("GENESIS")
+
+    def test_verify_ledger_chain_valid(self):
+        rows = []
+        prev_hash = "GENESIS"
+        for i in range(3):
+            event = AuditEvent.create(
+                event_type=EventType.TOOL_CALL,
+                actor="agent",
+                session_id=SessionId.from_string("session"),
+                payload={"tool": f"tool{i}"},
+                prev_hash=prev_hash,
+            )
+            rows.append(self._row_for(event))
+            prev_hash = event.event_hash
+
+        result = verify_ledger_chain(rows)
+        assert result.ok is True
+        assert result.broken_at is None
+        assert result.total_events == 3
+
+    def test_verify_ledger_chain_detects_break(self):
+        event1 = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool1"},
+        )
+        event2 = AuditEvent.create(
+            event_type=EventType.TOOL_CALL,
+            actor="agent",
+            session_id=SessionId.from_string("session"),
+            payload={"tool": "tool2"},
+            prev_hash="WRONG_HASH",
+        )
+        result = verify_ledger_chain([self._row_for(event1), self._row_for(event2)])
+        assert result.ok is False
+        assert result.broken_at == event2.event_id
+        assert result.total_events == 1
+
+    def test_verify_ledger_chain_empty(self):
+        result = verify_ledger_chain([])
+        assert result.ok is True
+        assert result.total_events == 0

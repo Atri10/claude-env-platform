@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -20,10 +19,13 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
-from claudenv.domain.policy import PolicyEngine
+from claudenv.adapters.persistence import SQLiteDatabase
+from claudenv.adapters.services import FileServiceRegistry
+from claudenv.domain.policy import PolicyEngine, PolicyService
 from claudenv.domain.value_objects import RepoSlug, Tier, SessionId
-from claudenv.ports import IAuditLogger
+from claudenv.ports import IAuditLogger, IDatabase
 
 
 # --- Constants ---------------------------------------------------------------
@@ -61,11 +63,15 @@ class TerminalServer:
         repo_root: Path,
         audit_logger: IAuditLogger,
         policy_engine: PolicyEngine,
+        db: IDatabase,
+        service_registry: FileServiceRegistry,
         session_id: str = "mcp-terminal",
     ):
         self.repo_root = repo_root
         self.audit = audit_logger
         self.engine = policy_engine
+        self.db = db
+        self.service_registry = service_registry
         self.session_id = session_id
         self.scratch_root = (_HOME / "scratch" / repo_root.name).resolve()
 
@@ -150,7 +156,7 @@ class TerminalServer:
                 req_id = self.audit.human_approval_request(
                     agent="terminal",
                     action=f"terminal.run{' (scratch)' if in_scratch else ''}: {command}",
-                    tier=self.engine.repo.tier if self.engine.repo else None,
+                    tier=self.engine.get_compiled().tier,
                 )
                 self._notify_pending_approval()
                 self._ensure_approvals_ui()
@@ -196,14 +202,12 @@ class TerminalServer:
     # --- Approval flow -------------------------------------------------------
 
     async def _await_decision(self, req_id: str) -> Tuple[str, str | None]:
-        import time
-        from claudenv.adapters.config import get_config
-        config = get_config()
-        db = config.get_database()
-
+        """Block until the operator approves/denies this request (or we time
+        out). Polls the human_approvals row the approvals UI updates in
+        another process."""
         waited = 0
         while waited < _WAIT_S:
-            row = db.query_one(
+            row = self.db.query_one(
                 "SELECT decision, decided_by FROM human_approvals WHERE request_id=?",
                 (req_id,),
             )
@@ -214,22 +218,91 @@ class TerminalServer:
         return "pending", None
 
     def _notify_pending_approval(self) -> None:
+        """Schedule the sound as a background asyncio task and return
+        immediately — NEVER block the request-handling path on it. This used
+        to be a synchronous subprocess.run(..., timeout=5) call that could
+        stall the server's single event loop for up to 5s on every approval,
+        before _await_decision even started polling."""
         if os.environ.get("CLAUDE_ENV_APPROVAL_SOUND", "true").lower() == "false":
             return
         try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # checked BEFORE constructing the task coroutine so none is left
+            # dangling/unawaited.
+            return
+        asyncio.create_task(self._notify_pending_approval_task())
+
+    async def _notify_pending_approval_task(self) -> None:
+        """Play a system sound the moment a command enters the approval
+        queue. Best-effort: a failure here must never affect the approval
+        flow itself. Disable with CLAUDE_ENV_APPROVAL_SOUND=false."""
+        try:
             if sys.platform == "darwin":
-                subprocess.run(["afplay", "/System/Library/Sounds/Ping.aiff"],
-                              capture_output=True, timeout=5)
+                proc = await asyncio.create_subprocess_exec(
+                    "afplay", "/System/Library/Sounds/Ping.aiff",
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
             elif sys.platform.startswith("linux"):
-                subprocess.run(["canberra-gtk-play", "-i", "dialog-warning"],
-                              capture_output=True, timeout=5)
+                proc = await asyncio.create_subprocess_exec(
+                    "canberra-gtk-play", "-i", "dialog-warning",
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            else:
+                return
+            await proc.wait()
         except Exception:
-            pass  # best effort
+            pass  # missing player binary/audio device must never break approval
 
     def _ensure_approvals_ui(self) -> None:
-        # Approval UI is now handled by the approval service in the main process
-        # This method is kept for compatibility but does nothing
-        pass
+        """Schedule `_ensure_approvals_ui_task()` as a background asyncio task
+        and return immediately — NEVER block the request-handling path on
+        it. The approval row already exists in the DB by the time this is
+        called, so nothing here needs to finish before decision-polling
+        begins."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        asyncio.create_task(self._ensure_approvals_ui_task())
+
+    async def _ensure_approvals_ui_task(self) -> None:
+        """Make sure the approvals server is running, and open ONE browser
+        tab the first time it is started — never per request. The server is
+        a long-lived, single-tab queue: once it's up, every new approval
+        just appears in that same page (auto-refreshing), so we must not
+        `open` the URL again for each command or tabs pile up. Disable
+        browser opening with CLAUDE_ENV_APPROVAL_AUTO_UI=false (the server
+        still starts and the request still blocks)."""
+        try:
+            svc = self.service_registry.get("approvals")
+            if svc is not None:
+                # Already running — the operator already has (or can reopen) the tab.
+                return
+            cmd = [sys.executable, "-m", "claudenv.adapters.approvals_ui"]
+            pref = os.environ.get("CLAUDE_ENV_APPROVAL_PORT")
+            if pref:
+                cmd += ["--port", pref]
+            await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                start_new_session=True)
+            for _ in range(30):  # wait for it to register (~3s)
+                svc = self.service_registry.get("approvals")
+                if svc:
+                    break
+                await asyncio.sleep(0.1)
+            if not svc:
+                return
+            if os.environ.get("CLAUDE_ENV_APPROVAL_AUTO_UI", "true").lower() != "true":
+                return
+            url = svc["url"]
+            opener = ("open" if sys.platform == "darwin" else
+                      "xdg-open" if sys.platform.startswith("linux") else None)
+            if opener:
+                proc = await asyncio.create_subprocess_exec(
+                    opener, url, stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL)
+                await proc.wait()
+        except Exception:
+            pass  # auto-opening is a convenience; the request still blocks
 
     # --- Command parsing -----------------------------------------------------
 
@@ -376,20 +449,6 @@ class TerminalServer:
         tail = stdout_tail + (f"\n[stderr]\n{stderr_tail}" if stderr_tail else "")
         return f"exit={last_exit}\n{tail}"
 
-    # --- Helpers -------------------------------------------------------------
-
-    def _repo_tier(self) -> int | None:
-        pol = self.repo_root / ".claude" / "repo-policy.yaml"
-        try:
-            for line in pol.read_text().splitlines():
-                m = re.match(r"\s*tier\s*:\s*([0-3])\b", line)
-                if m:
-                    return int(m.group(1))
-        except Exception:
-            pass
-        return None
-
-
 def create_server(
     repo_root: Path | str,
     session_id: str = "mcp-terminal",
@@ -398,16 +457,20 @@ def create_server(
     repo_root = Path(repo_root).resolve()
     config = get_config()
 
-    policy_engine = PolicyEngine.load(str(repo_root))
+    policy_engine = PolicyService(config).load_engine(str(repo_root))
+    tier = policy_engine.get_compiled().tier
 
-    audit_logger = config.get_audit_logger(
+    db = SQLiteDatabase(config.get_database_dsn())
+    audit_logger = SqliteAuditLogger(
+        db=db,
         session_id=SessionId.from_string(session_id),
         actor=actor,
         repo=RepoSlug.from_string(repo_root.name),
-        tier=Tier(policy_engine.repo.tier),
+        tier=tier,
     )
+    service_registry = FileServiceRegistry(config.get_claude_env_home())
 
-    return TerminalServer(repo_root, audit_logger, policy_engine, session_id)
+    return TerminalServer(repo_root, audit_logger, policy_engine, db, service_registry, session_id)
 
 
 async def main() -> None:

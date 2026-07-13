@@ -17,22 +17,11 @@ from claudenv.domain.memory import (
     effective_confidence, validate_memory_kind,
 )
 from claudenv.domain.value_objects import (
-    ContentHash, EdgeId, MemoryType, NodeId, RepoSlug, Tier, utc_now,
+    ContentHash, EdgeId, NodeId, RepoSlug, Tier, utc_now,
 )
 from claudenv.ports import (
     IConfigProvider, IEmbeddingProvider, IMemoryGraph, IMemoryRepository,
 )
-
-
-def validate_memory_kind(memory_type: MemoryType, node_kind: NodeKind) -> None:
-    """Validate that (memory_type, node_kind) is a valid combination."""
-    allowed = VALID_KINDS.get(memory_type)
-    if allowed is None or node_kind not in allowed:
-        raise InvalidMemoryKind(
-            f"Invalid combination: memory_type={memory_type.value}, "
-            f"node_kind={node_kind.value}. "
-            f"Valid kinds for {memory_type.value}: {', '.join(k.value for k in allowed)}"
-        )
 
 
 class MemoryGraph(IMemoryGraph):
@@ -160,11 +149,12 @@ class MemoryGraph(IMemoryGraph):
             top_k: int = 10,
             query_vector: list[float] | None = None,
             extra_namespaces: list[str] | None = None,
+            memory_type: MemoryType | None = None,
     ) -> list[MemoryNode]:
         # Keyword recall
         seeds = self.repo.list_nodes(
             namespace=self.namespace,
-            memory_type=None,
+            memory_type=memory_type,
             min_confidence=0.0,
             limit=top_k,
         )
@@ -175,7 +165,7 @@ class MemoryGraph(IMemoryGraph):
         if query_vector and self.embedding:
             emb_seeds = self.repo.list_nodes(
                 namespace=self.namespace,
-                memory_type=None,
+                memory_type=memory_type,
                 min_confidence=0.0,
                 limit=top_k,
             )

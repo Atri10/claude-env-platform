@@ -6,9 +6,8 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any, Protocol
 
-from claudenv.domain.memory import MemoryEdge, MemoryNode, NamespaceConfig
-from claudenv.domain.value_objects import (
-    MemoryType, NodeId, )
+from claudenv.domain.memory import MemoryEdge, MemoryNode, MemoryType, NamespaceConfig
+from claudenv.domain.value_objects import NodeId
 
 
 class IMemoryRepository(Protocol):
@@ -116,6 +115,7 @@ class IMemoryGraph(Protocol):
             top_k: int = 10,
             query_vector: list[float] | None = None,
             extra_namespaces: list[str] | None = None,
+            memory_type: MemoryType | None = None,
     ) -> list[MemoryNode]:
         ...
 

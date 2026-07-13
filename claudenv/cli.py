@@ -9,8 +9,12 @@ import sys
 from pathlib import Path
 
 from claudenv.adapters.config import get_config
+from claudenv.application.audit import ComplianceReportGenerator, SessionReplay
 from claudenv.application.onboarding import OnboardingService
+from claudenv.application.rag import RagService
 from claudenv.di import get_container
+from claudenv.ports.audit import IAuditRepository
+from claudenv.ports.database import IDatabase
 
 
 @click.group()
@@ -145,7 +149,6 @@ def index(ctx, repo_root):
     slug = policy_data.get("repo", Path(repo_root).name)
     branch = "main"  # TODO: detect
 
-    from claudenv.application.rag import RagService
     service = container.get(RagService)
 
     # Get files
@@ -265,8 +268,7 @@ def report(ctx, window, repo, format, out):
     config = get_config()
     container = get_container()
 
-    from claudenv.application.audit import ComplianceReportGenerator
-    generator = ComplianceReportGenerator(container.get(IAuditRepository))
+    generator = ComplianceReportGenerator(container.get(IDatabase), container.get(IAuditRepository))
 
     result = generator.generate(window=window, repo=repo, format=format)
 
@@ -286,17 +288,16 @@ def replay(ctx, list_sessions, session_id):
     config = get_config()
     container = get_container()
 
-    from claudenv.application.audit import SessionReplay
-    replay = SessionReplay(container.get(IAuditRepository))
+    replay = SessionReplay(container.get(IDatabase))
 
     if list_sessions:
         sessions = replay.list_recent(20)
         for s in sessions:
-            click.echo(f"  {s['session_id']}  {s['repo']}  {s['started']}  {s['actions']} actions")
+            click.echo(f"  {s['session_id']}  {s['events']} events  {s['first']} -> {s['last']}  actors={s['actors']}")
     elif session_id:
         timeline = replay.get_timeline(session_id)
         for step in timeline:
-            click.echo(f"  [{step['ts']}] {step['actor']}: {step['action']} -> {step['result']}")
+            click.echo(f"  [{step['ts']}] #{step['event_id']} {step['type']} [{step['actor']}] {step['summary']}")
     else:
         click.echo("Use --list or provide a session_id")
 

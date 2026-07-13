@@ -48,7 +48,7 @@ class BootstrapResult:
     step_name: str = ""
 
     @classmethod
-    def success(cls, message: str, warnings: list[str] | None = None, step_name: str = "") -> BootstrapResult:
+    def ok(cls, message: str, warnings: list[str] | None = None, step_name: str = "") -> BootstrapResult:
         return cls(success=True, message=message, warnings=warnings or [], step_name=step_name)
 
     @classmethod

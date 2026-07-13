@@ -4,14 +4,19 @@ claude-env :: Adapters - SQLite Persistence
 from __future__ import annotations
 
 import json
+import os
+import socket
 import sqlite3
 import threading
+import uuid
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from claudenv.domain.audit import (
-    AuditEvent, ChainVerificationResult, EventId, EventType, SessionId, Tier, verify_chain,
+    AuditEvent, ChainVerificationResult, EventId, EventType, LedgerRow, SessionId, Tier,
+    verify_ledger_chain,
 )
 from claudenv.domain.memory import (
     MemoryEdge, MemoryNode, MemoryType, NodeId,
@@ -92,16 +97,26 @@ class SQLiteDatabase(IDatabase):
             self._conn.close()
 
     def apply_schema(self, *schema_files: str) -> None:
-        """Apply SQL schema files in order."""
+        """Apply SQL schema files in order.
+
+        Idempotent: SQLite has no ADD COLUMN IF NOT EXISTS, so a migration
+        that widens an existing table (see sql/004_audit_trace_metadata.sql)
+        will raise "duplicate column name" on a later bootstrap re-run once
+        the column already exists. That specific, well-understood error is
+        swallowed; every other error still aborts and raises.
+        """
         with self._lock:
             cur = self._conn.cursor()
             for schema_file in schema_files:
                 path = Path(schema_file)
-                if path.exists():
-                    sql = path.read_text()
-                    cur.executescript(sql)
-                else:
+                if not path.exists():
                     raise FileNotFoundError(f"Schema file not found: {schema_file}")
+                sql = path.read_text()
+                try:
+                    cur.executescript(sql)
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" not in str(e):
+                        raise
             self._conn.commit()
 
 
@@ -167,38 +182,47 @@ class SQLiteAuditRepository(IAuditRepository):
             projection: tuple[str, dict[str, Any]] | None = None,
     ) -> EventId:
         with self._db.transaction() as tx:
-            # Get previous hash
             prev_row = tx.query(
                 "SELECT event_hash FROM audit_events ORDER BY event_id DESC LIMIT 1"
             )
             prev_hash = prev_row[0]["event_hash"] if prev_row else "GENESIS"
 
-            ts = utc_now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            full_payload = {
-                "ts": ts, "event_type": event_type.value, "actor": actor,
-                "session_id": str(session_id), "repo": str(repo) if repo else None,
-                "tier": int(tier) if tier is not None else None, "body": payload,
-            }
-            canon = json.dumps(full_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-            import hashlib
-            event_hash = hashlib.sha256((prev_hash + canon).encode("utf-8")).hexdigest()
-            event_id = EventId.generate()
+            # Domain owns canonical construction + hashing (single source of
+            # truth shared with SqliteAuditLogger); this adapter only persists
+            # the result and supplies process-identity trace metadata.
+            event = AuditEvent.create(
+                event_type=event_type,
+                actor=actor,
+                session_id=session_id,
+                payload=payload,
+                repo=repo,
+                tier=tier,
+                prev_hash=prev_hash,
+                host=socket.gethostname(),
+                pid=os.getpid(),
+                request_id=f"req-{uuid.uuid4().hex[:16]}",
+            )
 
             tx.execute(
                 "INSERT INTO audit_events "
-                "(event_id, ts, event_type, actor, session_id, repo, tier, payload_json, prev_hash, event_hash) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (str(event_id), ts, event_type.value, actor, str(session_id),
-                 str(repo) if repo else None, int(tier) if tier else None,
-                 canon, prev_hash, event_hash),
+                "(ts, event_type, actor, session_id, repo, tier, payload_json, prev_hash, "
+                " event_hash, schema_version, host, pid, request_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (event.ts, event_type.value, actor, str(session_id),
+                 str(repo) if repo else None, int(tier) if tier is not None else None,
+                 event.canonical_payload(), prev_hash, event.event_hash,
+                 event.schema_version, event.host, event.pid, event.request_id),
             )
+            # event_id is the table's AUTOINCREMENT primary key, assigned by
+            # SQLite on insert — never generate/supply it ourselves.
+            event_id_int = tx.query("SELECT last_insert_rowid() as id")[0]["id"]
+            event_id = EventId.from_string(f"evt-{event_id_int}")
 
-            # Write projection if provided
             if projection:
                 table, cols = projection
-                cols = {**cols, "event_id": event_id}
+                cols = {**cols, "event_id": event_id_int}
                 if table != "human_approvals":
-                    cols["ts"] = ts
+                    cols["ts"] = event.ts
                 names = ",".join(cols.keys())
                 qs = ",".join(["?"] * len(cols))
                 tx.execute(f"INSERT INTO {table} ({names}) VALUES ({qs})", tuple(cols.values()))
@@ -213,15 +237,16 @@ class SQLiteAuditRepository(IAuditRepository):
 
     def verify_chain(self) -> ChainVerificationResult:
         rows = self.get_chain()
-        events = [AuditEvent(
-            event_id=EventId.from_string(r["event_id"]),
-            ts=r["payload_json"],  # placeholder
-            event_type=EventType.TOOL_CALL,  # placeholder
-            actor="", session_id=SessionId.generate(),
-            repo=None, tier=None, payload={},
-            prev_hash=r["prev_hash"], event_hash=r["event_hash"],
-        ) for r in rows]
-        return verify_chain(events)
+        ledger = [
+            LedgerRow(
+                event_id=EventId.from_string(f"evt-{r['event_id']}"),
+                canonical_json=r["payload_json"],
+                prev_hash=r["prev_hash"],
+                event_hash=r["event_hash"],
+            )
+            for r in rows
+        ]
+        return verify_ledger_chain(ledger)
 
 
 # ============================================================================

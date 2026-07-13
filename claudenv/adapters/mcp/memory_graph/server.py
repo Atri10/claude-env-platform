@@ -228,6 +228,7 @@ class MemoryGraphServer:
             query=query,
             depth=depth,
             top_k=top_k,
+            memory_type=mem_type,
         )
 
         if not results:

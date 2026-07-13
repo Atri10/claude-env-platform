@@ -4,42 +4,15 @@ claude-env :: Ports - RAG Interfaces
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 from claudenv.domain.rag import (
     Chunk, IndexState, RetrievalMode,
-    RetrievalQuery, RetrievalResult, )
+    RetrievalQuery, RetrievalResult,
+)
 from claudenv.domain.value_objects import (
     BranchName, ContentHash, RepoSlug, Tier,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class RetrievalQuery:
-    """A retrieval query with options."""
-    query: str
-    query_vector: list[float] | None
-    top_k: int
-    mode: RetrievalMode
-    repo_filter: RepoSlug | None
-    branch_filter: BranchName | None
-    tier_filter: Tier | None
-
-
-@dataclass(frozen=True, slots=True)
-class RetrievalResult:
-    """A ranked retrieval result."""
-    chunk: Chunk
-    score: float
-    rank: int
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "chunk": self.chunk.to_metadata(),
-            "score": self.score,
-            "rank": self.rank,
-        }
 
 
 class IRagIndexer(Protocol):

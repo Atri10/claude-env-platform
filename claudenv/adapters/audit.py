@@ -5,17 +5,25 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import threading
+import uuid
 from typing import Any
 
 from claudenv.domain.audit import (
-    AuditEvent, ChainVerificationResult, EventId, EventType, ProjectionBuilder,
-    SessionId, Tier, verify_chain,
+    AuditEvent, ChainVerificationResult, EventId, EventType, LedgerRow, ProjectionBuilder,
+    SessionId, Tier, verify_ledger_chain,
 )
 from claudenv.domain.value_objects import RepoSlug
 from claudenv.ports import IAuditLogger
 
 GENESIS = "GENESIS"
+
+# Identifies this OS process across every event it writes, so a report or
+# replay can group "everything one running agent process did" without
+# parsing timestamps. Cheap governance: costs nothing per-event, computed once.
+_HOST = socket.gethostname()
+_PID = os.getpid()
 
 
 class SqliteAuditLogger(IAuditLogger):
@@ -44,40 +52,51 @@ class SqliteAuditLogger(IAuditLogger):
 
     def _append(self, event_type: EventType, payload: dict[str, Any]) -> EventId:
         with self._lock:
-            ts = self._iso_now()
-            # Build canonical payload for hashing (matching domain model)
-            full_payload = {
-                "ts": ts, "event_type": event_type.value, "actor": self._actor,
-                "session_id": str(self._session_id), "repo": self._repo,
-                "tier": int(self._tier) if self._tier else None, "body": payload,
-            }
-            canon = json.dumps(full_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
             # Use transaction with immediate lock for hash chain integrity
             with self.db.transaction(immediate=True) as tx:
                 prev_row = tx.query(
                     "SELECT event_hash FROM audit_events ORDER BY event_id DESC LIMIT 1")
                 prev_hash = prev_row[0]["event_hash"] if prev_row else GENESIS
-                event_hash = self._hash(prev_hash, canon)
 
-                # Insert - store only the body in payload_json (domain model reconstructs canon)
+                # Domain owns canonical construction + hashing; the adapter
+                # only supplies process-identity trace metadata and persists
+                # the result. event_id/event_hash from create() are
+                # provisional until the row lands — the real event_id comes
+                # back from the autoincrement PK below.
+                event = AuditEvent.create(
+                    event_type=event_type,
+                    actor=self._actor,
+                    session_id=self._session_id,
+                    payload=payload,
+                    repo=RepoSlug.from_string(self._repo) if self._repo else None,
+                    tier=self._tier,
+                    prev_hash=prev_hash,
+                    host=_HOST,
+                    pid=_PID,
+                    request_id=f"req-{uuid.uuid4().hex[:16]}",
+                )
+
+                # Store the exact canonical envelope that was hashed — not a
+                # reconstruction of it — so verify_chain never has to guess
+                # what was actually signed.
                 tx.execute(
                     """INSERT INTO audit_events
-                       (ts, event_type, actor, session_id, repo, tier, payload_json, prev_hash, event_hash)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (ts, event_type.value, self._actor, str(self._session_id),
+                       (ts, event_type, actor, session_id, repo, tier, payload_json,
+                        prev_hash, event_hash, schema_version, host, pid, request_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (event.ts, event_type.value, self._actor, str(self._session_id),
                      self._repo, int(self._tier) if self._tier else None,
-                     json.dumps(payload, sort_keys=True, separators=(",", ":")),
-                     prev_hash, event_hash),
+                     event.canonical_payload(), prev_hash, event.event_hash,
+                     event.schema_version, event.host, event.pid, event.request_id),
                 )
                 # Get the auto-generated integer ID
                 event_id_int = tx.query("SELECT last_insert_rowid() as id")[0]["id"]
                 event_id = EventId.from_string(f"evt-{event_id_int}")
 
                 # Write projection with the integer ID
-                self._write_projection(tx, event_type, event_id_int, ts, payload)
+                self._write_projection(tx, event_type, event_id_int, event.ts, payload)
 
-                self._prev_hash = event_hash
+                self._prev_hash = event.event_hash
                 return event_id
 
     def _write_projection(self, tx, event_type: EventType, event_id_int: int, ts: str, payload: dict) -> None:
@@ -211,29 +230,17 @@ class SqliteAuditLogger(IAuditLogger):
         })
 
     def verify_chain(self) -> ChainVerificationResult:
-        rows = self.db.query("SELECT * FROM audit_events ORDER BY event_id ASC")
-        events = []
-        for r in rows:
-            events.append(AuditEvent(
+        rows = self.db.query(
+            "SELECT event_id, payload_json, prev_hash, event_hash "
+            "FROM audit_events ORDER BY event_id ASC"
+        )
+        ledger = [
+            LedgerRow(
                 event_id=EventId.from_string(f"evt-{r['event_id']}"),
-                ts=r["ts"],
-                event_type=EventType(r["event_type"]),
-                actor=r["actor"],
-                session_id=SessionId.from_string(r["session_id"]),
-                repo=RepoSlug.from_string(r["repo"]) if r["repo"] else None,
-                tier=Tier(r["tier"]) if r["tier"] is not None else None,
-                payload=json.loads(r["payload_json"]),
+                canonical_json=r["payload_json"],
                 prev_hash=r["prev_hash"],
                 event_hash=r["event_hash"],
-            ))
-        return verify_chain(events)
-
-    @staticmethod
-    def _iso_now() -> str:
-        from datetime import datetime, timezone
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-    @staticmethod
-    def _hash(prev_hash: str, canon_payload: str) -> str:
-        import hashlib
-        return hashlib.sha256((prev_hash + canon_payload).encode("utf-8")).hexdigest()
+            )
+            for r in rows
+        ]
+        return verify_ledger_chain(ledger)

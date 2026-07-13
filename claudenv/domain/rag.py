@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Any
 
 from claudenv.domain.value_objects import (
-    BranchName, ChunkId, ContentHash, RepoSlug, Tier, utc_now,
+    BranchName, ChunkId, ContentHash, RepoSlug, TableName, Tier, utc_now,
 )
 
 

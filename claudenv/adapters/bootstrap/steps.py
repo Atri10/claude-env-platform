@@ -56,7 +56,7 @@ class EnvironmentCheckStep:
             warnings.append("homebrew not found (needed for --with-brew)")
 
         message = "environment check passed" if good else "environment check has warnings"
-        return BootstrapResult.success(message, warnings) if good else BootstrapResult.failure(message, warnings)
+        return BootstrapResult.ok(message, warnings) if good else BootstrapResult.failure(message, warnings)
 
     def can_skip(self, context: BootstrapContext) -> bool:
         return False  # Always run environment check
@@ -84,7 +84,7 @@ class DirectoryLayoutStep:
         home = Path(context.home)
         for d in dirs:
             (home / d).mkdir(parents=True, exist_ok=True)
-        return BootstrapResult.success(f"directory layout created under {home}")
+        return BootstrapResult.ok(f"directory layout created under {home}")
 
     def can_skip(self, context: BootstrapContext) -> bool:
         return False  # Idempotent, always run
@@ -109,7 +109,7 @@ class VenvCreationStep:
         venv_py = Path(context.venv_python)
 
         if venv_py.exists() and not context.recreate_venv:
-            return BootstrapResult.success(f"venv already exists at {venv_path}")
+            return BootstrapResult.ok(f"venv already exists at {venv_path}")
 
         print(f"creating venv at {venv_path} ...")
         if self._uv_available:
@@ -124,7 +124,7 @@ class VenvCreationStep:
         else:
             _venv.create(str(venv_path), with_pip=True, clear=context.recreate_venv, symlinks=True)
 
-        return BootstrapResult.success(f"venv created: {venv_py}")
+        return BootstrapResult.ok(f"venv created: {venv_py}")
 
     def can_skip(self, context: BootstrapContext) -> bool:
         if context.no_venv_create:
@@ -230,8 +230,8 @@ class DependencyInstallStep:
 
         msg = "python dependencies installed into venv"
         if warnings:
-            return BootstrapResult.success(msg, warnings)
-        return BootstrapResult.success(msg)
+            return BootstrapResult.ok(msg, warnings)
+        return BootstrapResult.ok(msg)
 
     def can_skip(self, context: BootstrapContext) -> bool:
         return context.no_deps
@@ -262,8 +262,9 @@ class DatabaseInitStep:
             str(repo_dir / "sql" / "001_schema.sql"),
             str(repo_dir / "sql" / "002_retention.sql"),
             str(repo_dir / "sql" / "003_extensions.sql"),
+            str(repo_dir / "sql" / "004_audit_trace_metadata.sql"),
         )
-        return BootstrapResult.success(f"database schema applied ({db.backend})")
+        return BootstrapResult.ok(f"database schema applied ({db.backend})")
 
     def can_skip(self, context: BootstrapContext) -> bool:
         return False  # Idempotent, always run
@@ -291,10 +292,10 @@ class LanceDBInitStep:
             cwd=str(path),
         )
         if result.returncode == 0:
-            return BootstrapResult.success(f"lancedb initialized at {path}")
+            return BootstrapResult.ok(f"lancedb initialized at {path}")
         else:
             warnings = ["lancedb not importable in venv; directory created, check pip output above"]
-            return BootstrapResult.success(f"lancedb directory created at {path}", warnings)
+            return BootstrapResult.ok(f"lancedb directory created at {path}", warnings)
 
     def can_skip(self, context: BootstrapContext) -> bool:
         return False  # Idempotent
@@ -388,7 +389,7 @@ class PolicyConfigStep:
             shutil.copy2(src_cli, dst_cli)
             dst_cli.chmod(0o755)
 
-        return BootstrapResult.success(f"platform code mirrored under {home}", warnings)
+        return BootstrapResult.ok(f"platform code mirrored under {home}", warnings)
 
     def _reap_stale_scratch(self, home: Path, ttl_hours: float = 24) -> list[str]:
         import time
@@ -437,7 +438,7 @@ class AuditInitStep:
                          summary="platform bootstrap complete", success=True)
         result = log.verify_chain()
         if result.ok:
-            return BootstrapResult.success("audit chain initialized and verified")
+            return BootstrapResult.ok("audit chain initialized and verified")
         else:
             return BootstrapResult.failure(f"audit chain verification failed at event {result.broken_at}")
 
@@ -459,12 +460,12 @@ class ValidationStep:
     def execute(self, context: BootstrapContext) -> BootstrapResult:
         script = Path(context.repo_dir) / "claudenv" / "validation" / "validate_installation.py"
         if not script.exists():
-            return BootstrapResult.success("validate_installation.py not found; skipping final validation",
+            return BootstrapResult.ok("validate_installation.py not found; skipping final validation",
                                            ["validate_installation.py not found; skipping final validation"])
 
         result = subprocess.run([context.venv_python, str(script)])
         if result.returncode == 0:
-            return BootstrapResult.success("installation validation passed")
+            return BootstrapResult.ok("installation validation passed")
         else:
             return BootstrapResult.failure("installation validation failed")
 
@@ -509,7 +510,7 @@ Add to ~/.zshrc for convenience:
   export CLAUDE_ENV_HOME="{context.home}"
   export PATH="$CLAUDE_ENV_HOME/bin:$PATH"
 """)
-        return BootstrapResult.success("activation hints printed")
+        return BootstrapResult.ok("activation hints printed")
 
     def can_skip(self, context: BootstrapContext) -> bool:
         return False

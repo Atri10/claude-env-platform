@@ -16,6 +16,10 @@ from claudenv.domain.value_objects import (
 
 GENESIS = "GENESIS"
 
+# Envelope format version. Bump when the canonical-payload shape changes so
+# historical rows stay verifiable under the schema they were written with.
+ENVELOPE_SCHEMA_VERSION = 2
+
 
 class EventType(str, Enum):
     """Audit event types."""
@@ -32,7 +36,13 @@ class EventType(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AuditEvent:
-    """Immutable audit event with hash chain."""
+    """Immutable audit event with hash chain.
+
+    schema_version/host/pid/request_id are governance trace metadata: they
+    are folded into the hashed envelope like every other field, so tampering
+    with *where* or *under what correlation* an event happened is caught by
+    chain verification exactly like tampering with the event body is.
+    """
     event_id: EventId
     ts: str  # ISO 8601
     event_type: EventType
@@ -43,18 +53,19 @@ class AuditEvent:
     payload: dict[str, Any]
     prev_hash: str
     event_hash: str
+    schema_version: int = ENVELOPE_SCHEMA_VERSION
+    host: str | None = None
+    pid: int | None = None
+    request_id: str | None = None
 
     def canonical_payload(self) -> str:
-        """Canonical JSON for hashing."""
-        return json.dumps({
-            "ts": self.ts,
-            "event_type": self.event_type.value,
-            "actor": self.actor,
-            "session_id": str(self.session_id),
-            "repo": str(self.repo) if self.repo else None,
-            "tier": int(self.tier) if self.tier is not None else None,
-            "body": self.payload,
-        }, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        """Canonical JSON for hashing — the exact bytes that must be persisted
+        verbatim, since verification replays this string rather than
+        re-deriving it from separately stored columns."""
+        return self._build_canonical(
+            self.ts, self.event_type, self.actor, self.session_id, self.repo, self.tier,
+            self.payload, self.schema_version, self.host, self.pid, self.request_id,
+        )
 
     @classmethod
     def create(
@@ -66,10 +77,16 @@ class AuditEvent:
             repo: RepoSlug | None = None,
             tier: Tier | None = None,
             prev_hash: str = GENESIS,
+            host: str | None = None,
+            pid: int | None = None,
+            request_id: str | None = None,
     ) -> AuditEvent:
         ts = iso_now()
         event_id = EventId.generate()
-        canonical = cls._build_canonical(ts, event_type, actor, session_id, repo, tier, payload)
+        canonical = cls._build_canonical(
+            ts, event_type, actor, session_id, repo, tier, payload,
+            ENVELOPE_SCHEMA_VERSION, host, pid, request_id,
+        )
         event_hash = hashlib.sha256((prev_hash + canonical).encode("utf-8")).hexdigest()
         return cls(
             event_id=event_id,
@@ -82,6 +99,10 @@ class AuditEvent:
             payload=payload,
             prev_hash=prev_hash,
             event_hash=event_hash,
+            schema_version=ENVELOPE_SCHEMA_VERSION,
+            host=host,
+            pid=pid,
+            request_id=request_id,
         )
 
     @staticmethod
@@ -93,14 +114,22 @@ class AuditEvent:
             repo: RepoSlug | None,
             tier: Tier | None,
             payload: dict[str, Any],
+            schema_version: int = ENVELOPE_SCHEMA_VERSION,
+            host: str | None = None,
+            pid: int | None = None,
+            request_id: str | None = None,
     ) -> str:
         return json.dumps({
+            "schema_version": schema_version,
             "ts": ts,
             "event_type": event_type.value,
             "actor": actor,
             "session_id": str(session_id),
             "repo": str(repo) if repo else None,
             "tier": int(tier) if tier is not None else None,
+            "host": host,
+            "pid": pid,
+            "request_id": request_id,
             "body": payload,
         }, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -314,10 +343,48 @@ class ChainVerificationResult:
 
 
 def verify_chain(events: list[AuditEvent]) -> ChainVerificationResult:
-    """Verify the entire hash chain."""
+    """Verify a chain of fully-typed, in-memory events (e.g. freshly created)."""
     prev_hash = GENESIS
     for i, event in enumerate(events):
         if not event.verify(prev_hash):
             return ChainVerificationResult(False, event.event_id, i)
         prev_hash = event.event_hash
     return ChainVerificationResult(True, None, len(events))
+
+
+def compute_event_hash(prev_hash: str, canonical_json: str) -> str:
+    """The one place the chain's hash function is defined — everything that
+    writes or verifies the ledger must call this, not reimplement it."""
+    return hashlib.sha256((prev_hash + canonical_json).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class LedgerRow:
+    """A persisted ledger row, verified directly against its own stored
+    canonical envelope. Deliberately avoids reconstructing a typed AuditEvent
+    from separate columns: that reconstruction previously drifted from what
+    was actually hashed at write time (dropped fields, regenerated
+    session/request ids, mismatched payload shape), which silently made
+    chain verification fail even for an untampered ledger. Storing and
+    replaying the exact canonical string closes that gap for good.
+    """
+    event_id: EventId
+    canonical_json: str
+    prev_hash: str
+    event_hash: str
+
+    def verify(self, expected_prev_hash: str) -> bool:
+        return (
+            self.prev_hash == expected_prev_hash
+            and compute_event_hash(self.prev_hash, self.canonical_json) == self.event_hash
+        )
+
+
+def verify_ledger_chain(rows: list[LedgerRow]) -> ChainVerificationResult:
+    """Verify a persisted chain read back from storage (see LedgerRow)."""
+    prev_hash = GENESIS
+    for i, row in enumerate(rows):
+        if not row.verify(prev_hash):
+            return ChainVerificationResult(False, row.event_id, i)
+        prev_hash = row.event_hash
+    return ChainVerificationResult(True, None, len(rows))

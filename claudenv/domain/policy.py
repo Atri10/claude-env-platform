@@ -4,6 +4,7 @@ claude-env :: Domain - Policy Entities
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path as _FsPath
 from typing import Any
 
 from claudenv.domain.value_objects import (
@@ -353,7 +354,7 @@ class PolicyService:
         return GlobalPolicy.from_yaml(data)
 
     def get_repo_policy(self, repo_root: str) -> RepoPolicy | None:
-        repo_yaml = Path(repo_root) / ".claude" / "repo-policy.yaml"
+        repo_yaml = _FsPath(repo_root) / ".claude" / "repo-policy.yaml"
         if not repo_yaml.exists():
             return None
         import yaml
@@ -361,13 +362,17 @@ class PolicyService:
         return RepoPolicy.from_yaml(data)
 
     def load_engine(self, repo_root: str) -> PolicyEngine:
+        global_policy = self.get_global_policy()
         repo_policy = self.get_repo_policy(repo_root)
         if not repo_policy:
-            # No repo policy - use global defaults
-            global_policy = self.get_global_policy()
-            return PolicyEngine(global_policy.to_compiled(GlobalPolicy()))
-
-        global_policy = self.get_global_policy()
+            # No repo-policy.yaml yet — compile a default repo policy (tier
+            # from global defaults, no repo-specific rules) against the same
+            # RepoPolicy.to_compiled() path a real one uses, rather than a
+            # separate compile function that could drift from it.
+            repo_policy = RepoPolicy(
+                version=1, tier=global_policy.tier,
+                repo=RepoSlug.from_string(_FsPath(repo_root).name),
+            )
         return PolicyEngine(repo_policy.to_compiled(global_policy))
 
     def simulate(self, repo_root: str, candidate: dict[str, Any]) -> dict[str, Any]:

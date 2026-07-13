@@ -46,14 +46,6 @@ class Tier(int, Enum):
         }[self]
 
 
-class MemoryType(str, Enum):
-    """Top-level memory categories."""
-    EPISODIC = "episodic"
-    SEMANTIC = "semantic"
-    PROCEDURAL = "procedural"
-    AGENT = "agent"
-
-
 class Action(str, Enum):
     """Policy decision actions."""
     ALLOW = "allow"

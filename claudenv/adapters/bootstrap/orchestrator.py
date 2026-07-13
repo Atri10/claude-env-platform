@@ -33,7 +33,7 @@ class BootstrapOrchestrator:
         results = []
         for step in self._steps:
             if step.can_skip(context):
-                results.append(BootstrapResult.success(f"{step.name}: skipped"))
+                results.append(BootstrapResult.ok(f"{step.name}: skipped"))
                 continue
 
             print(f"\n== {step.name} ==")
