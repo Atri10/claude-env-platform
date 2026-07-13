@@ -75,7 +75,7 @@ covers how `terminal.run` reaches it.
 | `--port` | `8002` | Preferred port; `lib.services.bind_http` falls back to an OS-assigned free port if busy. |
 | `--by` | OS `user@host` via `getpass.getuser()` + `socket.gethostname()` | Overrides the auto-recorded `decided_by`. Only exists for edge cases (docstring: "override with `--by` only if you need to"). |
 | `TOKEN` | `secrets.token_urlsafe(24)`, generated once per process at import time | Per-process CSRF token embedded as a hidden form field in every card; not persisted, not configurable. |
-| page auto-refresh | `<meta http-equiv="refresh" content="15">` | The page polls itself every 15s; there's no websocket/SSE push. |
+| page auto-refresh | `<meta http-equiv="refresh" content="5">` | The page polls itself every 5s; there's no websocket/SSE push. |
 
 ### `mcp-servers/terminal/server.py` runtime knobs
 
@@ -478,7 +478,7 @@ so a burst of commands piled up a wall of duplicate tabs. `_ensure_approvals_ui(
 opens the browser **only when it spawns the server** — when a server is already
 registered, it returns immediately and opens nothing. The approvals page is a
 long-lived single tab: new requests appear in its always-current queue (it
-auto-refreshes every 15s), so there is no need to re-open it. `CLAUDE_ENV_APPROVAL_AUTO_UI=false`
+auto-refreshes every 5s), so there is no need to re-open it. `CLAUDE_ENV_APPROVAL_AUTO_UI=false`
 still starts the server without opening any tab at all.
 
 It checks the shared service registry (`lib/services.py`, the same file backing
