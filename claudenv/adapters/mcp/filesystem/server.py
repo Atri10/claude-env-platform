@@ -14,11 +14,12 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 from pathlib import Path
-from typing import Any
 
+from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
-from claudenv.domain.policy import PolicyEngine, PolicyDecision
-from claudenv.domain.value_objects import RepoSlug, Tier, SessionId
+from claudenv.adapters.persistence import SQLiteDatabase
+from claudenv.domain.policy import PolicyEngine, PolicyDecision, PolicyService
+from claudenv.domain.value_objects import SessionId
 from claudenv.ports import IAuditLogger
 
 # Constants
@@ -198,7 +199,7 @@ class FilesystemPolicyServer:
         if decision.action == "block":
             self.audit.policy_violation(
                 path=rel, rule=decision.rule or decision.reason,
-                decision="block", tier=self.engine.repo.tier,
+                decision="block", tier=self.engine.get_compiled().tier,
             )
             raise PolicyBlocked(f"policy blocked '{rel}': {decision.reason}")
 
@@ -230,7 +231,7 @@ class FilesystemPolicyServer:
         if hits and hits[0][1] == -1:  # full block signal
             self.audit.policy_violation(
                 path=rel, rule="content_scan:block",
-                decision="block", tier=self.engine.repo.tier,
+                decision="block", tier=self.engine.get_compiled().tier,
             )
             raise PolicyBlocked(f"secret content in '{rel}'; read blocked")
 
@@ -256,7 +257,7 @@ class FilesystemPolicyServer:
         if hits and hits[0][1] == -1:
             self.audit.policy_violation(
                 path=rel, rule="content_scan:block_write",
-                decision="block", tier=self.engine.repo.tier,
+                decision="block", tier=self.engine.get_compiled().tier,
             )
             raise PolicyBlocked(f"refusing to write secret content to '{rel}'")
 
@@ -316,14 +317,16 @@ def create_server(
     config = get_config()
 
     # Build policy engine from global + repo policy
-    policy_engine = PolicyEngine.load(str(repo_root))
+    policy_engine = PolicyService(config).load_engine(str(repo_root))
 
     # Create audit logger
-    audit_logger = config.get_audit_logger(
+    db = SQLiteDatabase(config.get_database_dsn())
+    audit_logger = SqliteAuditLogger(
+        db=db,
         session_id=SessionId.from_string(session_id),
         actor=actor,
-        repo=RepoSlug.from_string(repo_root.name),
-        tier=Tier(policy_engine.repo.tier),
+        repo=repo_root.name,
+        tier=policy_engine.get_compiled().tier,
     )
 
     return FilesystemPolicyServer(repo_root, audit_logger, policy_engine, session_id)
@@ -331,7 +334,6 @@ def create_server(
 
 async def main() -> None:
     """Entry point for stdio MCP server."""
-    import sys
     repo_root = Path(os.environ.get("CLAUDE_ENV_REPO_ROOT", os.getcwd())).resolve()
     session_id = os.environ.get("CLAUDE_ENV_SESSION", "mcp-fs")
     server = create_server(repo_root, session_id)

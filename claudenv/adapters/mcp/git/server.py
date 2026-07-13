@@ -11,11 +11,12 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 from pathlib import Path
-from typing import Any
 
+from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
-from claudenv.domain.policy import PolicyEngine
-from claudenv.domain.value_objects import RepoSlug, Tier, SessionId
+from claudenv.adapters.persistence import SQLiteDatabase
+from claudenv.domain.policy import PolicyEngine, PolicyService
+from claudenv.domain.value_objects import SessionId
 
 # Commands explicitly DENIED - these would modify remote state
 DENIED_COMMANDS = {"push", "reset", "rebase", "merge --no-ff", "filter-branch", "gc"}
@@ -46,6 +47,7 @@ class GitServer:
         self.session_id = session_id
         self.server = Server("git")
         self._register_tools()
+        self._register_handlers()
 
     def _register_tools(self) -> None:
         @self.server.list_tools()
@@ -98,10 +100,14 @@ class GitServer:
                 ),
             ]
 
+    def _register_handlers(self) -> None:
+        @self.server.call_tool()
+        async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+            return await self._do_call(name, arguments)
+
     def _allow_git_operation(self, cmd: str) -> bool:
         """Check if git command is allowed by policy."""
         cmd_lower = cmd.lower().strip()
-        parts = cmd_lower.split()
 
         # Check for explicitly denied commands
         for denied in DENIED_COMMANDS:
@@ -142,29 +148,27 @@ class GitServer:
         # In real impl, would check policy and open approval UI
         return False, ""
 
-    async def call_tool(self, name: str, arguments: dict) -> list[TextContent]:
+    async def _do_call(self, name: str, arguments: dict) -> list[TextContent]:
         # Map tool names to git subcommands
         if name == "git.status":
-            result = self._run_git(["status"])
+            args = ["status"]
         elif name == "git.diff":
             staged = arguments.get("staged", False)
             args = ["diff"] + (["--cached"] if staged else [])
-            result = self._run_git(args)
         elif name == "git.log":
             oneline = arguments.get("oneline", True)
             limit = arguments.get("limit", 10)
             args = ["log", f"-{limit}"]
             if oneline:
                 args.insert(1, "--oneline")
-            result = self._run_git(args)
         elif name == "git.add":
             paths = arguments.get("paths", ["."])
-            result = self._run_git(["add", *paths])
+            args = ["add", *paths]
         elif name == "git.commit":
             msg = arguments.get("message", "")
             if not msg:
                 return [TextContent(type="text", text="ERROR: commit message required")]
-            result = self._run_git(["commit", "-m", msg])
+            args = ["commit", "-m", msg]
         elif name == "git.checkout":
             target = arguments.get("target", "")
             create = arguments.get("create", False)
@@ -172,7 +176,6 @@ class GitServer:
             if create:
                 args.append("-b")
             args.append(target)
-            result = self._run_git(args)
         elif name == "git.stash":
             action = arguments.get("action", "push")
             msg = arguments.get("message", "")
@@ -188,11 +191,26 @@ class GitServer:
                 args = ["stash", "drop"]
             else:
                 return [TextContent(type="text", text=f"ERROR: unknown stash action: {action}")]
-            result = self._run_git(args)
         elif name == "git.remote":
-            result = self._run_git(["remote", "-v"])
+            args = ["remote", "-v"]
         else:
             return [TextContent(type="text", text=f"ERROR: unknown tool {name}")]
+
+        # Policy chokepoint: every subcommand must clear the deny-list /
+        # allow-list check before it is ever handed to git. This was
+        # previously computed but never consulted, so every tool ran
+        # unconditionally regardless of DENIED_COMMANDS/ALLOWED_*.
+        cmd = " ".join(args)
+        if not self._allow_git_operation(cmd):
+            self.audit.tool_call(tool=name, args=arguments, result_kind="blocked")
+            return [TextContent(type="text", text=f"BLOCKED: git operation not permitted: {cmd}")]
+
+        try:
+            result = self._run_git(args)
+        except FileNotFoundError:
+            return [TextContent(type="text", text="ERROR: git not found on PATH")]
+        except subprocess.TimeoutExpired:
+            return [TextContent(type="text", text="ERROR: git command timed out")]
 
         if result.returncode != 0:
             return [TextContent(type="text", text=f"ERROR: {result.stderr.strip()}")]
@@ -209,13 +227,15 @@ def create_server(
     repo_root = Path(repo_root).resolve()
     config = get_config()
 
-    policy_engine = PolicyEngine.load(str(repo_root))
+    policy_engine = PolicyService(config).load_engine(str(repo_root))
 
-    audit_logger = config.get_audit_logger(
+    db = SQLiteDatabase(config.get_database_dsn())
+    audit_logger = SqliteAuditLogger(
+        db=db,
         session_id=SessionId.from_string(session_id),
         actor=actor,
-        repo=RepoSlug.from_string(repo_root.name),
-        tier=Tier(policy_engine.repo.tier),
+        repo=repo_root.name,
+        tier=policy_engine.get_compiled().tier,
     )
 
     return GitServer(repo_root, audit_logger, policy_engine, session_id)
