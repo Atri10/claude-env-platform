@@ -22,6 +22,8 @@ Decisions:
     * incident mode marker present            -> deny EVERYTHING (fail-closed)
     * path matches a policy block rule        -> deny + policy_violation audit
     * Write/Edit content contains a secret    -> ask (operator confirms)
+    * Bash executes a local script file       -> deny; route through terminal.run
+      (interpreter+file, or `./x.sh`/`x/y.sh`)   (see "Script-execution gap")
     * Bash command reads/writes a denied path -> deny + policy_violation audit
     * Bash command exfiltrates data (net cmd  -> deny (with a file/secret) else
       + file, or net egress on tier>=2)          ask on tier<=1 for plain egress
@@ -36,6 +38,21 @@ Bash gap:
     them through the SAME policy engine, and flag network-egress commands. To
     avoid false positives under tier-3 default-deny, bare (slashless) tokens are
     only treated as paths when they actually exist on disk.
+
+Script-execution gap (closed 2026-07-13):
+    The Bash-gap parsing above only inspects the INVOCATION line — it never opens
+    a script file the command runs (`bash setup.sh`, `./setup.sh`). Everything
+    that script does internally (read a denied path, exfiltrate data, self-modify
+    the repo) was invisible to every check here, so writing a wrapper script and
+    executing it was an unmediated bypass of the whole Bash gap. `_inspect_bash`
+    now hard-denies executing any local script file — via a known interpreter
+    (`bash`/`python`/`node`/...) or directly (`./x.sh`, `x/y.sh`, `/abs/x.sh`) —
+    before any other check runs, same posture as a destructive command: not
+    silently allowed, not merely asked, routed through `terminal.run` so it's
+    both human-approved and audited. This is deliberately broad — it also gates
+    routine `python foo.py`/`bash test.sh` dev commands run raw via Bash, on the
+    premise that any local-script execution should go through the audited path
+    (or a repo's configured `terminal.run_tests`/etc.), not silent native Bash.
 
 Failure posture:
     Internal errors default to ALLOW (so a broken hook cannot brick the editor),
@@ -216,12 +233,69 @@ def _mutating_reason(command: str) -> str | None:
     return None
 
 
+# Interpreters whose first non-flag argument, if it names an existing local
+# file, is a SCRIPT being executed rather than inline code (`-c`/`-e` snippets
+# have no such argument and are not treated as script execution here).
+_SCRIPT_INTERPRETERS = {
+    "bash", "sh", "zsh", "dash", "ksh", "csh", "tcsh",
+    "python", "python3", "python2", "node", "nodejs", "deno",
+    "ruby", "perl", "php", "Rscript", "pwsh", "powershell",
+}
+
+
+def _script_execution_reason(command: str, cwd: str) -> str | None:
+    """Return a reason if this command executes a LOCAL SCRIPT FILE — via an
+    interpreter (`bash foo.sh`, `python foo.py`) or directly (`./foo.sh`,
+    `scripts/foo.sh`, `/abs/path/foo.sh`) — else None.
+
+    Every check below this point inspects only the tokens on the INVOCATION
+    line. A script file's own contents (which can read a denied path, exfil
+    data, self-modify the repo — anything a human's shell can do) are
+    completely invisible to that inspection: `bash scripts/setup.sh` parses as
+    an innocuous file argument no matter what `setup.sh` contains. Rather than
+    trying to recursively parse arbitrary script languages, treat executing a
+    local script via raw Bash as itself the risky action and hard-deny it,
+    same as a destructive command — the model must route it through
+    `terminal.run`, which actually opens a human approval and audits the run
+    (see docs/guide/approvals-workflow.md)."""
+    tokens = _shell_tokens(command)
+    seg: list[list[str]] = [[]]
+    for t in tokens:
+        if t in _CMD_SEP:
+            seg.append([])
+        else:
+            seg[-1].append(t)
+    base = Path(cwd or ".")
+
+    def _exists(tok: str) -> bool:
+        p = Path(os.path.expanduser(tok))
+        return (p if p.is_absolute() else base / p).exists()
+
+    for s in seg:
+        if not s:
+            continue
+        head = s[0]
+        head_base = os.path.basename(head)
+        if head_base in _SCRIPT_INTERPRETERS:
+            for tok in s[1:]:
+                if tok.startswith("-"):
+                    continue
+                if _looks_like_path(tok) and _exists(tok):
+                    return f"script execution via interpreter '{head_base}': {tok}"
+                break  # first non-flag arg decides; -c/-e inline code isn't a file
+            continue
+        if _looks_like_path(head) and _exists(head):
+            return f"direct execution of local script '{head}'"
+    return None
+
+
 def _inspect_bash(command: str, engine, root: Path, cwd: str
                   ) -> tuple[str, str, str] | None:
     """Return (action, reason, denied_path_or_'') for a Bash command, or None.
 
-    action is 'deny' or 'ask'. Precedence: destructive command > denied path >
-    exfiltration > plain network egress > secret in the command string.
+    action is 'deny' or 'ask'. Precedence: destructive command > local script
+    execution > denied path > exfiltration > plain network egress > secret in
+    the command string.
     """
     # 0. destructive / state-mutating native shell -> hard deny (route via Write/
     #    Edit or terminal.run). A stop, not a nudge — the model can't `rm` here.
@@ -231,6 +305,16 @@ def _inspect_bash(command: str, engine, root: Path, cwd: str
                 f"blocked: {mut}. Native shell must not mutate state — edit files with "
                 f"the Write/Edit tools, or run the command through `terminal.run` (which "
                 f"opens a human approval). Nothing was run.", "")
+
+    # 0a. local script execution -> hard deny (route via terminal.run). A script's
+    #     contents are invisible to every check below, so gate the execution itself.
+    scr = _script_execution_reason(command, cwd)
+    if scr:
+        return ("deny",
+                f"blocked: {scr}. Native shell must not execute local script files — "
+                f"their contents aren't policy-inspectable from the invocation line. "
+                f"Run it through `terminal.run` (which opens a human approval and "
+                f"audits the run) instead. Nothing was run.", "")
 
     paths, nets = _bash_candidates(command, cwd)
 

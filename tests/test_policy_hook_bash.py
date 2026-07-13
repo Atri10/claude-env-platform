@@ -76,7 +76,7 @@ def test_candidates_ignore_flags_and_bare_nonexistent():
 # -- decisions --------------------------------------------------------------
 
 def test_allow_normal_dev_commands():
-    for cmd in ("cat src/app.py", "git log --oneline", "python src/app.py",
+    for cmd in ("cat src/app.py", "git log --oneline",
                 "ls -la", "echo hello"):
         assert _action(cmd) == "allow", cmd
 
@@ -107,6 +107,35 @@ def test_allow_readonly_and_additive_commands():
     for cmd in ("git status", "git diff", "git log --oneline", "cat src/app.py",
                 "cp src/app.py src/copy.py", "mkdir -p build", "touch newfile.txt"):
         assert _action(cmd) == "allow", cmd
+
+
+def test_deny_local_script_execution():
+    # the reported bypass: a script's contents are invisible to every other
+    # check, so executing one at all must be hard-denied regardless of what
+    # it contains — direct exec, interpreter+file, with/without a leading ./
+    eng, d = _engine()
+    Path(d, "scripts").mkdir()
+    Path(d, "scripts", "setup.sh").write_text("#!/bin/sh\necho hi\n")
+    for cmd in ("./scripts/setup.sh", "scripts/setup.sh",
+                "bash scripts/setup.sh", "sh scripts/setup.sh",
+                "python src/app.py", "python3 src/app.py"):
+        v = _inspect_bash(cmd, eng, Path(d), d)
+        assert v is not None and v[0] == "deny", cmd
+
+
+def test_allow_inline_interpreter_snippets():
+    # -c/-e inline code has no script FILE argument — not script execution
+    for cmd in ('python -c "print(1)"', 'python3 -c "import os"',
+                "node -e \"console.log(1)\"", "python --version",
+                "node --version"):
+        assert _action(cmd) == "allow", cmd
+
+
+def test_allow_nonexistent_script_path():
+    # a path-looking arg that doesn't actually exist on disk isn't a script
+    # execution (mirrors the existing bare-token-must-exist convention)
+    assert _action("bash does/not/exist.sh") == "allow"
+    assert _action("./does-not-exist.sh") == "allow"
 
 
 def test_mutating_reason_helper():
