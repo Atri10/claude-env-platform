@@ -142,6 +142,22 @@ class LanceDbVectorStore:
         except Exception:
             return 0
 
+    def get_chunk(self, repo: RepoSlug, branch: BranchName, chunk_id: str) -> Chunk | None:
+        # Avoid to_pandas()/to_lance() -- both require the optional `pylance`
+        # package. A plain filtered scan (no query vector) doesn't.
+        try:
+            tbl = self.open(repo, branch)
+            safe_id = chunk_id.replace("'", "''")
+            rows = tbl.search().where(f"chunk_id = '{safe_id}'").limit(1).to_list()
+        except Exception:
+            return None
+        if not rows:
+            return None
+        row = dict(rows[0])
+        row.pop("vector", None)
+        row.pop("_distance", None)
+        return Chunk.from_metadata(self._expand_metadata(row))
+
 
 class LanceDbRagRetriever(IRagRetriever):
     """RAG retriever using LanceDB — adds query embedding + reranking on top
@@ -171,3 +187,6 @@ class LanceDbRagRetriever(IRagRetriever):
 
     def count(self, repo: RepoSlug, branch: BranchName) -> int:
         return self.store.count(repo, branch)
+
+    def get_chunk(self, repo: RepoSlug, branch: BranchName, chunk_id: str) -> Chunk | None:
+        return self.store.get_chunk(repo, branch, chunk_id)

@@ -34,13 +34,19 @@ class SqliteAuditLogger(IAuditLogger):
             db,
             session_id: SessionId,
             actor: str,
-            repo: str | None = None,
+            repo: str | RepoSlug | None = None,
             tier: Tier | None = None,
     ) -> None:
         self.db = db
         self._session_id = session_id
         self._actor = actor
-        self._repo = repo
+        # Every call site in this codebase (terminal/memory_graph/documentation/
+        # lancedb_rag servers' create_server()) passes an already-constructed
+        # RepoSlug here. Normalize once so _append() below doesn't re-wrap an
+        # already-wrapped RepoSlug through RepoSlug.from_string(), which stored
+        # the RepoSlug instance itself as .value and broke str(repo) (and broke
+        # binding it as a SQL parameter) on every audited call.
+        self._repo = repo if repo is None or isinstance(repo, RepoSlug) else RepoSlug.from_string(repo)
         self._tier = tier
         self._prev_hash = GENESIS
         self._lock = threading.Lock()
@@ -68,7 +74,7 @@ class SqliteAuditLogger(IAuditLogger):
                     actor=self._actor,
                     session_id=self._session_id,
                     payload=payload,
-                    repo=RepoSlug.from_string(self._repo) if self._repo else None,
+                    repo=self._repo,
                     tier=self._tier,
                     prev_hash=prev_hash,
                     host=_HOST,
@@ -85,7 +91,7 @@ class SqliteAuditLogger(IAuditLogger):
                         prev_hash, event_hash, schema_version, host, pid, request_id)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (event.ts, event_type.value, self._actor, str(self._session_id),
-                     self._repo, int(self._tier) if self._tier else None,
+                     str(self._repo) if self._repo else None, int(self._tier) if self._tier else None,
                      event.canonical_payload(), prev_hash, event.event_hash,
                      event.schema_version, event.host, event.pid, event.request_id),
                 )

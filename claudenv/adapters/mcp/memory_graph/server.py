@@ -14,7 +14,9 @@ from mcp.types import TextContent, Tool
 from pathlib import Path
 from typing import Any
 
+from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
+from claudenv.adapters.persistence import SQLiteDatabase, SQLiteMemoryRepository
 from claudenv.application.memory import MemoryService
 from claudenv.domain.memory import MemoryType, NodeKind, EdgeRelation
 from claudenv.domain.value_objects import RepoSlug, Tier, SessionId, NodeId
@@ -247,7 +249,10 @@ class MemoryGraphServer:
     async def _do_link(self, args: dict) -> list[TextContent]:
         source = NodeId.from_string(args["source"])
         target = NodeId.from_string(args["target"])
-        relation = EdgeRelation(args["relation"])
+        # EdgeRelation's enum values are UPPER_SNAKE_CASE (e.g. RELATES_TO) but
+        # the tool schema advertises lowercase relation names, so every
+        # schema-valid call used to raise ValueError building the enum.
+        relation = EdgeRelation(args["relation"].upper())
         weight = args.get("weight", 1.0)
 
         graph = self.memory.create_graph(f"proj-{self.repo}", isolated=True)
@@ -255,7 +260,9 @@ class MemoryGraphServer:
 
         self.audit.tool_call(
             tool="memory.link",
-            args={"source": source, "target": target, "relation": relation.value},
+            # NodeId isn't JSON-serializable; audit.tool_call() JSON-encodes
+            # args, so pass plain strings.
+            args={"source": str(source), "target": str(target), "relation": relation.value},
             result_kind="ok",
         )
 
@@ -270,7 +277,7 @@ class MemoryGraphServer:
         nodes = graph.expand(
             seed_ids=seed_ids,
             depth=depth,
-            relations=[EdgeRelation(r) for r in relations] if relations else None,
+            relations=[EdgeRelation(r.upper()) for r in relations] if relations else None,
         )
 
         return [TextContent(type="text", text=json.dumps([{
@@ -322,9 +329,16 @@ def create_server(
     repo_slug = RepoSlug.from_string(repo_slug)
     config = get_config()
 
-    memory_service = config.get_memory_service()
+    # IConfigProvider has no get_memory_service()/get_audit_logger() -- those
+    # methods never existed on ConfigProvider (see claudenv/ports/config.py).
+    # Build the real adapters directly, the same way terminal/server.py's
+    # create_server() does.
+    db = SQLiteDatabase(config.get_database_dsn())
+    mem_repo = SQLiteMemoryRepository(db)
+    memory_service = MemoryService(mem_repo, config)
 
-    audit_logger = config.get_audit_logger(
+    audit_logger = SqliteAuditLogger(
+        db=db,
         session_id=SessionId.from_string(session_id),
         actor=actor,
         repo=repo_slug,
