@@ -157,13 +157,20 @@ out after.
 **What solves it:** the **approvals workflow**, and a **terminal** server that only
 runs allow-listed commands in the first place.
 
-**How it works.** The terminal MCP server won't execute arbitrary shell commands — only
-ones on an allow-list, with no shell interpretation (so no `&&`, pipes, or injection
-tricks), a scrubbed environment, and a timeout. If an agent wants to run something
-outside that allow-list, it doesn't get silently blocked or silently allowed — it opens
-an approval request, launches a local web UI, and **blocks** until a human clicks
+**How it works.** The terminal MCP server won't hand a command to a real shell — there's
+no `sh -c` anywhere in the path, so injection tricks that rely on one don't work.
+Allow-listed commands run directly; command *chaining/piping* (`;`, `&&`, `||`, `|`) is
+still supported, but mechanically, by parsing and running each stage argv-only, never by
+handing the whole string to a shell. Everything runs with a scrubbed environment and a
+timeout. If an agent wants to run something outside the allow-list, it doesn't get
+silently blocked or silently allowed — it opens an approval request, plays a
+notification sound, launches a local web UI, and **blocks** until a human clicks
 approve or deny. The ledger records exactly who approved it (the real OS user and
-host), not just a generic "approved" flag.
+host), not just a generic "approved" flag. Commands can also run in a disposable
+per-repo scratch directory (`in_scratch: true`) instead of the repo root — useful for
+throwaway output an agent shouldn't be able to write into tracked files; the same
+`scratch://` path scheme is reachable from `filesystem.read/write/list`, and a TTL
+reaper cleans it up automatically.
 
 **Example.**
 > An agent decides it needs to run a one-off script to regenerate test fixtures — not
@@ -254,10 +261,11 @@ capabilities behind a local, stdio-only interface — no ports, no external call
 
 **How it works.** Each repo gets its own local knowledge index: code is chunked
 AST-aware (a chunk is a real function or class, not an arbitrary slice of text),
-embedded with a local model (llama.cpp), optionally reranked with a local ONNX
-cross-encoder, and searched via LanceDB — vector and full-text combined. No model name
-is hardcoded anywhere; it's chosen in config, so a team can swap embedding models
-without touching code. Retrieved content is always treated as *data*, never as
+embedded with a local model, optionally reranked with a local cross-encoder, and
+searched via LanceDB — vector and full-text combined. No model name *or backend* is
+hardcoded anywhere; both are chosen in config (`llama.cpp` or ONNX for embeddings,
+ONNX cross-encoder or others for reranking), so a team can swap embedding models — or
+the whole backend — without touching code. Retrieved content is always treated as *data*, never as
 *instructions* — it's screened for injection or "poisoning" attempts before an agent
 ever sees it, so a manipulated document in your own docs folder can't hijack agent
 behavior. The only server with any network capability at all is the documentation
