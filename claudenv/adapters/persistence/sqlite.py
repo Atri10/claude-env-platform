@@ -11,16 +11,17 @@ from pathlib import Path
 from typing import Any
 
 from claudenv.domain.audit import (
-    AuditEvent, ChainVerificationResult, EventId, EventType, ProjectionBuilder,
-    RequestId, SecurityProjection, SessionId, Tier, verify_chain,
+    AuditEvent, ChainVerificationResult, EventId, EventType, SessionId, Tier, verify_chain,
 )
 from claudenv.domain.memory import (
-    ContentHash, EdgeId, MemoryEdge, MemoryNode, MemoryType, NodeId,
+    MemoryEdge, MemoryNode, MemoryType, NodeId,
 )
 from claudenv.domain.rag import (
-    BranchName, ChunkId, ContentHash, FileState, IndexState, RepoSlug, TableName,
+    BranchName, IndexState, RepoSlug,
 )
-from claudenv.domain.value_objects import utc_now
+from claudenv.domain.value_objects import (
+    ContentHash, utc_now,
+)
 from claudenv.ports import (
     ITransaction, IDatabase, IAuditRepository, IMemoryRepository, IRagBookkeeping,
 )
@@ -44,6 +45,11 @@ class SQLiteDatabase(IDatabase):
         self._conn.execute("PRAGMA foreign_keys=ON;")
         self._conn.execute("PRAGMA busy_timeout=5000;")
         self._lock = threading.RLock()
+        self._backend = "sqlite"
+
+    @property
+    def backend(self) -> str:
+        return self._backend
 
     def query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         with self._lock:
@@ -71,8 +77,9 @@ class SQLiteDatabase(IDatabase):
             cur.executemany(sql, params)
 
     @contextmanager
-    def transaction(self) -> ITransaction:
-        tx = SQLiteTransaction(self._conn, self._lock)
+    def transaction(self, immediate: bool = False) -> ITransaction:
+        tx = SQLiteTransaction(self._conn, self._lock, immediate=immediate)
+        tx.__enter__()
         try:
             yield tx
             tx.commit()
@@ -84,19 +91,33 @@ class SQLiteDatabase(IDatabase):
         with self._lock:
             self._conn.close()
 
+    def apply_schema(self, *schema_files: str) -> None:
+        """Apply SQL schema files in order."""
+        with self._lock:
+            cur = self._conn.cursor()
+            for schema_file in schema_files:
+                path = Path(schema_file)
+                if path.exists():
+                    sql = path.read_text()
+                    cur.executescript(sql)
+                else:
+                    raise FileNotFoundError(f"Schema file not found: {schema_file}")
+            self._conn.commit()
+
 
 class SQLiteTransaction(ITransaction):
     """SQLite transaction wrapper."""
 
-    def __init__(self, conn: sqlite3.Connection, lock: threading.RLock):
+    def __init__(self, conn: sqlite3.Connection, lock: threading.RLock, immediate: bool = False):
         self._conn = conn
         self._lock = lock
         self._cursor: sqlite3.Cursor | None = None
+        self._immediate = immediate
 
     def __enter__(self) -> SQLiteTransaction:
         with self._lock:
             self._cursor = self._conn.cursor()
-            self._cursor.execute("BEGIN IMMEDIATE")
+            self._cursor.execute("BEGIN IMMEDIATE" if self._immediate else "BEGIN")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -136,14 +157,14 @@ class SQLiteAuditRepository(IAuditRepository):
         self._db = db
 
     def append(
-        self,
-        event_type: EventType,
-        payload: dict[str, Any],
-        session_id: SessionId,
-        actor: str,
-        repo: RepoSlug | None,
-        tier: Tier | None,
-        projection: tuple[str, dict[str, Any]] | None = None,
+            self,
+            event_type: EventType,
+            payload: dict[str, Any],
+            session_id: SessionId,
+            actor: str,
+            repo: RepoSlug | None,
+            tier: Tier | None,
+            projection: tuple[str, dict[str, Any]] | None = None,
     ) -> EventId:
         with self._db.transaction() as tx:
             # Get previous hash
@@ -239,20 +260,22 @@ class SQLiteMemoryRepository(IMemoryRepository):
         return MemoryNode.from_dict(row) if row else None
 
     def list_nodes(
-        self,
-        namespace: str,
-        memory_type: MemoryType | None = None,
-        min_confidence: float = 0.0,
-        include_superseded: bool = False,
-        limit: int = 100,
+            self,
+            namespace: str,
+            memory_type: MemoryType | None = None,
+            min_confidence: float = 0.0,
+            include_superseded: bool = False,
+            limit: int = 100,
     ) -> list[MemoryNode]:
         sql = "SELECT * FROM memory_nodes WHERE namespace=?"
         params: list = [namespace]
         if memory_type:
-            sql += " AND memory_type=?"; params.append(memory_type.value)
+            sql += " AND memory_type=?";
+            params.append(memory_type.value)
         if not include_superseded:
             sql += " AND superseded_by IS NULL"
-        sql += " ORDER BY updated_at DESC LIMIT ?"; params.append(limit)
+        sql += " ORDER BY updated_at DESC LIMIT ?";
+        params.append(limit)
         rows = self._db.query(sql, tuple(params))
         nodes = [MemoryNode.from_dict(r) for r in rows]
         return [n for n in nodes if n.effective_confidence >= min_confidence]
@@ -282,27 +305,29 @@ class SQLiteMemoryRepository(IMemoryRepository):
         )
 
     def get_edges(
-        self,
-        src: NodeId,
-        dst: NodeId | None = None,
-        relation: str | None = None,
+            self,
+            src: NodeId,
+            dst: NodeId | None = None,
+            relation: str | None = None,
     ) -> list[MemoryEdge]:
         sql = "SELECT * FROM memory_edges WHERE src=?"
         params: list = [str(src)]
         if dst:
-            sql += " AND dst=?"; params.append(str(dst))
+            sql += " AND dst=?";
+            params.append(str(dst))
         if relation:
-            sql += " AND rel=?"; params.append(relation)
+            sql += " AND rel=?";
+            params.append(relation)
         rows = self._db.query(sql, tuple(params))
         return [MemoryEdge.from_dict(r) for r in rows]
 
     def expand_graph(
-        self,
-        seed_ids: list[NodeId],
-        depth: int,
-        relations: list[str] | None,
-        namespace: str,
-        extra_namespaces: list[str] | None,
+            self,
+            seed_ids: list[NodeId],
+            depth: int,
+            relations: list[str] | None,
+            namespace: str,
+            extra_namespaces: list[str] | None,
     ) -> list[MemoryNode]:
         if not seed_ids:
             return []
@@ -350,8 +375,8 @@ class SQLiteRagBookkeeping(IRagBookkeeping):
         return ContentHash.from_string(row["content_hash"]) if row else None
 
     def set_file_hash(
-        self, repo: RepoSlug, branch: BranchName, file_path: str,
-        content_hash: ContentHash, chunk_count: int,
+            self, repo: RepoSlug, branch: BranchName, file_path: str,
+            content_hash: ContentHash, chunk_count: int,
     ) -> None:
         self._db.execute(
             "INSERT INTO rag_file_state (repo, branch, file_path, content_hash, chunk_count, indexed_at) "
@@ -395,3 +420,13 @@ class SQLiteRagBookkeeping(IRagBookkeeping):
             (str(state.repo), str(state.branch), state.table_name, state.last_commit,
              state.chunk_count, state.embed_model, state.updated_at.isoformat()),
         )
+
+    def apply_schema(self, *sql_files: str) -> None:
+        """Apply SQL schema files."""
+        for f in sql_files:
+            sql = Path(f).read_text()
+            with self._lock:
+                self._conn.executescript(sql)
+
+    def close(self) -> None:
+        self._conn.close()

@@ -9,21 +9,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
-from claudenv.adapters.config import ConfigProvider, get_config
+from claudenv.adapters.audit import SqliteAuditLogger
+from claudenv.adapters.config import get_config
 from claudenv.adapters.embedding import get_embedder, get_reranker
 from claudenv.adapters.persistence import (
     SQLiteAuditRepository, SQLiteDatabase, SQLiteMemoryRepository, SQLiteRagBookkeeping,
 )
-from claudenv.domain.audit import AuditEvent, AuditLogger
-from claudenv.domain.memory import MemoryGraph, MemoryManager, MemoryRetriever
+from claudenv.application.memory import MemoryGraph
+from claudenv.application.rag import RagIndexer, RagService
 from claudenv.domain.policy import PolicyEngine, PolicyService
-from claudenv.domain.rag import RagIndexer, RagService
 from claudenv.ports import (
     IAuditLogger, IAuditRepository, IConfigProvider, IDatabase, IEmbeddingProvider,
     IEventBus, IMemoryGraph, IMemoryRepository, IRagBookkeeping, IRagIndexer,
     IRagRetriever, IReranker, IServiceRegistry,
 )
-
 
 T = TypeVar("T")
 
@@ -104,14 +103,19 @@ def _configure_container(c: Container) -> None:
 
     # AuditLogger factory (session-scoped)
     def make_audit_logger(session_id: str = "default", actor: str = "system",
-                           repo: str | None = None, tier: int | None = None) -> IAuditLogger:
+                          repo: str | None = None, tier: int | None = None) -> IAuditLogger:
         from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
-        return AuditLogger(
+        from claudenv.adapters.persistence import SQLiteDatabase
+        # Create a new database connection for the audit logger
+        audit_db = SQLiteDatabase(config.get_database_dsn())
+        return SqliteAuditLogger(
+            db=audit_db,
             session_id=SessionId.from_string(session_id),
             actor=actor,
             repo=RepoSlug.from_string(repo) if repo else None,
             tier=Tier(tier) if tier is not None else None,
         )
+
     c.register_factory(IAuditLogger, lambda: make_audit_logger())
 
     # --- Memory ---
@@ -120,11 +124,9 @@ def _configure_container(c: Container) -> None:
 
     # MemoryGraph factory (namespace-scoped)
     def make_memory_graph(namespace: str, session_id: str = "mem",
-                           actor: str = "system", isolated: bool = False) -> IMemoryGraph:
+                          actor: str = "system", isolated: bool = False) -> IMemoryGraph:
         audit = make_audit_logger(session_id, actor)
-        mgr = MemoryManager(namespace, session_id, actor, isolated)
-        retr = MemoryRetriever(namespace, session_id, actor, isolated)
-        return MemoryGraph(mgr, retr)
+        return MemoryGraph(namespace, audit)
 
     c.register_factory(IMemoryGraph, lambda: make_memory_graph("default"))
 

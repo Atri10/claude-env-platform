@@ -4,8 +4,8 @@ claude-env :: Application Layer
 from __future__ import annotations
 
 from .memory import MemoryGraph, MemoryService, MemoryConsolidator, MemoryPruner, MemorySync
-from .rag import RagIndexer, RagService
 from .policy import PolicyService
+from .rag import RagIndexer, RagService
 
 __all__ = [
     "MemoryGraph",

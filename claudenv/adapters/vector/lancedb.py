@@ -96,13 +96,13 @@ class LanceDbVectorStore:
             else:
                 res = tbl.search(query.query).limit(top_k).to_list()
         except Exception:
-            res = tbl.search(query.query_vector or [0.0]*self.dim).limit(top_k).to_list()
+            res = tbl.search(query.query_vector or [0.0] * self.dim).limit(top_k).to_list()
 
         results = []
         for i, r in enumerate(res):
             r.pop("vector", None)
             chunk = Chunk.from_metadata(r)
-            results.append(RetrievalResult(chunk=chunk, score=r.get("_score", 0.0), rank=i+1))
+            results.append(RetrievalResult(chunk=chunk, score=r.get("_score", 0.0), rank=i + 1))
         return results
 
     def count(self, repo: RepoSlug, branch: BranchName) -> int:
@@ -116,13 +116,13 @@ class LanceDbRagIndexer(IRagIndexer):
     """RAG indexer using LanceDB."""
 
     def __init__(
-        self,
-        repo: RepoSlug,
-        branch: BranchName,
-        store: LanceDbVectorStore,
-        bookkeeping: Any,  # IRagBookkeeping
-        embedder: Any,  # IEmbeddingProvider
-        chunker: RAGConfig,
+            self,
+            repo: RepoSlug,
+            branch: BranchName,
+            store: LanceDbVectorStore,
+            bookkeeping: Any,  # IRagBookkeeping
+            embedder: Any,  # IEmbeddingProvider
+            chunker: RAGConfig,
     ):
         self.repo = repo
         self.branch = branch
@@ -132,8 +132,8 @@ class LanceDbRagIndexer(IRagIndexer):
         self.chunker = chunker
 
     def index_file(
-        self, repo: RepoSlug, branch: BranchName, commit: str,
-        file_path: str, text: str,
+            self, repo: RepoSlug, branch: BranchName, commit: str,
+            file_path: str, text: str,
     ) -> int:
         # Chunk the file
         chunks = self._chunk_file(file_path, text, repo, branch, commit)
@@ -174,7 +174,7 @@ class LanceDbRagIndexer(IRagIndexer):
         return len(chunks)
 
     def index_batch(
-        self, repo: RepoSlug, branch: BranchName, commit: str, chunks: list[Chunk],
+            self, repo: RepoSlug, branch: BranchName, commit: str, chunks: list[Chunk],
     ) -> int:
         texts = [c.text for c in chunks]
         vectors = self.embedder.embed_documents(texts)
@@ -206,7 +206,7 @@ class LanceDbRagIndexer(IRagIndexer):
         self.bookkeeping.delete_file_hash(repo, branch, file_path)
 
     def full_index(
-        self, repo: RepoSlug, branch: BranchName, files: dict[str, str],
+            self, repo: RepoSlug, branch: BranchName, files: dict[str, str],
     ) -> dict[str, Any]:
         total_chunks = total_files = 0
         commit = "0"  # placeholder
@@ -225,7 +225,7 @@ class LanceDbRagIndexer(IRagIndexer):
         return {"files": total_files, "chunks": total_chunks}
 
     def _chunk_file(
-        self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
+            self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
     ) -> list[Chunk]:
         # Simple chunking - in production use the proper chunker
         ext = Path(file_path).suffix.lower()
@@ -243,7 +243,8 @@ class LanceDbRagIndexer(IRagIndexer):
             if not chunk_text.strip():
                 continue
             chunk = Chunk(
-                chunk_id=ChunkId.from_parts(repo, file_path, i // (chunk_chars - overlap_chars), i // (chunk_chars - overlap_chars) + 1),
+                chunk_id=ChunkId.from_parts(repo, file_path, i // (chunk_chars - overlap_chars),
+                                            i // (chunk_chars - overlap_chars) + 1),
                 repo=repo,
                 branch=branch,
                 commit_sha=commit,

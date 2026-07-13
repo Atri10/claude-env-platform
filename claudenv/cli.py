@@ -8,9 +8,9 @@ import os
 import sys
 from pathlib import Path
 
-from claudenv.di import get_container, reset_container
-from claudenv.application.onboarding import OnboardingService
 from claudenv.adapters.config import get_config
+from claudenv.application.onboarding import OnboardingService
+from claudenv.di import get_container
 
 
 @click.group()
@@ -60,7 +60,8 @@ def bootstrap(ctx, with_brew, no_deps, no_venv_create, recreate_venv, dsn, force
 @click.option("--force-policy", is_flag=True, help="Regenerate repo-policy.yaml")
 @click.option("--no-post-commit", is_flag=True, help="Skip git hooks")
 @click.pass_context
-def onboard(ctx, repo_root, repo_name, tier, description, branch, yes, dry_run, no_template, force_template, force_policy, no_post_commit):
+def onboard(ctx, repo_root, repo_name, tier, description, branch, yes, dry_run, no_template, force_template,
+            force_policy, no_post_commit):
     """Onboard a repository to claude-env."""
     config = get_config()
     service = OnboardingService(config)
@@ -254,28 +255,6 @@ def hooks(ctx, repo_root):
 
 
 @cli.command()
-@click.option("--port", type=int, default=8002, help="Port for approvals UI")
-@click.option("--by", default=None, help="Override approver identity")
-@click.pass_context
-def approvals_ui(ctx, port, by):
-    """Launch the approvals web UI."""
-    config = get_config()
-    home = Path(config.get_claude_env_home())
-
-    ui_script = home / "agents" / "orchestration" / "approvals_ui.py"
-    if not ui_script.exists():
-        click.echo("ERROR: Approvals UI not found", err=True)
-        sys.exit(1)
-
-    import subprocess
-    env = os.environ.copy()
-    if by:
-        env["CLAUDE_ENV_APPROVAL_BY"] = by
-
-    subprocess.run([sys.executable, str(ui_script), "--port", str(port)], env=env)
-
-
-@cli.command()
 @click.option("--window", default="7d", help="Time window (e.g., 7d, 30d)")
 @click.option("--repo", help="Filter by repo")
 @click.option("--format", type=click.Choice(["markdown", "csv"]), default="markdown")
@@ -335,7 +314,8 @@ def incident(ctx, action, reason, by):
 
     if action == "on":
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(f'{{"reason": "{reason}", "by": "{by}", "at": "{__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}"}}')
+        marker.write_text(
+            f'{{"reason": "{reason}", "by": "{by}", "at": "{__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}"}}')
         click.echo(f"Incident mode ON: {reason}")
     elif action == "off":
         if marker.exists():

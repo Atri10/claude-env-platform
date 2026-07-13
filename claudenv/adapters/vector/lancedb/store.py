@@ -7,8 +7,6 @@ import os
 from pathlib import Path
 
 from claudenv.domain.rag import Chunk, RetrievalQuery, RetrievalResult, RetrievalMode, BranchName, RepoSlug
-from claudenv.ports.rag import IRagIndexer, IRagRetriever
-
 
 LANCE_PATH = os.environ.get("LANCEDB_PATH", str(Path.home() / ".claude-env/knowledge/lancedb"))
 
@@ -89,8 +87,8 @@ class LanceDbVectorStore:
         try:
             if query.mode == RetrievalMode.HYBRID and vector is not None:
                 res = (tbl.search(query_type="hybrid")
-                          .vector(vector).text(text)
-                          .limit(query.top_k).to_list())
+                       .vector(vector).text(text)
+                       .limit(query.top_k).to_list())
             elif vector is not None:
                 res = tbl.search(vector).limit(query.top_k).to_list()
             else:

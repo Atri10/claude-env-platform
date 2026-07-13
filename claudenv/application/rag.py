@@ -12,7 +12,7 @@ from claudenv.domain.rag import (
 )
 from claudenv.domain.value_objects import ContentHash, Tier
 from claudenv.ports import (
-    IConfigProvider, IEmbeddingProvider, IRagBookkeeping, IRagIndexer,
+    IEmbeddingProvider, IRagBookkeeping, IRagIndexer,
     IRagRetriever, IReranker,
 )
 
@@ -21,13 +21,13 @@ class RagIndexer(IRagIndexer):
     """Application service for indexing repositories."""
 
     def __init__(
-        self,
-        repo: RepoSlug,
-        branch: BranchName,
-        store: IRagRetriever,  # Using retriever interface for upsert
-        bookkeeping: IRagBookkeeping,
-        embedder: IEmbeddingProvider,
-        chunker: RAGConfig,
+            self,
+            repo: RepoSlug,
+            branch: BranchName,
+            store: IRagRetriever,  # Using retriever interface for upsert
+            bookkeeping: IRagBookkeeping,
+            embedder: IEmbeddingProvider,
+            chunker: RAGConfig,
     ):
         self.repo = repo
         self.branch = branch
@@ -37,8 +37,8 @@ class RagIndexer(IRagIndexer):
         self.chunker = chunker
 
     def index_file(
-        self, repo: RepoSlug, branch: BranchName, commit: str,
-        file_path: str, text: str,
+            self, repo: RepoSlug, branch: BranchName, commit: str,
+            file_path: str, text: str,
     ) -> int:
         chunks = self._chunk_file(file_path, text, repo, branch, commit)
         if not chunks:
@@ -62,7 +62,7 @@ class RagIndexer(IRagIndexer):
         return len(rows)
 
     def index_batch(
-        self, repo: RepoSlug, branch: BranchName, commit: str, chunks: list[Chunk],
+            self, repo: RepoSlug, branch: BranchName, commit: str, chunks: list[Chunk],
     ) -> int:
         if not chunks:
             return 0
@@ -90,7 +90,7 @@ class RagIndexer(IRagIndexer):
         self.bookkeeping.delete_file_hash(repo, branch, file_path)
 
     def full_index(
-        self, repo: RepoSlug, branch: BranchName, files: dict[str, str],
+            self, repo: RepoSlug, branch: BranchName, files: dict[str, str],
     ) -> dict[str, Any]:
         total_chunks = total_files = 0
         commit = "0"
@@ -113,7 +113,7 @@ class RagIndexer(IRagIndexer):
         return {"files": total_files, "chunks": total_chunks}
 
     def _chunk_file(
-        self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
+            self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
     ) -> list[Chunk]:
         from pathlib import Path
         ext = Path(file_path).suffix.lower()
@@ -126,7 +126,7 @@ class RagIndexer(IRagIndexer):
             return self._chunk_fallback(file_path, text, repo, branch, commit)
 
     def _chunk_markdown(
-        self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
+            self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
     ) -> list[Chunk]:
         lines = text.splitlines()
         chunks = []
@@ -158,7 +158,7 @@ class RagIndexer(IRagIndexer):
         return chunks
 
     def _chunk_code(
-        self, file_path: str, text: str, ext: str, repo: RepoSlug, branch: BranchName, commit: str,
+            self, file_path: str, text: str, ext: str, repo: RepoSlug, branch: BranchName, commit: str,
     ) -> list[Chunk]:
         lines = text.splitlines()
         target = self.chunker.chunk_target_tokens // 4
@@ -177,14 +177,14 @@ class RagIndexer(IRagIndexer):
         return chunks
 
     def _chunk_fallback(
-        self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
+            self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,
     ) -> list[Chunk]:
         return self._chunk_code(file_path, text, Path(file_path).suffix.lstrip("."), repo, branch, commit)
 
     def _make_chunk(
-        self, repo: RepoSlug, branch: BranchName, commit: str, file_path: str,
-        file_type: str, sym_type: ChunkType, sym_name: str,
-        start: int, end: int, text: str,
+            self, repo: RepoSlug, branch: BranchName, commit: str, file_path: str,
+            file_type: str, sym_type: ChunkType, sym_name: str,
+            start: int, end: int, text: str,
     ) -> Chunk:
         return Chunk(
             chunk_id=ChunkId.from_parts(repo, file_path, start, end),
@@ -206,13 +206,13 @@ class RagService:
     reranker: IReranker
 
     def search(
-        self,
-        repo: RepoSlug,
-        branch: BranchName,
-        query: str,
-        top_k: int = 40,
-        mode: RetrievalMode = "hybrid",
-        tier_filter: Tier | None = None,
+            self,
+            repo: RepoSlug,
+            branch: BranchName,
+            query: str,
+            top_k: int = 40,
+            mode: RetrievalMode = "hybrid",
+            tier_filter: Tier | None = None,
     ) -> list[RetrievalResult]:
         query_vec = self.embedder.embed_query(query) if query else None
         rq = RetrievalQuery(
@@ -222,8 +222,8 @@ class RagService:
         return self.retriever.search(rq)
 
     def index_file(
-        self, repo: RepoSlug, branch: BranchName, commit: str,
-        file_path: str, text: str,
+            self, repo: RepoSlug, branch: BranchName, commit: str,
+            file_path: str, text: str,
     ) -> int:
         return self.indexer.index_file(repo, branch, commit, file_path, text)
 

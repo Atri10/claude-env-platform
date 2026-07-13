@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from claudenv.domain.value_objects import (
-    Action, ContentHash, ContentPattern, Path, GlobPattern, RegexRule,
+    Action, ContentPattern, Path, GlobPattern, RegexRule,
     RepoSlug, Tier, ExtensionRule, PolicyRuleSet, ContentScanConfig,
 )
 
@@ -181,7 +181,7 @@ class RepoPolicy:
         deny_paths = tuple(GlobPattern(p) for p in data.get("deny", {}).get("paths", []))
         deny_exts = tuple(ExtensionRule(e) for e in data.get("deny", {}).get("extensions", []))
         deny_regex = tuple(RegexRule.create(r["pattern"], r.get("reason", "regex"))
-                          for r in data.get("deny", {}).get("regex", []))
+                           for r in data.get("deny", {}).get("regex", []))
 
         # Override deny
         override_deny = tuple(GlobPattern(p) for p in data.get("override_deny", []))
@@ -289,7 +289,7 @@ class GlobalPolicy:
         deny_paths = tuple(GlobPattern(p) for p in data.get("deny", {}).get("paths", []))
         deny_exts = tuple(ExtensionRule(e) for e in data.get("deny", {}).get("extensions", []))
         deny_regex = tuple(RegexRule.create(r["pattern"], r.get("reason", "regex"))
-                          for r in data.get("deny", {}).get("regex", []))
+                           for r in data.get("deny", {}).get("regex", []))
         allow_paths = tuple(GlobPattern(p) for p in data.get("allow", {}).get("paths", []))
         allow_exts = tuple(ExtensionRule(e) for e in data.get("allow", {}).get("extensions", []))
 
@@ -318,9 +318,9 @@ class PolicyEngine:
 
     @classmethod
     def from_yaml(
-        cls,
-        global_data: dict[str, Any],
-        repo_data: dict[str, Any],
+            cls,
+            global_data: dict[str, Any],
+            repo_data: dict[str, Any],
     ) -> PolicyEngine:
         """Create engine from parsed YAML data."""
         global_policy = GlobalPolicy.from_yaml(global_data)

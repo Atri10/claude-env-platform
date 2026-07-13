@@ -4,10 +4,9 @@ claude-env :: Adapters - Configuration Provider
 from __future__ import annotations
 
 import os
+import yaml
 from dataclasses import dataclass
 from pathlib import Path
-
-import yaml
 
 from claudenv.domain.rag import RAGConfig
 from claudenv.ports import IConfigProvider

@@ -3,18 +3,25 @@ claude-env :: Ports - Consumer-owned interfaces
 """
 from __future__ import annotations
 
+from .approval import IApprovalGate, IApprovalNotifier, IApprovalUI, IApprovalRepository
+from .audit import IAuditLogger, IAuditRepository
+from .bootstrap import (
+    BootstrapContext,
+    BootstrapResult,
+    IBootstrapOrchestrator,
+    IBootstrapStep,
+)
 from .config import IConfigProvider
 from .database import IDatabase, ITransaction
-from .policy import IPolicyEngine, IPolicyRepository, IPolicySimulator
+from .events import IEventBus
+from .hooks import IPreToolUseHook, IPostToolUseHook, HookInstaller
 from .memory import (
     IMemoryGraph, IMemoryRepository, IEmbeddingProvider,
 )
+from .policy import IPolicyEngine, IPolicyRepository, IPolicySimulator
 from .rag import (
     IRagIndexer, IRagRetriever, IRagBookkeeping, IReranker,
 )
-from .audit import IAuditLogger, IAuditRepository
-from .approval import IApprovalGate, IApprovalNotifier, IApprovalUI, IApprovalRepository
-from .events import IEventBus
 from .services import IServiceRegistry
 
 __all__ = [
@@ -36,4 +43,11 @@ __all__ = [
     "IEventBus",
     # Services
     "IServiceRegistry",
+    # Hooks
+    "IPreToolUseHook", "IPostToolUseHook", "HookInstaller",
+    # Bootstrap
+    "BootstrapContext",
+    "BootstrapResult",
+    "IBootstrapOrchestrator",
+    "IBootstrapStep",
 ]

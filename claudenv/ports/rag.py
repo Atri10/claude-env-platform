@@ -7,12 +7,11 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from claudenv.domain.value_objects import (
-    BranchName, ChunkId, ContentHash, RepoSlug, Tier,
-)
 from claudenv.domain.rag import (
-    Chunk, FileState, IndexState, RetrievalMode,
-    RetrievalQuery, RetrievalResult, RAGConfig,
+    Chunk, IndexState, RetrievalMode,
+    RetrievalQuery, RetrievalResult, )
+from claudenv.domain.value_objects import (
+    BranchName, ContentHash, RepoSlug, Tier,
 )
 
 
@@ -48,22 +47,22 @@ class IRagIndexer(Protocol):
 
     @abstractmethod
     def index_file(
-        self,
-        repo: RepoSlug,
-        branch: BranchName,
-        commit: str,
-        file_path: str,
-        text: str,
+            self,
+            repo: RepoSlug,
+            branch: BranchName,
+            commit: str,
+            file_path: str,
+            text: str,
     ) -> int:
         ...
 
     @abstractmethod
     def index_batch(
-        self,
-        repo: RepoSlug,
-        branch: BranchName,
-        commit: str,
-        chunks: list[Chunk],
+            self,
+            repo: RepoSlug,
+            branch: BranchName,
+            commit: str,
+            chunks: list[Chunk],
     ) -> int:
         ...
 
@@ -73,10 +72,10 @@ class IRagIndexer(Protocol):
 
     @abstractmethod
     def full_index(
-        self,
-        repo: RepoSlug,
-        branch: BranchName,
-        files: dict[str, str],
+            self,
+            repo: RepoSlug,
+            branch: BranchName,
+            files: dict[str, str],
     ) -> dict[str, Any]:
         ...
 
@@ -102,12 +101,12 @@ class IRagBookkeeping(Protocol):
 
     @abstractmethod
     def set_file_hash(
-        self,
-        repo: RepoSlug,
-        branch: BranchName,
-        file_path: str,
-        content_hash: ContentHash,
-        chunk_count: int,
+            self,
+            repo: RepoSlug,
+            branch: BranchName,
+            file_path: str,
+            content_hash: ContentHash,
+            chunk_count: int,
     ) -> None:
         ...
 

@@ -94,10 +94,10 @@ class GlobPattern:
     def _compile(pattern: str) -> re.Pattern:
         i, n, out = 0, len(pattern), ["^"]
         while i < n:
-            if pattern[i:i+3] == "**/":
+            if pattern[i:i + 3] == "**/":
                 out.append("(?:.*/)?")
                 i += 3
-            elif pattern[i:i+2] == "**":
+            elif pattern[i:i + 2] == "**":
                 out.append(".*")
                 i += 2
             elif pattern[i] == "*":

@@ -11,9 +11,8 @@ from enum import Enum
 from typing import Any
 
 from claudenv.domain.value_objects import (
-    EventId, RequestId, RepoSlug, SessionId, Tier, utc_now, iso_now,
+    EventId, RequestId, RepoSlug, SessionId, Tier, iso_now,
 )
-
 
 GENESIS = "GENESIS"
 
@@ -59,14 +58,14 @@ class AuditEvent:
 
     @classmethod
     def create(
-        cls,
-        event_type: EventType,
-        actor: str,
-        session_id: SessionId,
-        payload: dict[str, Any],
-        repo: RepoSlug | None = None,
-        tier: Tier | None = None,
-        prev_hash: str = GENESIS,
+            cls,
+            event_type: EventType,
+            actor: str,
+            session_id: SessionId,
+            payload: dict[str, Any],
+            repo: RepoSlug | None = None,
+            tier: Tier | None = None,
+            prev_hash: str = GENESIS,
     ) -> AuditEvent:
         ts = iso_now()
         event_id = EventId.generate()
@@ -87,13 +86,13 @@ class AuditEvent:
 
     @staticmethod
     def _build_canonical(
-        ts: str,
-        event_type: EventType,
-        actor: str,
-        session_id: SessionId,
-        repo: RepoSlug | None,
-        tier: Tier | None,
-        payload: dict[str, Any],
+            ts: str,
+            event_type: EventType,
+            actor: str,
+            session_id: SessionId,
+            repo: RepoSlug | None,
+            tier: Tier | None,
+            payload: dict[str, Any],
     ) -> str:
         return json.dumps({
             "ts": ts,

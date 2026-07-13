@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from claudenv.domain.value_objects import RepoSlug, Tier, BranchName, utc_now
-from claudenv.ports import IConfigProvider, IServiceRegistry
+from claudenv.domain.value_objects import RepoSlug, Tier, BranchName
+from claudenv.ports import IConfigProvider
 
 
 @dataclass
@@ -48,17 +48,17 @@ class OnboardingContext:
     """Context passed between onboarding steps."""
 
     def __init__(
-        self,
-        repo_root: str,
-        slug: RepoSlug,
-        tier: Tier,
-        branch: BranchName,
-        description: str,
-        dry_run: bool = False,
-        force_policy: bool = False,
-        force_template: bool = False,
-        no_template: bool = False,
-        no_post_commit: bool = False,
+            self,
+            repo_root: str,
+            slug: RepoSlug,
+            tier: Tier,
+            branch: BranchName,
+            description: str,
+            dry_run: bool = False,
+            force_policy: bool = False,
+            force_template: bool = False,
+            no_template: bool = False,
+            no_post_commit: bool = False,
     ):
         self.repo_root = repo_root
         self.slug = slug
@@ -193,7 +193,7 @@ class MCPEnvStep(OnboardingStep):
                 resolved_env["CLAUDE_ENV_MEMORY_ISOLATED"] = "true" if ctx.memory_isolated else "false"
             if name == "documentation":
                 resolved_env.setdefault("CLAUDE_ENV_DOCS_DIR",
-                    str(Path(self.config.get_claude_env_home()) / "knowledge" / "docs"))
+                                        str(Path(self.config.get_claude_env_home()) / "knowledge" / "docs"))
 
             if existing.get(name, {}).get("env") != resolved_env:
                 updated.append(name)
@@ -250,7 +250,7 @@ class TemplateStep(OnboardingStep):
                         re.escape("<!-- CLAUDE-ENV:END -->"), re.DOTALL
                     )
                     new_block = managed[managed.index("<!-- CLAUDE-ENV:BEGIN (managed)"):
-                                         managed.index("<!-- CLAUDE-ENV:END -->") + len("<!-- CLAUDE-ENV:END -->")]
+                                        managed.index("<!-- CLAUDE-ENV:END -->") + len("<!-- CLAUDE-ENV:END -->")]
                     merged = pattern.sub(new_block, current)
                 else:
                     merged = managed.rstrip() + "\n\n" + current.lstrip()
@@ -473,17 +473,17 @@ class OnboardingService:
         ]
 
     def onboard(
-        self,
-        repo_root: str,
-        slug: str | None = None,
-        tier: int | None = None,
-        branch: str | None = None,
-        description: str = "",
-        dry_run: bool = False,
-        force_policy: bool = False,
-        force_template: bool = False,
-        no_template: bool = False,
-        no_post_commit: bool = False,
+            self,
+            repo_root: str,
+            slug: str | None = None,
+            tier: int | None = None,
+            branch: str | None = None,
+            description: str = "",
+            dry_run: bool = False,
+            force_policy: bool = False,
+            force_template: bool = False,
+            no_template: bool = False,
+            no_post_commit: bool = False,
     ) -> OnboardingResult:
         repo_path = Path(repo_root).resolve()
         if not repo_path.is_dir():

@@ -6,10 +6,9 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any, Protocol
 
-from claudenv.domain.value_objects import (
-    MemoryType, NodeId, RepoSlug, Tier,
-)
 from claudenv.domain.memory import MemoryEdge, MemoryNode, NamespaceConfig
+from claudenv.domain.value_objects import (
+    MemoryType, NodeId, )
 
 
 class IMemoryRepository(Protocol):
@@ -29,12 +28,12 @@ class IMemoryRepository(Protocol):
 
     @abstractmethod
     def list_nodes(
-        self,
-        namespace: str,
-        memory_type: MemoryType | None = None,
-        min_confidence: float = 0.0,
-        include_superseded: bool = False,
-        limit: int = 100,
+            self,
+            namespace: str,
+            memory_type: MemoryType | None = None,
+            min_confidence: float = 0.0,
+            include_superseded: bool = False,
+            limit: int = 100,
     ) -> list[MemoryNode]:
         ...
 
@@ -48,21 +47,21 @@ class IMemoryRepository(Protocol):
 
     @abstractmethod
     def get_edges(
-        self,
-        src: NodeId,
-        dst: NodeId | None = None,
-        relation: str | None = None,
+            self,
+            src: NodeId,
+            dst: NodeId | None = None,
+            relation: str | None = None,
     ) -> list[MemoryEdge]:
         ...
 
     @abstractmethod
     def expand_graph(
-        self,
-        seed_ids: list[NodeId],
-        depth: int,
-        relations: list[str] | None,
-        namespace: str,
-        extra_namespaces: list[str] | None,
+            self,
+            seed_ids: list[NodeId],
+            depth: int,
+            relations: list[str] | None,
+            namespace: str,
+            extra_namespaces: list[str] | None,
     ) -> list[MemoryNode]:
         ...
 
@@ -72,14 +71,14 @@ class IMemoryGraph(Protocol):
 
     @abstractmethod
     def add_node(
-        self,
-        memory_type: MemoryType,
-        node_kind: str,
-        name: str,
-        body: dict[str, Any],
-        repo: str | None = None,
-        confidence: float = 1.0,
-        embedding: bytes | None = None,
+            self,
+            memory_type: MemoryType,
+            node_kind: str,
+            name: str,
+            body: dict[str, Any],
+            repo: str | None = None,
+            confidence: float = 1.0,
+            embedding: bytes | None = None,
     ) -> NodeId:
         ...
 
@@ -89,53 +88,53 @@ class IMemoryGraph(Protocol):
 
     @abstractmethod
     def supersede(
-        self,
-        old_node_id: NodeId,
-        memory_type: MemoryType,
-        node_kind: str,
-        name: str,
-        body: dict[str, Any],
-        **kwargs,
+            self,
+            old_node_id: NodeId,
+            memory_type: MemoryType,
+            node_kind: str,
+            name: str,
+            body: dict[str, Any],
+            **kwargs,
     ) -> NodeId:
         ...
 
     @abstractmethod
     def add_edge(
-        self,
-        src: NodeId,
-        dst: NodeId,
-        relation: str,
-        weight: float = 1.0,
+            self,
+            src: NodeId,
+            dst: NodeId,
+            relation: str,
+            weight: float = 1.0,
     ) -> str:
         ...
 
     @abstractmethod
     def recall(
-        self,
-        query: str,
-        depth: int = 2,
-        top_k: int = 10,
-        query_vector: list[float] | None = None,
-        extra_namespaces: list[str] | None = None,
+            self,
+            query: str,
+            depth: int = 2,
+            top_k: int = 10,
+            query_vector: list[float] | None = None,
+            extra_namespaces: list[str] | None = None,
     ) -> list[MemoryNode]:
         ...
 
     @abstractmethod
     def expand(
-        self,
-        seed_ids: list[NodeId],
-        depth: int = 2,
-        relations: list[str] | None = None,
-        extra_namespaces: list[str] | None = None,
+            self,
+            seed_ids: list[NodeId],
+            depth: int = 2,
+            relations: list[str] | None = None,
+            extra_namespaces: list[str] | None = None,
     ) -> list[MemoryNode]:
         ...
 
     @abstractmethod
     def list_nodes(
-        self,
-        memory_type: MemoryType | None = None,
-        min_confidence: float = 0.0,
-        limit: int = 100,
+            self,
+            memory_type: MemoryType | None = None,
+            min_confidence: float = 0.0,
+            limit: int = 100,
     ) -> list[MemoryNode]:
         ...
 

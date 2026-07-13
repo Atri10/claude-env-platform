@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from claudenv.domain.value_objects import (
-    ApprovalDecision, RequestId, SessionId, Tier,
+    ApprovalDecision, RequestId, Tier,
 )
 
 

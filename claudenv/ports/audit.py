@@ -7,10 +7,10 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from claudenv.domain.audit import ChainVerificationResult
 from claudenv.domain.value_objects import (
     EventId, EventType, RepoSlug, RequestId, SessionId, Tier,
 )
-from claudenv.domain.audit import AuditEvent, ChainVerificationResult
 
 
 class IAuditRepository(Protocol):
@@ -18,14 +18,14 @@ class IAuditRepository(Protocol):
 
     @abstractmethod
     def append(
-        self,
-        event_type: EventType,
-        payload: dict[str, Any],
-        session_id: SessionId,
-        actor: str,
-        repo: RepoSlug | None,
-        tier: Tier | None,
-        projection: tuple[str, dict[str, Any]] | None = None,
+            self,
+            event_type: EventType,
+            payload: dict[str, Any],
+            session_id: SessionId,
+            actor: str,
+            repo: RepoSlug | None,
+            tier: Tier | None,
+            projection: tuple[str, dict[str, Any]] | None = None,
     ) -> EventId:
         ...
 
@@ -43,95 +43,95 @@ class IAuditLogger(Protocol):
 
     @abstractmethod
     def tool_call(
-        self,
-        tool: str,
-        args: dict[str, Any],
-        result_kind: str,
-        duration_ms: int | None = None,
+            self,
+            tool: str,
+            args: dict[str, Any],
+            result_kind: str,
+            duration_ms: int | None = None,
     ) -> EventId:
         ...
 
     @abstractmethod
     def agent_action(
-        self,
-        agent: str,
-        action: str,
-        target: str | None = None,
-        summary: str | None = None,
-        success: bool = True,
+            self,
+            agent: str,
+            action: str,
+            target: str | None = None,
+            summary: str | None = None,
+            success: bool = True,
     ) -> EventId:
         ...
 
     @abstractmethod
     def retrieval(
-        self,
-        repo: RepoSlug,
-        query: str,
-        top_k: int,
-        returned: int,
-        branch: BranchName | None = None,
-        max_score: float | None = None,
-        min_score: float | None = None,
-        reranked: bool = False,
-        duration_ms: int | None = None,
+            self,
+            repo: RepoSlug,
+            query: str,
+            top_k: int,
+            returned: int,
+            branch: BranchName | None = None,
+            max_score: float | None = None,
+            min_score: float | None = None,
+            reranked: bool = False,
+            duration_ms: int | None = None,
     ) -> EventId:
         ...
 
     @abstractmethod
     def memory_read(
-        self,
-        namespace: str,
-        memory_type: str,
-        query: str | None,
-        hit_count: int,
+            self,
+            namespace: str,
+            memory_type: str,
+            query: str | None,
+            hit_count: int,
     ) -> EventId:
         ...
 
     @abstractmethod
     def memory_write(
-        self,
-        namespace: str,
-        memory_type: str,
-        node_id: NodeId,
-        operation: str,
+            self,
+            namespace: str,
+            memory_type: str,
+            node_id: NodeId,
+            operation: str,
     ) -> EventId:
         ...
 
     @abstractmethod
     def security_event(
-        self,
-        category: str,
-        severity: str,
-        detail: str,
-        source: str | None = None,
+            self,
+            category: str,
+            severity: str,
+            detail: str,
+            source: str | None = None,
     ) -> EventId:
         ...
 
     @abstractmethod
     def policy_violation(
-        self,
-        path: str,
-        rule: str,
-        decision: str,
-        tier: Tier | None = None,
+            self,
+            path: str,
+            rule: str,
+            decision: str,
+            tier: Tier | None = None,
     ) -> EventId:
         ...
 
     @abstractmethod
     def human_approval_request(
-        self,
-        agent: str,
-        action: str,
-        tier: Tier | None = None,
+            self,
+            agent: str,
+            action: str,
+            tier: Tier | None = None,
     ) -> RequestId:
         ...
 
     @abstractmethod
     def human_approval_resolve(
-        self,
-        request_id: RequestId,
-        decision: str,
-        decided_by: str,
+            self,
+            request_id: RequestId,
+            decision: str,
+            decided_by: str,
     ) -> EventId:
         ...
 

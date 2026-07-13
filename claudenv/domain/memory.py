@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Any
 
 from claudenv.domain.value_objects import (
-    BranchName, ContentHash, EdgeId, NodeId, RepoSlug, Tier, utc_now,
+    EdgeId, NodeId, RepoSlug, Tier, utc_now,
 )
 
 
@@ -135,15 +135,15 @@ class MemoryNode:
 
     @classmethod
     def create(
-        cls,
-        namespace: str,
-        memory_type: MemoryType,
-        node_kind: NodeKind,
-        name: str,
-        body: dict[str, Any],
-        repo: str | None = None,
-        confidence: float = 1.0,
-        embedding: bytes | None = None,
+            cls,
+            namespace: str,
+            memory_type: MemoryType,
+            node_kind: NodeKind,
+            name: str,
+            body: dict[str, Any],
+            repo: str | None = None,
+            confidence: float = 1.0,
+            embedding: bytes | None = None,
     ) -> MemoryNode:
         now = utc_now()
         half_life = HALF_LIFE_DAYS.get(node_kind, 90)
@@ -209,12 +209,12 @@ class MemoryEdge:
 
     @classmethod
     def create(
-        cls,
-        namespace: str,
-        src: NodeId,
-        dst: NodeId,
-        relation: EdgeRelation,
-        weight: float = 1.0,
+            cls,
+            namespace: str,
+            src: NodeId,
+            dst: NodeId,
+            relation: EdgeRelation,
+            weight: float = 1.0,
     ) -> MemoryEdge:
         return cls(
             edge_id=EdgeId.generate(),
@@ -285,7 +285,6 @@ class InvalidMemoryRelation(ValueError):
 
 class CrossNamespaceEdge(ValueError):
     """Raised when an edge would join nodes across namespaces (isolation leak)."""
-
 
 
 @dataclass(frozen=True, slots=True)

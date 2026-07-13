@@ -10,13 +10,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from claudenv.domain.value_objects import (
-    MemoryType, NodeId, RepoSlug, Tier, utc_now,
-)
 from claudenv.domain.memory import (
-    ContentHash, EdgeId, EdgeRelation, HALF_LIFE_DAYS, MemoryEdge, MemoryNode,
-    MemoryType, NodeKind, Namespace, NamespaceConfig, VALID_KINDS,
-    CrossNamespaceEdge, InvalidMemoryKind, InvalidMemoryRelation, effective_confidence,
+    EdgeRelation, MemoryEdge, MemoryNode,
+    MemoryType, NodeKind, NamespaceConfig, VALID_KINDS,
+    CrossNamespaceEdge, InvalidMemoryKind, InvalidMemoryRelation,
+    effective_confidence, validate_memory_kind,
+)
+from claudenv.domain.value_objects import (
+    ContentHash, EdgeId, MemoryType, NodeId, RepoSlug, Tier, utc_now,
 )
 from claudenv.ports import (
     IConfigProvider, IEmbeddingProvider, IMemoryGraph, IMemoryRepository,
@@ -38,13 +39,13 @@ class MemoryGraph(IMemoryGraph):
     """In-memory graph operations with repository persistence."""
 
     def __init__(
-        self,
-        repo: IMemoryRepository,
-        namespace: str,
-        embedding: IEmbeddingProvider | None = None,
-        isolated: bool = False,
-        shared_namespaces: tuple[str, ...] = (),
-        tier: Tier = Tier.INTERNAL,
+            self,
+            repo: IMemoryRepository,
+            namespace: str,
+            embedding: IEmbeddingProvider | None = None,
+            isolated: bool = False,
+            shared_namespaces: tuple[str, ...] = (),
+            tier: Tier = Tier.INTERNAL,
     ):
         self.repo = repo
         self.namespace = namespace
@@ -61,14 +62,14 @@ class MemoryGraph(IMemoryGraph):
         return namespaces
 
     def add_node(
-        self,
-        memory_type: MemoryType,
-        node_kind: str,
-        name: str,
-        body: dict[str, Any],
-        repo: str | None = None,
-        confidence: float = 1.0,
-        embedding: bytes | None = None,
+            self,
+            memory_type: MemoryType,
+            node_kind: str,
+            name: str,
+            body: dict[str, Any],
+            repo: str | None = None,
+            confidence: float = 1.0,
+            embedding: bytes | None = None,
     ) -> NodeId:
         node_kind_enum = NodeKind(node_kind)
         validate_memory_kind(memory_type, node_kind_enum)
@@ -98,13 +99,13 @@ class MemoryGraph(IMemoryGraph):
         return self.repo.get_node(node_id)
 
     def supersede(
-        self,
-        old_node_id: NodeId,
-        memory_type: MemoryType,
-        node_kind: str,
-        name: str,
-        body: dict[str, Any],
-        **kwargs,
+            self,
+            old_node_id: NodeId,
+            memory_type: MemoryType,
+            node_kind: str,
+            name: str,
+            body: dict[str, Any],
+            **kwargs,
     ) -> NodeId:
         node_kind_enum = NodeKind(node_kind)
         new_node = self.add_node(memory_type, node_kind_enum.value, name, body, **kwargs)
@@ -127,11 +128,11 @@ class MemoryGraph(IMemoryGraph):
         return new_node
 
     def add_edge(
-        self,
-        src: NodeId,
-        dst: NodeId,
-        relation: str,
-        weight: float = 1.0,
+            self,
+            src: NodeId,
+            dst: NodeId,
+            relation: str,
+            weight: float = 1.0,
     ) -> str:
         rel = EdgeRelation(relation)
         if rel not in EdgeRelation:
@@ -153,12 +154,12 @@ class MemoryGraph(IMemoryGraph):
         return str(edge.edge_id)
 
     def recall(
-        self,
-        query: str,
-        depth: int = 2,
-        top_k: int = 10,
-        query_vector: list[float] | None = None,
-        extra_namespaces: list[str] | None = None,
+            self,
+            query: str,
+            depth: int = 2,
+            top_k: int = 10,
+            query_vector: list[float] | None = None,
+            extra_namespaces: list[str] | None = None,
     ) -> list[MemoryNode]:
         # Keyword recall
         seeds = self.repo.list_nodes(
@@ -181,7 +182,7 @@ class MemoryGraph(IMemoryGraph):
             scored = []
             for n in emb_seeds:
                 if n.embedding:
-                    vec = list(struct.unpack(f"<{len(n.embedding)//4}f", n.embedding))
+                    vec = list(struct.unpack(f"<{len(n.embedding) // 4}f", n.embedding))
                     # cosine similarity
                     dot = sum(a * b for a, b in zip(query_vector, vec))
                     norm_a = sum(x * x for x in query_vector) ** 0.5
@@ -212,11 +213,11 @@ class MemoryGraph(IMemoryGraph):
         return result[:top_k]
 
     def expand(
-        self,
-        seed_ids: list[NodeId],
-        depth: int = 2,
-        relations: list[str] | None = None,
-        extra_namespaces: list[str] | None = None,
+            self,
+            seed_ids: list[NodeId],
+            depth: int = 2,
+            relations: list[str] | None = None,
+            extra_namespaces: list[str] | None = None,
     ) -> list[MemoryNode]:
         return self.repo.expand_graph(
             seed_ids=seed_ids,
@@ -227,10 +228,10 @@ class MemoryGraph(IMemoryGraph):
         )
 
     def list_nodes(
-        self,
-        memory_type: MemoryType | None = None,
-        min_confidence: float = 0.0,
-        limit: int = 100,
+            self,
+            memory_type: MemoryType | None = None,
+            min_confidence: float = 0.0,
+            limit: int = 100,
     ) -> list[MemoryNode]:
         return self.repo.list_nodes(
             namespace=self.namespace,
@@ -256,19 +257,19 @@ class MemoryService:
     """Application service for memory operations."""
 
     def __init__(
-        self,
-        repo: IMemoryRepository,
-        config: IConfigProvider,
+            self,
+            repo: IMemoryRepository,
+            config: IConfigProvider,
     ):
         self.repo = repo
         self.config = config
 
     def create_graph(
-        self,
-        namespace: str,
-        isolated: bool = False,
-        tier: Tier = Tier.INTERNAL,
-        shared_with: tuple[str, ...] = (),
+            self,
+            namespace: str,
+            isolated: bool = False,
+            tier: Tier = Tier.INTERNAL,
+            shared_with: tuple[str, ...] = (),
     ) -> MemoryGraph:
         embedding = None
         try:

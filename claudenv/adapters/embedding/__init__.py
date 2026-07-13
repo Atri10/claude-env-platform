@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from claudenv.domain.rag import RAGConfig
-from claudenv.ports import IConfigProvider, IEmbeddingProvider
 
 
 # ============================================================================
@@ -54,15 +53,15 @@ class LlamaCppEmbedder(EmbedderBackend):
     """llama.cpp embedding backend."""
 
     def __init__(
-        self,
-        model_path: str,
-        model_name: str,
-        n_ctx: int,
-        n_gpu_layers: int,
-        embedding_dim: int,
-        document_prefix: str = "",
-        query_prefix: str = "",
-        pooling_type: str = "mean",
+            self,
+            model_path: str,
+            model_name: str,
+            n_ctx: int,
+            n_gpu_layers: int,
+            embedding_dim: int,
+            document_prefix: str = "",
+            query_prefix: str = "",
+            pooling_type: str = "mean",
     ):
         try:
             from llama_cpp import Llama

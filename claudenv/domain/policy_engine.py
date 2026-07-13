@@ -8,12 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from claudenv.domain.value_objects import (
-    Action, ContentHash, Path, RepoSlug, Tier,
-)
 from claudenv.domain.policy_rules import (
     RuleFactory, RuleSet, ContentScanConfig, PolicyCompiler,
-    IPathRule, IExtensionRule, IContentRule,
+    IPathRule, )
+from claudenv.domain.value_objects import (
+    Action, Path, RepoSlug, Tier,
 )
 
 
@@ -151,9 +150,9 @@ class PolicyEngine:
 
     @classmethod
     def from_yaml(
-        cls,
-        global_data: dict[str, Any],
-        repo_data: dict[str, Any],
+            cls,
+            global_data: dict[str, Any],
+            repo_data: dict[str, Any],
     ) -> PolicyEngine:
         """Create engine from parsed YAML data."""
         compiler = PolicyCompiler()

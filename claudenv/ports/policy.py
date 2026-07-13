@@ -7,10 +7,6 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from claudenv.domain.value_objects import (
-    Action, ApprovalDecision, BranchName, ContentHash, EventId,
-    EventType, MemoryType, NodeId, RepoSlug, RequestId, SessionId, Tier,
-)
 from claudenv.domain.policy import CompiledPolicy, ContentScanResult, PolicyDecision
 
 

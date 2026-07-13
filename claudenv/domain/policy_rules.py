@@ -9,8 +9,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from claudenv.domain.value_objects import Action, Path
 from claudenv.domain.policy import GlobPattern, RegexRule, ExtensionRule, ContentPattern
+from claudenv.domain.value_objects import Action
 
 
 # ============================================================================
@@ -364,13 +364,13 @@ class PolicyCompiler:
         return config
 
     def compile_all(
-        self,
-        global_data: dict[str, Any],
-        repo_data: dict[str, Any],
+            self,
+            global_data: dict[str, Any],
+            repo_data: dict[str, Any],
     ) -> tuple[RuleSet, RuleSet, ContentScanConfig]:
         """Compile both global and repo policies."""
         global_rules = self.compile_global_policy(global_data)
         repo_rules = self.compile_repo_policy(repo_data, global_data.get("tiers", {}))
         content_scan = self.compile_content_scan(repo_data) if repo_data.get("content_scan") else \
-                       self.compile_content_scan(global_data)
+            self.compile_content_scan(global_data)
         return global_rules, repo_rules, content_scan

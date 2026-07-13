@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from claudenv.domain.rag import Chunk, ChunkId, ChunkType, RepoSlug, BranchName, ContentHash, Tier
-from claudenv.domain.value_objects import utc_now
 
 
 # ============================================================================
@@ -29,13 +28,13 @@ class IChunker(ABC):
 
     @abstractmethod
     def chunk(
-        self,
-        file_path: str,
-        text: str,
-        repo: RepoSlug,
-        branch: BranchName,
-        commit: str,
-        tier: Tier = Tier.INTERNAL,
+            self,
+            file_path: str,
+            text: str,
+            repo: RepoSlug,
+            branch: BranchName,
+            commit: str,
+            tier: Tier = Tier.INTERNAL,
     ) -> list[Chunk]:
         """Split file text into chunks with metadata."""
         ...
@@ -48,14 +47,14 @@ class IChunker(ABC):
 @dataclass(frozen=True, slots=True)
 class WindowConfig:
     """Configuration for sliding window chunking."""
-    target_chars: int = 2000      # ~500 tokens
-    overlap_chars: int = 200      # ~50 tokens overlap
+    target_chars: int = 2000  # ~500 tokens
+    overlap_chars: int = 200  # ~50 tokens overlap
     min_chars: int = 100
 
 
 def sliding_window_chunks(
-    text: str,
-    config: WindowConfig,
+        text: str,
+        config: WindowConfig,
 ) -> list[tuple[int, int, str]]:
     """Split text into overlapping windows.
 
@@ -101,13 +100,13 @@ class FallbackChunker(IChunker):
         return ()  # fallback handles anything not matched
 
     def chunk(
-        self,
-        file_path: str,
-        text: str,
-        repo: RepoSlug,
-        branch: BranchName,
-        commit: str,
-        tier: Tier = Tier.INTERNAL,
+            self,
+            file_path: str,
+            text: str,
+            repo: RepoSlug,
+            branch: BranchName,
+            commit: str,
+            tier: Tier = Tier.INTERNAL,
     ) -> list[Chunk]:
         ext = Path(file_path).suffix.lower().lstrip(".")
         file_type = ext or "text"
@@ -159,13 +158,13 @@ class MarkdownChunker(IChunker):
         return (".md", ".mdx", ".rst", ".markdown")
 
     def chunk(
-        self,
-        file_path: str,
-        text: str,
-        repo: RepoSlug,
-        branch: BranchName,
-        commit: str,
-        tier: Tier = Tier.INTERNAL,
+            self,
+            file_path: str,
+            text: str,
+            repo: RepoSlug,
+            branch: BranchName,
+            commit: str,
+            tier: Tier = Tier.INTERNAL,
     ) -> list[Chunk]:
         lines = text.splitlines()
         if not lines:
@@ -240,19 +239,19 @@ class MarkdownChunker(IChunker):
         return chunks
 
     def _make_chunk(
-        self,
-        repo: RepoSlug,
-        branch: BranchName,
-        commit: str,
-        file_path: str,
-        tier: Tier,
-        index: int,
-        header: str,
-        sym_type: ChunkType,
-        start: int,
-        end: int,
-        text: str,
-        suffix: str,
+            self,
+            repo: RepoSlug,
+            branch: BranchName,
+            commit: str,
+            file_path: str,
+            tier: Tier,
+            index: int,
+            header: str,
+            sym_type: ChunkType,
+            start: int,
+            end: int,
+            text: str,
+            suffix: str,
     ) -> Chunk:
         sym_name = f"{header[:60]}{('_' + suffix) if suffix else ''}"
         return Chunk(
@@ -316,10 +315,10 @@ class TreeSitterChunker(IChunker):
     }
 
     def __init__(
-        self,
-        max_chunk_chars: int = 3000,
-        overlap_chars: int = 200,
-        fallback_config: WindowConfig | None = None,
+            self,
+            max_chunk_chars: int = 3000,
+            overlap_chars: int = 200,
+            fallback_config: WindowConfig | None = None,
     ):
         self._max_chars = max_chunk_chars
         self._overlap = overlap_chars
@@ -334,13 +333,13 @@ class TreeSitterChunker(IChunker):
         return tuple(self.LANG_MAP.keys())
 
     def chunk(
-        self,
-        file_path: str,
-        text: str,
-        repo: RepoSlug,
-        branch: BranchName,
-        commit: str,
-        tier: Tier = Tier.INTERNAL,
+            self,
+            file_path: str,
+            text: str,
+            repo: RepoSlug,
+            branch: BranchName,
+            commit: str,
+            tier: Tier = Tier.INTERNAL,
     ) -> list[Chunk]:
         ext = Path(file_path).suffix.lower()
         lang = self.LANG_MAP.get(ext)
@@ -390,15 +389,15 @@ class TreeSitterChunker(IChunker):
             return None
 
     def _extract_chunks(
-        self,
-        root_node,
-        text: str,
-        file_path: str,
-        repo: RepoSlug,
-        branch: BranchName,
-        commit: str,
-        tier: Tier,
-        ext: str,
+            self,
+            root_node,
+            text: str,
+            file_path: str,
+            repo: RepoSlug,
+            branch: BranchName,
+            commit: str,
+            tier: Tier,
+            ext: str,
     ) -> list[Chunk]:
         chunks = []
         lines = text.splitlines()
@@ -489,10 +488,10 @@ class ChunkerFactory:
     """Factory for selecting appropriate chunker by file extension."""
 
     def __init__(
-        self,
-        code_chunker: TreeSitterChunker | None = None,
-        markdown_chunker: MarkdownChunker | None = None,
-        fallback_chunker: FallbackChunker | None = None,
+            self,
+            code_chunker: TreeSitterChunker | None = None,
+            markdown_chunker: MarkdownChunker | None = None,
+            fallback_chunker: FallbackChunker | None = None,
     ):
         self._code = code_chunker or TreeSitterChunker()
         self._markdown = markdown_chunker or MarkdownChunker()
@@ -511,13 +510,13 @@ class ChunkerFactory:
         return self._map.get(ext, self._fallback)
 
     def chunk(
-        self,
-        file_path: str,
-        text: str,
-        repo: RepoSlug,
-        branch: BranchName,
-        commit: str,
-        tier: Tier = Tier.INTERNAL,
+            self,
+            file_path: str,
+            text: str,
+            repo: RepoSlug,
+            branch: BranchName,
+            commit: str,
+            tier: Tier = Tier.INTERNAL,
     ) -> list[Chunk]:
         """Convenience: get chunker and chunk in one call."""
         return self.get_chunker(file_path).chunk(file_path, text, repo, branch, commit, tier)

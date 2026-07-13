@@ -12,11 +12,11 @@ class IServiceRegistry(Protocol):
 
     @abstractmethod
     def register(
-        self,
-        name: str,
-        port: int,
-        pid: int | None = None,
-        extra: dict | None = None,
+            self,
+            name: str,
+            port: int,
+            pid: int | None = None,
+            extra: dict | None = None,
     ) -> dict[str, Any]:
         ...
 
