@@ -63,11 +63,18 @@ class MemoryGraph(IMemoryGraph):
         node_kind_enum = NodeKind(node_kind)
         validate_memory_kind(memory_type, node_kind_enum)
 
-        # Generate embedding if not provided
+        # Generate embedding if not provided. The embedding provider (see
+        # claudenv/adapters/embedding.py) exposes embed_documents()/embed_query()
+        # returning list[float] -- there is no embed_text() method -- so we embed
+        # via embed_documents() and pack the vector to bytes for storage/struct.unpack
+        # in recall(). A prior version called the nonexistent embed_text(), which
+        # raised AttributeError on every write and was silently swallowed here,
+        # meaning nodes were NEVER embedded and semantic recall never worked.
         if embedding is None and self.embedding:
             text = name + " " + json.dumps(body)
             try:
-                embedding = self.embedding.embed_text(text)
+                vec = self.embedding.embed_documents([text])[0]
+                embedding = struct.pack(f"<{len(vec)}f", *vec)
             except Exception:
                 pass
 
@@ -151,6 +158,17 @@ class MemoryGraph(IMemoryGraph):
             extra_namespaces: list[str] | None = None,
             memory_type: MemoryType | None = None,
     ) -> list[MemoryNode]:
+        # Compute the query embedding ourselves when the caller didn't supply one.
+        # No caller (the memory.search MCP tool included) actually computes a
+        # query vector today, so without this the embedding-based recall branch
+        # below was always a dead branch and recall silently degraded to
+        # keyword-only even when an embedder is configured.
+        if query_vector is None and self.embedding:
+            try:
+                query_vector = self.embedding.embed_query(query)
+            except Exception:
+                query_vector = None
+
         # Keyword recall
         seeds = self.repo.list_nodes(
             namespace=self.namespace,

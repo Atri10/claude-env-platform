@@ -126,8 +126,17 @@ def _configure_container(c: Container) -> None:
     # MemoryGraph factory (namespace-scoped)
     def make_memory_graph(namespace: str, session_id: str = "mem",
                           actor: str = "system", isolated: bool = False) -> IMemoryGraph:
-        audit = make_audit_logger(session_id, actor)
-        return MemoryGraph(namespace, audit)
+        # MemoryGraph's real constructor is (repo, namespace, embedding=,
+        # isolated=, ...) -- not (namespace, audit_logger). This previously
+        # passed the namespace string as the repository and an audit logger
+        # as the namespace, which would crash the instant any method touched
+        # self.repo (an IMemoryRepository) or self.namespace.
+        embedder_for_memory = None
+        try:
+            embedder_for_memory = get_embedder()
+        except Exception:
+            pass
+        return MemoryGraph(mem_repo, namespace, embedding=embedder_for_memory, isolated=isolated)
 
     c.register_factory(IMemoryGraph, lambda: make_memory_graph("default"))
 
@@ -160,7 +169,7 @@ def _configure_container(c: Container) -> None:
         indexer = make_rag_indexer(repo, branch)
         from claudenv.adapters.vector.lancedb import LanceDbVectorStore
         store = LanceDbVectorStore(config.get_lancedb_path(), config.get_rag_config().embedding_dim)
-        return RagService(indexer, store, embedder, reranker)
+        return RagService(indexer, store, embedder, reranker, bookkeeping=rag_bookkeeping)
 
     c.register_factory(IRagIndexer, lambda: make_rag_indexer("default"))
     c.register_factory(IRagRetriever, lambda: make_rag_service("default"))

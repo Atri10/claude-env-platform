@@ -113,13 +113,18 @@ class ConfigProvider(IConfigProvider):
         )
 
     def get_database_dsn(self) -> str:
+        # Every other getter here derives its path from get_claude_env_home()
+        # (itself CLAUDE_ENV_HOME-aware), but this one hardcoded Path.home() /
+        # ".claude-env", silently ignoring CLAUDE_ENV_HOME. That meant pointing
+        # CLAUDE_ENV_HOME at an isolated/test directory still wrote audit/
+        # memory/rag state into the real deployed database.
         return os.environ.get(
             "CLAUDE_ENV_DSN",
-            f"sqlite:///{Path.home()}/.claude-env/state/claude-env.db",
+            f"sqlite:///{self.get_claude_env_home()}/state/claude-env.db",
         )
 
     def get_lancedb_path(self) -> str:
-        return os.environ.get("LANCEDB_PATH", str(Path.home() / ".claude-env/knowledge/lancedb"))
+        return os.environ.get("LANCEDB_PATH", str(Path(self.get_claude_env_home()) / "knowledge" / "lancedb"))
 
     def get_claude_env_home(self) -> str:
         return os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env"))

@@ -326,7 +326,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
             "INSERT INTO memory_edges (edge_id, namespace, src, dst, rel, weight, created_at) "
             "VALUES (?,?,?,?,?,?,?)",
             (str(edge.edge_id), edge.namespace, str(edge.src), str(edge.dst),
-             edge.rel.value, edge.weight, edge.created_at.isoformat()),
+             edge.relation.value, edge.weight, edge.created_at.isoformat()),
         )
 
     def get_edges(
@@ -377,7 +377,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
         SELECT DISTINCT n.* FROM walk w JOIN memory_nodes n ON n.node_id = w.node_id
         WHERE n.superseded_by IS NULL AND n.namespace IN ({ns_ph})
         """
-        params = (list(seed_ids) + ns_list + [depth] + ns_list + rel_params + ns_list)
+        params = ([str(s) for s in seed_ids] + ns_list + [depth] + ns_list + rel_params + ns_list)
         rows = self._db.query(sql, tuple(params))
         return [MemoryNode.from_dict(r) for r in rows]
 
