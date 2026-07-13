@@ -12,9 +12,19 @@ CLAUDE_ENV_APPROVAL_SOUND=false -- matching the existing
 CLAUDE_ENV_APPROVAL_AUTO_UI on-by-default/opt-out pattern. Playing the sound
 must never affect the approval flow itself: a missing player binary, no
 audio device, or any other failure is swallowed and logged, not raised.
+
+Regression context 2 (2026-07-13): this used to shell out via a blocking
+`subprocess.run(..., timeout=5)` call directly inside terminal.run's async
+handler -- since the MCP server is a single-threaded asyncio event loop, that
+could stall EVERY in-flight request for up to 5s per approval, before the
+approval was even pollable. `_notify_pending_approval()` is now a synchronous
+launcher that schedules `_notify_pending_approval_task()` as a background
+asyncio task via `asyncio.create_task` and returns immediately; the actual
+`afplay`/`canberra-gtk-play` invocation (via `asyncio.create_subprocess_exec`,
+not `subprocess.run`) happens in that background task, off the request path.
 """
+import asyncio
 import importlib.util
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -93,59 +103,84 @@ def server(tmp_path, monkeypatch):
     return _load_server(tmp_path, monkeypatch)
 
 
-def test_sound_plays_by_default(server, monkeypatch):
-    calls = []
-    monkeypatch.setattr(subprocess, "run",
-                        lambda *a, **k: calls.append((a, k)))
-    server._notify_pending_approval()
-    assert len(calls) == 1
+class _FakeProcess:
+    """Stand-in for the object asyncio.create_subprocess_exec() returns."""
+    async def wait(self):
+        return 0
 
 
-def test_sound_disabled_via_env_var(server, monkeypatch):
+def _patch_create_subprocess_exec(server, monkeypatch, calls, raise_exc=None):
+    async def _fake(*a, **k):
+        if raise_exc:
+            raise raise_exc
+        calls.append((a, k))
+        return _FakeProcess()
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", _fake)
+
+
+def test_sound_disabled_via_env_var_never_schedules(server, monkeypatch):
+    """When disabled, _notify_pending_approval() must return before even
+    scheduling the background task -- asyncio.create_task must not be called."""
     monkeypatch.setenv("CLAUDE_ENV_APPROVAL_SOUND", "false")
-    calls = []
-    monkeypatch.setattr(subprocess, "run",
-                        lambda *a, **k: calls.append((a, k)))
-    server._notify_pending_approval()
-    assert calls == []
+    scheduled = []
+    monkeypatch.setattr(server.asyncio, "create_task",
+                        lambda coro: scheduled.append(coro))
+
+    async def _run():
+        server._notify_pending_approval()
+    asyncio.run(_run())
+    assert scheduled == []
 
 
-def test_sound_uses_afplay_on_darwin(server, monkeypatch):
+def test_sound_enabled_schedules_background_task(server, monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(server.asyncio, "create_task",
+                        lambda coro: scheduled.append(coro) or coro.close())
+
+    async def _run():
+        server._notify_pending_approval()
+    asyncio.run(_run())
+    assert len(scheduled) == 1
+
+
+def test_notify_pending_approval_returns_without_running_loop(server):
+    """Calling the sync launcher with no running event loop (asyncio.create_task
+    raises RuntimeError) must not raise -- best effort only."""
+    server._notify_pending_approval()   # no asyncio.run() wrapper here -> no loop
+
+
+def test_sound_task_uses_afplay_on_darwin(server, monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     calls = []
-    monkeypatch.setattr(subprocess, "run",
-                        lambda *a, **k: calls.append((a, k)))
-    server._notify_pending_approval()
+    _patch_create_subprocess_exec(server, monkeypatch, calls)
+    asyncio.run(server._notify_pending_approval_task())
     assert len(calls) == 1
-    argv = calls[0][0][0]
+    argv = calls[0][0]
     assert argv[0] == "afplay"
 
 
-def test_sound_uses_canberra_on_linux(server, monkeypatch):
+def test_sound_task_uses_canberra_on_linux(server, monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     calls = []
-    monkeypatch.setattr(subprocess, "run",
-                        lambda *a, **k: calls.append((a, k)))
-    server._notify_pending_approval()
+    _patch_create_subprocess_exec(server, monkeypatch, calls)
+    asyncio.run(server._notify_pending_approval_task())
     assert len(calls) == 1
-    argv = calls[0][0][0]
+    argv = calls[0][0]
     assert argv[0] == "canberra-gtk-play"
 
 
-def test_sound_failure_is_swallowed_not_raised(server, monkeypatch):
+def test_sound_task_failure_is_swallowed_not_raised(server, monkeypatch):
     """A missing player binary or audio device must never break the approval
     flow -- this must not raise, just log and continue."""
-    def _raise(*a, **k):
-        raise FileNotFoundError("no such player")
-    monkeypatch.setattr(subprocess, "run", _raise)
-    server._notify_pending_approval()   # must not raise
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _patch_create_subprocess_exec(server, monkeypatch, [],
+                                  raise_exc=FileNotFoundError("no such player"))
+    asyncio.run(server._notify_pending_approval_task())   # must not raise
 
 
 def test_terminal_run_calls_notify_before_blocking(server, monkeypatch):
     """End-to-end: terminal.run must fire the notification as part of opening
     the approval, before/alongside the UI-ensure step -- not skipped."""
-    import asyncio
-
     notify_calls = []
     monkeypatch.setattr(server, "_notify_pending_approval",
                         lambda: notify_calls.append(1))
@@ -157,3 +192,27 @@ def test_terminal_run_calls_notify_before_blocking(server, monkeypatch):
 
     asyncio.run(server.call_tool("terminal.run", {"command": "pwd"}))
     assert len(notify_calls) == 1
+
+
+def test_notify_and_ensure_ui_do_not_block_before_await_decision(server, monkeypatch):
+    """Regression: terminal.run must reach _await_decision (i.e. the approval
+    becomes pollable) WITHOUT waiting on notify/ensure-ui to finish. Make both
+    background tasks take a while and assert call_tool still resolves quickly
+    because _await_decision short-circuits immediately."""
+    import time
+
+    async def _slow_task():
+        await asyncio.sleep(0.2)
+
+    monkeypatch.setattr(server, "_notify_pending_approval",
+                        lambda: asyncio.create_task(_slow_task()))
+    monkeypatch.setattr(server, "_ensure_approvals_ui",
+                        lambda: asyncio.create_task(_slow_task()))
+
+    async def _fake_await_decision(req_id):
+        return "approved", "operator@host"
+    monkeypatch.setattr(server, "_await_decision", _fake_await_decision)
+
+    t0 = time.monotonic()
+    asyncio.run(server.call_tool("terminal.run", {"command": "pwd"}))
+    assert time.monotonic() - t0 < 0.15   # well under the 0.2s the fake tasks take

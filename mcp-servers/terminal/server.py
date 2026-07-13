@@ -39,6 +39,7 @@ server. Requires: pip install mcp
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shlex
@@ -142,14 +143,41 @@ def _repo_tier() -> int | None:
 
 
 def _ensure_approvals_ui() -> None:
+    """Schedule `_ensure_approvals_ui_task()` as a background asyncio task and
+    return immediately — NEVER block the request-handling path on it.
+
+    This used to run its spawn-server / wait-for-registration / shell-out-to-
+    `open` logic synchronously, right here, inline in `call_tool`. Since the
+    MCP server is a single-threaded asyncio event loop, that blocked EVERY
+    in-flight request (including this one reaching `_await_decision`, so the
+    approval wasn't even pollable/visible yet) for however long spawning the
+    server (~3s worst case) plus `open`/`xdg-open` (5s timeout) took — up to
+    ~8s of pure dead time before the approval became actionable at all, on
+    every cold start. The approval row itself already exists in the DB by the
+    time this is called (see call_tool: human_approval_request() runs first),
+    so nothing here needs to finish before decision-polling begins."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # no running event loop (e.g. invoked outside the MCP server) — best
+        # effort only, never raise from a notification path. Checked BEFORE
+        # constructing the task coroutine so none is left dangling/unawaited.
+        _log.info("no running event loop; skipping approvals UI auto-open")
+        return
+    asyncio.create_task(_ensure_approvals_ui_task())
+
+
+async def _ensure_approvals_ui_task() -> None:
     """Make sure the approvals server is running, and open ONE browser tab the
     first time it is started — never per request. The server is a long-lived,
     single-tab queue: once it's up, every new approval just appears in that same
     page (which auto-refreshes), so we must not `open` the URL again for each
     command or tabs pile up. Reusing an already-running server therefore opens
     nothing. Disable browser opening entirely with CLAUDE_ENV_APPROVAL_AUTO_UI=false
-    (the server still starts and the request still blocks)."""
-    import time
+    (the server still starts and the request still blocks). Runs entirely as a
+    background task (see `_ensure_approvals_ui`) — every wait/subprocess call
+    here uses the asyncio (non-blocking) equivalent so it can never stall the
+    server's event loop, even though this coroutine itself may take seconds."""
     try:
         from lib.services import get as _svc_get
         svc = _svc_get("approvals")
@@ -163,22 +191,26 @@ def _ensure_approvals_ui() -> None:
         pref = os.environ.get("CLAUDE_ENV_APPROVAL_PORT")
         if pref:                                      # optional preferred-port hint
             cmd += ["--port", pref]
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+        await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True)
         for _ in range(30):                           # wait for it to register (~3s)
             svc = _svc_get("approvals")
             if svc:
                 break
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
         if not svc:
             return
         if os.environ.get("CLAUDE_ENV_APPROVAL_AUTO_UI", "true").lower() != "true":
             return                                    # started, but don't open a tab
         url = svc["url"]
-        if sys.platform == "darwin":
-            subprocess.run(["open", url], capture_output=True, timeout=5)
-        elif sys.platform.startswith("linux"):
-            subprocess.run(["xdg-open", url], capture_output=True, timeout=5)
+        opener = ("open" if sys.platform == "darwin" else
+                  "xdg-open" if sys.platform.startswith("linux") else None)
+        if opener:
+            proc = await asyncio.create_subprocess_exec(
+                opener, url, stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL)
+            await proc.wait()
     except Exception:
         # auto-opening the approval UI is a convenience; the request still blocks
         # and the operator can open the URL manually. Log the failure.
@@ -186,24 +218,46 @@ def _ensure_approvals_ui() -> None:
 
 
 def _notify_pending_approval() -> None:
+    """Schedule `_notify_pending_approval_task()` as a background asyncio task
+    and return immediately — NEVER block the request-handling path on it (see
+    `_ensure_approvals_ui`'s docstring for why: this used to be a synchronous
+    `subprocess.run(..., timeout=5)` call that could stall the server's single
+    event loop for up to 5s on every approval, before `_await_decision` even
+    started polling)."""
+    if os.environ.get("CLAUDE_ENV_APPROVAL_SOUND", "true").lower() == "false":
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # checked BEFORE constructing the task coroutine so none is left
+        # dangling/unawaited.
+        _log.info("no running event loop; skipping approval sound")
+        return
+    asyncio.create_task(_notify_pending_approval_task())
+
+
+async def _notify_pending_approval_task() -> None:
     """Play a system sound the moment a command enters the approval queue, so
     the operator notices without having to keep the approvals tab open/focused
     (which a browser-side sound would require, subject to autoplay blocking).
     Best-effort: a failure here must never affect the approval flow itself.
     Disable with CLAUDE_ENV_APPROVAL_SOUND=false (on by default, matching the
     existing CLAUDE_ENV_APPROVAL_AUTO_UI on-by-default pattern)."""
-    if os.environ.get("CLAUDE_ENV_APPROVAL_SOUND", "true").lower() == "false":
-        return
     try:
         if sys.platform == "darwin":
-            subprocess.run(["afplay", "/System/Library/Sounds/Ping.aiff"],
-                          capture_output=True, timeout=5)
+            proc = await asyncio.create_subprocess_exec(
+                "afplay", "/System/Library/Sounds/Ping.aiff",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         elif sys.platform.startswith("linux"):
             # canberra-gtk-play (libcanberra) is the common cross-desktop
             # notification-sound player on Linux; not installed everywhere,
             # so this stays best-effort like the darwin branch.
-            subprocess.run(["canberra-gtk-play", "-i", "dialog-warning"],
-                          capture_output=True, timeout=5)
+            proc = await asyncio.create_subprocess_exec(
+                "canberra-gtk-play", "-i", "dialog-warning",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        else:
+            return
+        await proc.wait()
     except Exception:
         # a missing player binary or audio device must never block/break the
         # approval request itself -- just skip the sound silently.
@@ -213,7 +267,6 @@ def _notify_pending_approval() -> None:
 async def _await_decision(req_id: str) -> tuple[str, str | None]:
     """Block until the operator approves/denies this request (or we time out).
     Polls the human_approvals row the approvals UI updates in another process."""
-    import asyncio
     from lib.db import get_db
     db = get_db()
     waited = 0
@@ -551,5 +604,4 @@ async def _serve() -> None:
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(_serve())
