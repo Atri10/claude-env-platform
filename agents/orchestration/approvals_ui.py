@@ -218,10 +218,10 @@ def _page() -> str:
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<title>claude-env approvals</title>'
-        '<meta http-equiv="refresh" content="15">'
+        '<meta http-equiv="refresh" content="5">'
         f'<style>{CSS}</style></head><body><div class="wrap">'
         '<header><div><h1>claude-env — approvals</h1>'
-        '<div class="sub">One queue, one tab · auto-refreshes every 15s · localhost only</div></div>'
+        '<div class="sub">One queue, one tab · auto-refreshes every 5s · localhost only</div></div>'
         f'<div class="sub">signed in as <b class="mono">{by}</b></div></header>'
         f'{_pending_html()}{_recent_html()}'
         '</div></body></html>')
