@@ -80,13 +80,15 @@ incident switch denies everything, everywhere, until it's turned off.
 **Try it — dry-run a policy change before it goes live:**
 
 ```bash
-$ claude-env policy-sim /abs/path/to/repo --candidate .claude/repo-policy.candidate.yaml
+$ claude-env policy-sim simulate /abs/path/to/repo --candidate .claude/repo-policy.candidate.yaml
 # policy simulation — myrepo
-tier: 2 -> 2   changed rules: 1
-newly-blocked: 3
+tier: 2 -> 2   files: 312   blocked: 8 -> 11
+
+NEWLY BLOCKED: 3
   src/legacy/dump_credentials.py  (deny: **/dump_*.py)
   ...
-newly-allowed: 0
+
+NEWLY ALLOWED: 0
 blocked-by-different-rule: 1
 ```
 No file is touched and no agent session is affected — this is pure "what would change,"
@@ -134,8 +136,10 @@ session_id                            events  first                last         
 a1b2c3d4-...                          42      2026-07-08T14:02:11  2026-07-08T14:47:03  alex
 
 $ claude-env replay a1b2c3d4-...
-2026-07-08T14:02:11  policy_check   alex  myrepo  read src/billing/retry.py — allowed
-2026-07-08T14:03:44  policy_check   alex  myrepo  read secrets/prod.env — DENIED
+# session a1b2c3d4-... — 42 events
+
+2026-07-08T14:02:11.041  #101    tool_call              [alex] filesystem.read(src/billing/retry.py) -> ok
+2026-07-08T14:03:44.398  #104    policy_violation       [alex] BLOCK secrets/prod.env (rule: tier3-default-deny)
 ...
 
 $ claude-env report --window 7d --format md --out weekly-compliance.md
@@ -183,11 +187,10 @@ reaper cleans it up automatically.
 
 ```bash
 $ claude-env approvals --list-open
-id       requested             command                          repo
-7f3a...  2026-07-08T14:31:02   scripts/regen_fixtures.sh --all   myrepo
+appr-7f3a1c9e2b04  [terminal] tier=2  terminal.run: scripts/regen_fixtures.sh --all
 
-$ claude-env approvals --resolve 7f3a... --approve --by you
-approved 7f3a... by you@laptop.local — command released
+$ claude-env approvals --resolve appr-7f3a1c9e2b04 --approve --by you@laptop.local
+appr-7f3a1c9e2b04 -> approved
 ```
 (or `claude-env approvals-ui` for a point-and-click browser view of the same queue.)
 
@@ -232,11 +235,12 @@ redacted, without handing over someone's entire memory store.
 
 ```bash
 $ claude-env memory-sync export --namespace proj-payments --out team.jsonl
-exported 214 live nodes (secrets redacted) -> team.jsonl
+exported 214 nodes / 187 edges -> team.jsonl
+review the file before sharing — bodies are secret-redacted, but context may still be sensitive
 
 # on the teammate's machine, after onboarding the same repo:
-$ claude-env memory-sync import --in team.jsonl
-imported 214 nodes into proj-payments
+$ claude-env memory-sync import --in team.jsonl --namespace proj-payments
+imported nodes=214 (skipped 0) edges=187 (skipped 0)
 ```
 
 *Implemented in [`memory/memory_manager.py`](../memory/memory_manager.py),
@@ -282,10 +286,20 @@ server, and even that only fetches externally for lower-sensitivity (tier 0-1) r
 **Try it — fused recall over memory, code, and git history, with sources shown:**
 
 ```bash
-$ claude-env know /abs/path/to/repo "where do we validate incoming webhook signatures?"
-[rag]    src/webhooks/verify.py:18-42  verify_signature()
-[memory] decision (conf 0.91, reinforced 3x): "all webhook HMACs use sha256, see verify.py"
-[git]    last touched 2026-06-02 in a1b2c3d "fix: constant-time compare for HMAC"
+$ claude-env know "where do we validate incoming webhook signatures?" \
+    --repo myrepo --repo-root /abs/path/to/repo
+# what claude-env knows about: 'where do we validate incoming webhook signatures?'  (repo: myrepo)
+
+## memory graph (1)
+  [decision    ] (0.91, 2026-06-02) all webhook HMACs use sha256, see verify.py
+
+## code index (1)
+  [ 0.912] src/webhooks/verify.py:18-42  'def verify_signature(payload, sig, secret):'
+
+## git commits mentioning it (1)
+  a1b2c3d 2026-06-02 fix: constant-time compare for HMAC
+## git code lines (2)
+  src/webhooks/verify.py:41:def verify_signature(payload, sig, secret):
 ```
 
 *Implemented in [`rag/retrievers/lance_store.py`](../rag/retrievers/lance_store.py),
@@ -378,7 +392,13 @@ $ claude-env dashboard --window 7d
    proj-internal-tools       sessions=   2 $0.90
 
 $ claude-env validate all
-PASS installation  PASS security  PASS rag  PASS memory  PASS mcp  PASS features
+PASS venv exists at $CLAUDE_ENV_HOME/venv/
+PASS BLOCK secrets/prod.env
+PASS audit_events UPDATE rejected by trigger
+PASS mcp-servers.json parses
+PASS filesystem-policy enforces policy engine
+... (each validator prints one PASS/WARN/FAIL line per check)
+installation OK
 ```
 Both `budget` and `dashboard` read `metrics_sessions` rows written automatically by the
 SessionStart/SessionEnd hooks — no cron job or manual ingestion step to configure.
@@ -408,15 +428,35 @@ what gets installed live in
 
 ```bash
 $ claude-env onboard /abs/path/to/myrepo
-? Tier for this repo (0=public … 3=restricted): 2
-? Enable local RAG indexing? yes
-✓ wrote .claude/repo-policy.yaml (tier 2)
-✓ RAG namespace myrepo@main created, memory namespace myrepo
-✓ installed CLAUDE.md + .claude/skills/ + .claude/agents/ (11 specialists + 2 reviewers)
-✓ index built: 1,204 chunks across 312 files
+== claude-env onboarding ==  /abs/path/to/myrepo
+Answer a few questions (Enter accepts the default):
+
+  Repo slug (used for RAG + memory namespaces) [myrepo]:
+  Privacy tier — 0 public / 1 internal / 2 sensitive / 3 restricted [1]: 2
+  Default branch [main]:
+  Short description (optional) []:
+
+repo-policy.yaml (tier 2): written
+native-tool hooks: installed
+specialist agents: installed (11 specialists + 2 reviewers)
+
+Isolated workspace provisioned:
+  slug        : myrepo
+  tier        : 2
+  branch      : main
+  RAG table   : myrepo__main
+  memory ns   : proj-myrepo  (cross-project reads: disabled)
+
+Build the RAG index for this repo now? (y/N) y
+  indexing /abs/path/to/myrepo …
+  indexed
 
 $ claude-env validate all
-PASS installation  PASS security  PASS rag  PASS memory  PASS mcp  PASS features
+PASS venv exists at $CLAUDE_ENV_HOME/venv/
+PASS all expected servers declared
+PASS audit_events UPDATE rejected by trigger
+... (one PASS/WARN/FAIL line per check, across installation/security/rag/memory/mcp/features)
+installation OK
 ```
 Restart Claude Code once, and every MCP server, hook, and agent for that repo is live —
 nothing left to wire up by hand.
