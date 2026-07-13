@@ -3,14 +3,13 @@ claude-env :: Domain - RAG Entities
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
 from claudenv.domain.value_objects import (
-    BranchName, ChunkId, ContentHash, RepoSlug, TableName, Tier, utc_now,
+    BranchName, ChunkId, ContentHash, RepoSlug, Tier, utc_now,
 )
 
 

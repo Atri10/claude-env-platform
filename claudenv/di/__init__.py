@@ -158,12 +158,18 @@ def _configure_container(c: Container) -> None:
 
     def make_rag_service(repo: str, branch: str = "main") -> RagService:
         indexer = make_rag_indexer(repo, branch)
-        from claudenv.adapters.vector.lancedb import LanceDbVectorStore
+        from claudenv.adapters.vector.lancedb import LanceDbVectorStore, LanceDbRagRetriever
         store = LanceDbVectorStore(config.get_lancedb_path(), config.get_rag_config().embedding_dim)
-        return RagService(indexer, store, embedder, reranker)
+        # Wrap the raw vector store in LanceDbRagRetriever so query embedding
+        # and reranking actually run on search (passing `store` directly here
+        # would silently skip reranking -- LanceDbVectorStore.search() doesn't
+        # know about the reranker at all).
+        retriever = LanceDbRagRetriever(store, embedder, reranker)
+        return RagService(indexer, retriever, embedder, reranker)
 
     c.register_factory(IRagIndexer, lambda: make_rag_indexer("default"))
     c.register_factory(IRagRetriever, lambda: make_rag_service("default"))
+    c.register_factory(RagService, lambda: make_rag_service("default"))
 
     # --- Policy ---
     policy_service = PolicyService(config)

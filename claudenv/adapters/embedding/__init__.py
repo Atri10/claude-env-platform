@@ -3,12 +3,9 @@ claude-env :: Adapters - Embedding & Reranking
 """
 from __future__ import annotations
 
-import json
 import os
-import struct
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -65,14 +62,35 @@ class LlamaCppEmbedder(EmbedderBackend):
     ):
         try:
             from llama_cpp import Llama
+            from llama_cpp.llama_cpp import (
+                LLAMA_POOLING_TYPE_CLS, LLAMA_POOLING_TYPE_LAST,
+                LLAMA_POOLING_TYPE_MEAN, LLAMA_POOLING_TYPE_NONE,
+            )
         except ImportError:
             raise RuntimeError("llama-cpp-python not installed")
 
+        pooling_types = {
+            "mean": LLAMA_POOLING_TYPE_MEAN,
+            "cls": LLAMA_POOLING_TYPE_CLS,
+            "last": LLAMA_POOLING_TYPE_LAST,
+            "none": LLAMA_POOLING_TYPE_NONE,
+        }
+        if pooling_type not in pooling_types:
+            raise ValueError(
+                f"Unknown embedding.pooling_type '{pooling_type}'. "
+                f"Valid values: {sorted(pooling_types)}."
+            )
+
+        # pooling_type MUST be passed to llama.cpp itself: without it the
+        # model falls back to its own GGUF-declared default (often "none"),
+        # which returns one raw vector PER TOKEN instead of one pooled vector
+        # per input -- silently breaking every embed call downstream.
         self._model = Llama(
             model_path=model_path,
             n_ctx=n_ctx,
             n_gpu_layers=n_gpu_layers,
             embedding=True,
+            pooling_type=pooling_types[pooling_type],
             verbose=False,
         )
         self._model_name = model_name
@@ -103,9 +121,18 @@ class LlamaCppEmbedder(EmbedderBackend):
     def _embed_one(self, text: str) -> list[float]:
         # llama.cpp returns list of vectors for batch, single vector for single
         result = self._model.embed(text)
-        if isinstance(result[0], list):
-            return result[0]
-        return result
+        vec = result[0] if (result and isinstance(result[0], list)) else result
+        if vec and isinstance(vec[0], list):
+            raise TypeError(
+                f"Embedding model returned {len(vec)} per-token vectors instead of one "
+                f"pooled vector, for pooling_type='{self._pooling}'. Try a different "
+                f"embedding.pooling_type in rag.yaml -- 'mean' works for most "
+                f"embedding-tuned models, 'cls' or 'last' for some others; 'none' only "
+                f"works if the GGUF itself bakes in pooling."
+            )
+        # L2 normalize so cosine similarity reduces to a dot product.
+        norm = sum(x * x for x in vec) ** 0.5 or 1.0
+        return [x / norm for x in vec]
 
 
 class DummyEmbedder(EmbedderBackend):
