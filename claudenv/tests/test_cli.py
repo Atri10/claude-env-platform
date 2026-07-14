@@ -10,14 +10,12 @@ import/wiring break surfaces here instead of at runtime.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from click.testing import CliRunner
 
 import claudenv.di as di
-from claudenv.cli import cli
 from claudenv._data import sql_dir as _sql_dir
+from claudenv.cli import cli
 
 _SQL_DIR = _sql_dir()
 

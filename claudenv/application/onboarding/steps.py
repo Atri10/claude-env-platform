@@ -15,10 +15,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from claudenv.domain.value_objects import Tier
 from claudenv._data import config_dir, templates_dir
-
 from claudenv.application.onboarding.base import OnboardingContext, OnboardingStep
+from claudenv.domain.value_objects import Tier
 
 
 def _resolve_deployed_or_packaged(home_rel: Path, packaged: Path) -> Path:
@@ -159,7 +158,7 @@ class MCPEnvStep(OnboardingStep):
         if not ctx.dry_run and updated:
             claude_json.write_text(json.dumps(data, indent=2) + "\n")
             print(f"  Updated env vars for: {', '.join(updated)}")
-            print(f"  ACTION REQUIRED: Restart Claude Code")
+            print("  ACTION REQUIRED: Restart Claude Code")
 
         ctx.add_step("mcp_env")
         return True

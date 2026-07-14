@@ -82,8 +82,18 @@ claudenv = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "UP", "W"]
-ignore = ["E501", "UP037"]
+ignore = [
+    "E501",   # line length is enforced loosely; long strings/URLs are fine
+    "UP037",  # quoted annotations are intentional in some forward refs
+    # `str, Enum` (not StrEnum) is deliberate: these enums are JSON-serialized
+    # and rely on `str, Enum`'s str()/format() semantics. Migrating to StrEnum
+    # is a behavior-sensitive change, out of scope for lint.
+    "UP042",
+    "E731",   # assigning a lambda is used for small local helpers; low value
+]
 
 [tool.ruff.format]
 quote-style = "double"

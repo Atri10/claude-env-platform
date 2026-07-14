@@ -7,7 +7,11 @@ from dataclasses import replace
 from typing import Any
 
 from claudenv.domain.rag import (
-    BranchName, Chunk, RetrievalQuery, RetrievalResult, RepoSlug,
+    BranchName,
+    Chunk,
+    RepoSlug,
+    RetrievalQuery,
+    RetrievalResult,
 )
 from claudenv.ports import IRagRetriever
 

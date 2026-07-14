@@ -3,14 +3,16 @@ Tests for claudenv domain policy - minimal working tests.
 """
 from __future__ import annotations
 
-import pytest
 import re
-import tempfile
-from pathlib import Path
+
+import pytest
 
 from claudenv.domain.policy_rules import (
-    GlobPathRule, RegexPathRule, ExtensionMatchRule, SecretContentRule,
+    ExtensionMatchRule,
+    GlobPathRule,
+    RegexPathRule,
     RuleFactory,
+    SecretContentRule,
 )
 
 

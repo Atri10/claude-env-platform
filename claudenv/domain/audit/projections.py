@@ -11,8 +11,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from claudenv.domain.value_objects import EventId, RequestId
 from claudenv.domain.audit.events import AuditEvent
+from claudenv.domain.value_objects import EventId, RequestId
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from claudenv.domain.value_objects import utc_now
-from claudenv.domain.memory.entities import MemoryType, NodeKind
 from claudenv.domain.memory._kinds import VALID_KINDS
+from claudenv.domain.memory.entities import MemoryType, NodeKind
 from claudenv.domain.memory.errors import InvalidMemoryKind
+from claudenv.domain.value_objects import utc_now
 
 
 def effective_confidence(stored: float, half_life: float, updated_at: str | datetime) -> float:

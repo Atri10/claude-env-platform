@@ -13,11 +13,11 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+from pathlib import Path
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
-from pathlib import Path
-from typing import Any
 
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
@@ -26,7 +26,7 @@ from claudenv.adapters.vector.lancedb import LanceDbVectorStore
 from claudenv.application.rag import RagIndexer, RagService
 from claudenv.domain.policy import PolicyService
 from claudenv.domain.security import RagPoisonDetector
-from claudenv.domain.value_objects import RepoSlug, Tier, SessionId, BranchName
+from claudenv.domain.value_objects import BranchName, RepoSlug, SessionId
 
 
 class LanceDbRagServer:

@@ -15,7 +15,13 @@ from datetime import datetime
 from typing import Any
 
 from claudenv.domain.audit import (
-    AuditEvent, ChainVerificationResult, EventId, EventType, LedgerRow, SessionId, Tier,
+    AuditEvent,
+    ChainVerificationResult,
+    EventId,
+    EventType,
+    LedgerRow,
+    SessionId,
+    Tier,
     verify_ledger_chain,
 )
 from claudenv.domain.memory import MemoryEdge, MemoryNode, MemoryType, NodeId
@@ -153,11 +159,11 @@ class SQLiteMemoryRepository(IMemoryRepository):
         sql = "SELECT * FROM memory_nodes WHERE namespace=?"
         params: list = [namespace]
         if memory_type:
-            sql += " AND memory_type=?";
+            sql += " AND memory_type=?"
             params.append(memory_type.value)
         if not include_superseded:
             sql += " AND superseded_by IS NULL"
-        sql += " ORDER BY updated_at DESC LIMIT ?";
+        sql += " ORDER BY updated_at DESC LIMIT ?"
         params.append(limit)
         rows = self._db.query(sql, tuple(params))
         nodes = [MemoryNode.from_dict(r) for r in rows]
@@ -196,10 +202,10 @@ class SQLiteMemoryRepository(IMemoryRepository):
         sql = "SELECT * FROM memory_edges WHERE src=?"
         params: list = [str(src)]
         if dst:
-            sql += " AND dst=?";
+            sql += " AND dst=?"
             params.append(str(dst))
         if relation:
-            sql += " AND rel=?";
+            sql += " AND rel=?"
             params.append(relation)
         rows = self._db.query(sql, tuple(params))
         return [MemoryEdge.from_dict(r) for r in rows]

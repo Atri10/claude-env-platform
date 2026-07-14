@@ -7,12 +7,18 @@ from dataclasses import replace
 from typing import Any
 
 from claudenv.domain.rag import (
-    BranchName, Chunk, IndexState, RepoSlug, RAGConfig,
+    BranchName,
+    Chunk,
+    IndexState,
+    RAGConfig,
+    RepoSlug,
 )
 from claudenv.domain.rag_chunker import ChunkerFactory, ChunkingConfig, make_chunker_factory
 from claudenv.domain.value_objects import ContentHash
 from claudenv.ports import (
-    IEmbeddingProvider, IRagBookkeeping, IRagIndexer,
+    IEmbeddingProvider,
+    IRagBookkeeping,
+    IRagIndexer,
     IRagRetriever,
 )
 

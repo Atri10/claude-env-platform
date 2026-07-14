@@ -17,8 +17,8 @@ Tests for claudenv application RAG service and indexer:
 from __future__ import annotations
 
 from claudenv.application.rag import RagIndexer, RagService
-from claudenv.domain.rag import IndexState, RetrievalResult
-from claudenv.domain.value_objects import BranchName, ContentHash, RepoSlug, Tier, utc_now
+from claudenv.domain.rag import RetrievalResult
+from claudenv.domain.value_objects import BranchName, ContentHash, RepoSlug, Tier
 
 
 class FakeEmbedder:

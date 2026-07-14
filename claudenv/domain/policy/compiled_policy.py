@@ -5,10 +5,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from claudenv.domain.value_objects import (
-    GlobPattern, Path, PolicyRuleSet, ContentScanConfig, RepoSlug, Tier,
-)
 from claudenv.domain.policy.results import PolicyDecision
+from claudenv.domain.value_objects import (
+    ContentScanConfig,
+    GlobPattern,
+    Path,
+    PolicyRuleSet,
+    RepoSlug,
+    Tier,
+)
 
 
 @dataclass(frozen=True, slots=True)

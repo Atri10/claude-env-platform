@@ -7,8 +7,7 @@ from abc import abstractmethod
 from typing import Any, Protocol
 
 from claudenv.domain.rag import RAGConfig
-
-from claudenv.ports.config.value_objects import EmbeddingConfig, RerankerConfig, RagConfig
+from claudenv.ports.config.value_objects import EmbeddingConfig, RagConfig, RerankerConfig
 
 
 class IConfigProvider(Protocol):

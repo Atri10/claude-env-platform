@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from claudenv.domain.value_objects import RepoSlug, Tier, BranchName
+from claudenv.domain.value_objects import BranchName, RepoSlug, Tier
 from claudenv.ports import IConfigProvider
 
 

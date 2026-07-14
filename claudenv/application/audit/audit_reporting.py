@@ -11,7 +11,7 @@ import csv
 import io
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from claudenv.ports.audit import IAuditRepository
 from claudenv.ports.database import IDatabase
@@ -24,7 +24,7 @@ def _parse_window(win: str) -> datetime:
     n, unit = int(m.group(1)), m.group(2)
     delta = {"h": timedelta(hours=n), "d": timedelta(days=n),
              "w": timedelta(weeks=n)}[unit]
-    return datetime.now(timezone.utc) - delta
+    return datetime.now(UTC) - delta
 
 
 class ComplianceReportGenerator:
@@ -44,7 +44,7 @@ class ComplianceReportGenerator:
         chain = self._audit_repo.verify_chain()
 
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "window": window, "since": since, "repo": repo or "(all)",
             "chain": {"verified": chain.ok, "first_broken_event": chain.broken_at,
                       "total_events": chain.total_events},

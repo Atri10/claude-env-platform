@@ -4,9 +4,9 @@ claude-env :: Ports - RAG Interfaces
 from __future__ import annotations
 
 from claudenv.ports.rag.interfaces import (
+    IRagBookkeeping,
     IRagIndexer,
     IRagRetriever,
-    IRagBookkeeping,
     IReranker,
     IVectorStore,
 )

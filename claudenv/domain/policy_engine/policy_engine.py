@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from claudenv.domain.policy_rules import RuleFactory, PolicyCompiler
-from claudenv.domain.value_objects import Path, RepoSlug, Tier
-from claudenv.domain.policy_engine.results import PolicyDecision, ContentScanResult
 from claudenv.domain.policy_engine.compiled_policy import CompiledPolicy
+from claudenv.domain.policy_engine.results import ContentScanResult, PolicyDecision
+from claudenv.domain.policy_rules import PolicyCompiler, RuleFactory
+from claudenv.domain.value_objects import Path, RepoSlug, Tier
 
 
 class PolicyEngine:

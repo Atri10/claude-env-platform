@@ -8,14 +8,14 @@ into one themed module.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
 
 
 class IPreToolUseHook(ABC):
     """Hook called before a tool is executed."""
 
     @abstractmethod
-    def on_tool_call(self, tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    def on_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
         """
         Evaluate tool call before execution.
 
@@ -32,7 +32,7 @@ class IPostToolUseHook(ABC):
     """Hook called after a tool completes."""
 
     @abstractmethod
-    def on_tool_complete(self, tool_outcome: Dict[str, Any]) -> None:
+    def on_tool_complete(self, tool_outcome: dict[str, Any]) -> None:
         """
         Process tool outcome after execution.
 
@@ -41,11 +41,11 @@ class IPostToolUseHook(ABC):
         """
         pass
 
-    def record_decision(self, approval: Dict[str, Any]) -> None:
+    def record_decision(self, approval: dict[str, Any]) -> None:
         """Record approval/denial decision."""
         pass
 
-    def on_session_start(self, session_id: str) -> Dict[str, Any]:
+    def on_session_start(self, session_id: str) -> dict[str, Any]:
         """Called when session starts."""
         return {}
 
@@ -53,7 +53,7 @@ class IPostToolUseHook(ABC):
         """Called when session ends."""
         pass
 
-    def restore_checkpoint(self, session_id: str, checkpoint_id: str) -> Dict[str, Any]:
+    def restore_checkpoint(self, session_id: str, checkpoint_id: str) -> dict[str, Any]:
         """Restore session from checkpoint."""
         return {}
 

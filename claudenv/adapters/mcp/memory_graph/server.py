@@ -8,18 +8,17 @@ from __future__ import annotations
 
 import json
 import os
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
-from pathlib import Path
-from typing import Any
 
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
-from claudenv.adapters.persistence import SQLiteDatabase, SQLiteMemoryRepository
-from claudenv.domain.memory import MemoryType, NodeKind, EdgeRelation
-from claudenv.domain.value_objects import RepoSlug, Tier, SessionId, NodeId
+from claudenv.adapters.persistence import SQLiteDatabase
 from claudenv.di import get_container
+from claudenv.domain.memory import EdgeRelation, MemoryType, NodeKind
+from claudenv.domain.value_objects import NodeId, RepoSlug, SessionId, Tier
 from claudenv.ports import IMemoryService
 
 
@@ -331,7 +330,6 @@ def create_server(
     # Build the real adapters directly, the same way terminal/server.py's
     # create_server() does.
     db = SQLiteDatabase(config.get_database_dsn())
-    mem_repo = SQLiteMemoryRepository(db)
     memory_service = get_container().get(IMemoryService)
 
     audit_logger = SqliteAuditLogger(

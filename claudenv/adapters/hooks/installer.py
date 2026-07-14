@@ -7,13 +7,10 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import sys
 from pathlib import Path
-from typing import Any, List
 
 from claudenv.adapters.config import get_config
-from claudenv.ports.hooks.interfaces import IPreToolUseHook, IPostToolUseHook
+from claudenv.ports.hooks.interfaces import IPostToolUseHook, IPreToolUseHook
 
 
 class HookInstaller:
@@ -22,8 +19,8 @@ class HookInstaller:
     def __init__(self, repo_root: Path | str | None = None):
         self.repo_root = Path(repo_root) if repo_root else Path(os.getcwd())
         self.config = get_config()
-        self._pre_hooks: List[IPreToolUseHook] = []
-        self._post_hooks: List[IPostToolUseHook] = []
+        self._pre_hooks: list[IPreToolUseHook] = []
+        self._post_hooks: list[IPostToolUseHook] = []
 
     def register_pre_hook(self, hook: IPreToolUseHook) -> None:
         if hook not in self._pre_hooks:

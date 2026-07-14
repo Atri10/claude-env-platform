@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from claudenv.ports import ITransaction, IDatabase
+from claudenv.ports import IDatabase, ITransaction
 
 
 class SQLiteTransaction(ITransaction):

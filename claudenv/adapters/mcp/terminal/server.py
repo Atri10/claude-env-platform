@@ -13,7 +13,6 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -28,7 +27,6 @@ from claudenv.domain.value_objects import SessionId
 from claudenv.ports import IAuditLogger, IDatabase
 
 from .command_error import _CommandError
-
 
 # --- Constants ---------------------------------------------------------------
 
@@ -181,7 +179,7 @@ class TerminalServer:
 
     # --- Commands loading ----------------------------------------------------
 
-    def _load_commands(self) -> Tuple[dict, set]:
+    def _load_commands(self) -> tuple[dict, set]:
         cfg = self.repo_root / ".claude" / "commands.json"
         cmds = dict(_DEFAULTS)
         configured: set = set()
@@ -198,7 +196,7 @@ class TerminalServer:
 
     # --- Approval flow -------------------------------------------------------
 
-    async def _await_decision(self, req_id: str) -> Tuple[str, str | None]:
+    async def _await_decision(self, req_id: str) -> tuple[str, str | None]:
         """Block until the operator approves/denies this request (or we time
         out). Polls the human_approvals row the approvals UI updates in
         another process."""
@@ -358,7 +356,7 @@ class TerminalServer:
     def _scrubbed_env(self) -> dict:
         return {k: v for k, v in os.environ.items() if k in _ENV_ALLOW}
 
-    def _run_pipeline(self, argvs: list[list[str]], cwd: str) -> Tuple[int, str, str]:
+    def _run_pipeline(self, argvs: list[list[str]], cwd: str) -> tuple[int, str, str]:
         procs: list[subprocess.Popen] = []
         try:
             prev_stdout = None

@@ -12,21 +12,26 @@ from dataclasses import replace
 from typing import Any
 
 from claudenv.domain.memory import (
-    EdgeRelation, MemoryEdge, MemoryNode,
-    MemoryType, NamespaceConfig, NodeKind,
-    CrossNamespaceEdge, InvalidMemoryRelation,
+    CrossNamespaceEdge,
+    EdgeRelation,
+    InvalidMemoryRelation,
+    MemoryEdge,
+    MemoryNode,
+    MemoryType,
+    NamespaceConfig,
+    NodeKind,
     validate_memory_kind,
 )
-from claudenv.domain.value_objects import NodeId, Tier, utc_now
 from claudenv.domain.memory.service.interfaces import (
-    IMemoryWriter,
-    IMemoryReader,
-    IMemoryDecay,
-    IMemoryGraphTraversal,
-    IMemoryGraph,
-    IMemoryRepository,
     IEmbeddingProvider,
+    IMemoryDecay,
+    IMemoryGraph,
+    IMemoryGraphTraversal,
+    IMemoryReader,
+    IMemoryRepository,
+    IMemoryWriter,
 )
+from claudenv.domain.value_objects import NodeId, Tier, utc_now
 
 
 class MemoryWriter(IMemoryWriter):

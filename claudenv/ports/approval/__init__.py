@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from claudenv.ports.approval.gate import GateVerdict, IApprovalGate
 from claudenv.ports.approval.interfaces import (
-    IApprovalRepository,
     IApprovalNotifier,
+    IApprovalRepository,
     IApprovalUI,
 )
 

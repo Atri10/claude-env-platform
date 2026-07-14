@@ -26,15 +26,14 @@ driven with a plain asyncio.run() helper.
 from __future__ import annotations
 
 import asyncio
-import subprocess
 import sqlite3
-from pathlib import Path
+import subprocess
 
 import pytest
+from mcp.types import CallToolRequest, CallToolRequestParams
 
 from claudenv.adapters.mcp.git.server import GitServer
 from claudenv.domain.policy import PolicyEngine
-from mcp.types import CallToolRequest, CallToolRequestParams
 
 
 def run(coro):

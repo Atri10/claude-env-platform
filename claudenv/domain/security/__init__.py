@@ -23,10 +23,10 @@ from __future__ import annotations
 
 from claudenv.domain.security._patterns import INJECTION_PATTERNS, SECRET_PATTERNS
 from claudenv.domain.security.detectors import (
-    Verdict,
     PromptInjectionDetector,
-    SecretDetector,
     RagPoisonDetector,
+    SecretDetector,
+    Verdict,
 )
 
 __all__ = [

@@ -10,10 +10,14 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from claudenv.domain.audit.chain import ENVELOPE_SCHEMA_VERSION, GENESIS, compute_event_hash
 from claudenv.domain.value_objects import (
-    EventId, RepoSlug, SessionId, Tier, iso_now,
+    EventId,
+    RepoSlug,
+    SessionId,
+    Tier,
+    iso_now,
 )
-from claudenv.domain.audit.chain import GENESIS, ENVELOPE_SCHEMA_VERSION, compute_event_hash
 
 
 class EventType(str, Enum):

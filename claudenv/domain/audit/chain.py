@@ -7,10 +7,13 @@ ChainVerificationResult, compute_event_hash, verify_chain, verify_ledger_chain.
 from __future__ import annotations
 
 import hashlib
-
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from claudenv.domain.value_objects import EventId
+
+if TYPE_CHECKING:
+    from claudenv.domain.audit.events import AuditEvent, LedgerRow
 
 GENESIS = "GENESIS"
 

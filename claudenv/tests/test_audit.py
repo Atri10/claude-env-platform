@@ -3,17 +3,26 @@ Tests for claudenv domain audit.
 """
 from __future__ import annotations
 
-import json
-import pytest
-
 from claudenv.domain.audit import (
-    AuditEvent, EventType, LedgerRow, ToolCallProjection, AgentActionProjection,
-    RetrievalProjection, SecurityProjection, PolicyViolationProjection,
-    HumanApprovalProjection, ProjectionBuilder, compute_event_hash, verify_chain,
+    AgentActionProjection,
+    AuditEvent,
+    EventType,
+    HumanApprovalProjection,
+    LedgerRow,
+    PolicyViolationProjection,
+    ProjectionBuilder,
+    RetrievalProjection,
+    SecurityProjection,
+    ToolCallProjection,
+    compute_event_hash,
+    verify_chain,
     verify_ledger_chain,
 )
 from claudenv.domain.value_objects import (
-    RepoSlug, SessionId, Tier, iso_now,
+    RepoSlug,
+    SessionId,
+    Tier,
+    iso_now,
 )
 
 

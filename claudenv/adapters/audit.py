@@ -11,8 +11,14 @@ import uuid
 from typing import Any
 
 from claudenv.domain.audit import (
-    AuditEvent, ChainVerificationResult, EventId, EventType, LedgerRow, ProjectionBuilder,
-    SessionId, Tier, verify_ledger_chain,
+    AuditEvent,
+    ChainVerificationResult,
+    EventId,
+    EventType,
+    LedgerRow,
+    SessionId,
+    Tier,
+    verify_ledger_chain,
 )
 from claudenv.domain.value_objects import RepoSlug
 from claudenv.ports import IAuditLogger

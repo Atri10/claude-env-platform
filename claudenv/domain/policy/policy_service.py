@@ -6,10 +6,10 @@ from __future__ import annotations
 from pathlib import Path as _FsPath
 from typing import Any
 
-from claudenv.domain.value_objects import RepoSlug
 from claudenv.domain.policy.global_policy import GlobalPolicy
-from claudenv.domain.policy.repo_policy import RepoPolicy
 from claudenv.domain.policy.policy_engine import PolicyEngine
+from claudenv.domain.policy.repo_policy import RepoPolicy
+from claudenv.domain.value_objects import RepoSlug
 
 
 class PolicyService:
@@ -50,10 +50,11 @@ class PolicyService:
         current = self.get_repo_policy(repo_root)
         global_policy = self.get_global_policy()
 
-        # Compile both
+        # Compile both. Compiling the candidate validates it (to_compiled can
+        # raise on a malformed policy); we don't need to bind the result.
         current_compiled = current.to_compiled(global_policy) if current else None
         candidate_policy = RepoPolicy.from_yaml(candidate)
-        candidate_compiled = candidate_policy.to_compiled(global_policy)
+        candidate_policy.to_compiled(global_policy)
 
         # Test paths against both
         # This is a simplified version - real implementation would test more paths

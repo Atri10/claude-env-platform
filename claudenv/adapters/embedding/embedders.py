@@ -57,8 +57,10 @@ class LlamaCppEmbedder(EmbedderBackend):
         try:
             from llama_cpp import Llama
             from llama_cpp.llama_cpp import (
-                LLAMA_POOLING_TYPE_CLS, LLAMA_POOLING_TYPE_LAST,
-                LLAMA_POOLING_TYPE_MEAN, LLAMA_POOLING_TYPE_NONE,
+                LLAMA_POOLING_TYPE_CLS,
+                LLAMA_POOLING_TYPE_LAST,
+                LLAMA_POOLING_TYPE_MEAN,
+                LLAMA_POOLING_TYPE_NONE,
             )
         except ImportError:
             raise RuntimeError("llama-cpp-python not installed")

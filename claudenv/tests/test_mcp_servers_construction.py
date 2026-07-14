@@ -17,7 +17,6 @@ exactly the way the servers are used for real.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
 

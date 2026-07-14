@@ -15,7 +15,12 @@ from typing import Any, Protocol
 
 from claudenv.domain.audit import ChainVerificationResult
 from claudenv.domain.value_objects import (
-    BranchName, EventId, NodeId, RepoSlug, RequestId, Tier,
+    BranchName,
+    EventId,
+    NodeId,
+    RepoSlug,
+    RequestId,
+    Tier,
 )
 
 

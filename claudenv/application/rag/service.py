@@ -8,13 +8,21 @@ from pathlib import Path
 from typing import Any
 
 from claudenv.domain.rag import (
-    BranchName, Chunk, IndexState, RetrievalMode,
-    RetrievalQuery, RetrievalResult, RepoSlug,
+    BranchName,
+    Chunk,
+    IndexState,
+    RepoSlug,
+    RetrievalMode,
+    RetrievalQuery,
+    RetrievalResult,
 )
 from claudenv.domain.value_objects import Tier
 from claudenv.ports import (
-    IEmbeddingProvider, IRagBookkeeping, IRagIndexer,
-    IRagRetriever, IReranker,
+    IEmbeddingProvider,
+    IRagBookkeeping,
+    IRagIndexer,
+    IRagRetriever,
+    IReranker,
 )
 
 _SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", ".claude-env", "dist", "build"}

@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from claudenv._data import config_dir
 from claudenv.domain.rag import RAGConfig
 from claudenv.ports import (
     IConfigProvider,
@@ -25,7 +26,6 @@ from claudenv.ports import (
     IRepoPolicyConfig,
 )
 
-from claudenv._data import config_dir
 from .base import _ConfigBase
 from .models import EmbeddingConfig, RerankerConfig
 

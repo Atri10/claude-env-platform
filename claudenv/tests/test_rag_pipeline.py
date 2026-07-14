@@ -39,11 +39,14 @@ import json
 from claudenv.application.rag import RagIndexer, RagService
 from claudenv.domain.rag import RAGConfig, RetrievalMode, RetrievalQuery, RetrievalResult
 from claudenv.domain.rag_chunker import (
-    ChunkerFactory, ChunkingConfig, MarkdownChunker, WindowConfig,
-    make_chunker_factory, sliding_window_chunks,
+    ChunkerFactory,
+    ChunkingConfig,
+    MarkdownChunker,
+    WindowConfig,
+    make_chunker_factory,
+    sliding_window_chunks,
 )
 from claudenv.domain.value_objects import BranchName, RepoSlug, Tier
-
 
 REPO = RepoSlug.from_string("acme-widgets")
 BRANCH = BranchName.from_string("main")
@@ -389,9 +392,8 @@ class TestLanceDbRagRetrieverWiring:
 
 
 def _fake_result(text: str) -> RetrievalResult:
-    from claudenv.domain.value_objects import ContentHash
     from claudenv.domain.rag import Chunk, ChunkType
-    from claudenv.domain.value_objects import ChunkId
+    from claudenv.domain.value_objects import ChunkId, ContentHash
 
     chunk = Chunk(
         chunk_id=ChunkId.from_parts(REPO, "f.py", 1, 2),

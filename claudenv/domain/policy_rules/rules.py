@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from claudenv.domain.policy import GlobPattern, RegexRule, ExtensionRule, ContentPattern
+from claudenv.domain.policy import ContentPattern, ExtensionRule, GlobPattern, RegexRule
+from claudenv.domain.policy_rules.interfaces import IContentRule, IExtensionRule, IPathRule
 from claudenv.domain.value_objects import Action
-from claudenv.domain.policy_rules.interfaces import IPathRule, IExtensionRule, IContentRule
 
 
 class GlobPathRule(IPathRule):

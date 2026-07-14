@@ -6,12 +6,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from claudenv.domain.value_objects import (
-    Action, ContentPattern, GlobPattern, RegexRule,
-    RepoSlug, Tier, ExtensionRule, PolicyRuleSet, ContentScanConfig,
-)
-from claudenv.domain.policy.global_policy import GlobalPolicy
 from claudenv.domain.policy.compiled_policy import CompiledPolicy
+from claudenv.domain.policy.global_policy import GlobalPolicy
+from claudenv.domain.value_objects import (
+    ContentPattern,
+    ContentScanConfig,
+    ExtensionRule,
+    GlobPattern,
+    PolicyRuleSet,
+    RegexRule,
+    RepoSlug,
+    Tier,
+)
 
 
 @dataclass(frozen=True, slots=True)

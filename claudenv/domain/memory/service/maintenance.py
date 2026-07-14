@@ -8,8 +8,8 @@ from __future__ import annotations
 from typing import Any
 
 from claudenv.domain.memory import EdgeRelation, MemoryEdge, MemoryNode, NodeKind
-from claudenv.domain.value_objects import utc_now
 from claudenv.domain.memory.service.interfaces import IMemoryRepository
+from claudenv.domain.value_objects import utc_now
 
 
 class MemoryConsolidator:

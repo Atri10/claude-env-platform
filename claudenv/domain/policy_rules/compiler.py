@@ -7,14 +7,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from claudenv.domain.policy_rules.interfaces import IPathRule, IExtensionRule, IContentRule
+from claudenv.domain.policy_rules.interfaces import IContentRule, IExtensionRule, IPathRule
 from claudenv.domain.policy_rules.rules import (
+    ContentScanConfig,
+    ExtensionMatchRule,
     GlobPathRule,
     RegexPathRule,
-    ExtensionMatchRule,
-    SecretContentRule,
     RuleSet,
-    ContentScanConfig,
+    SecretContentRule,
 )
 
 

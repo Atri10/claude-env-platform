@@ -6,7 +6,7 @@ and projection_repository.py modules into one themed module.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from claudenv.domain.observability.budget import RepoSpend
@@ -19,7 +19,7 @@ from claudenv.ports.observability import (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class SQLiteFeedbackRepository(IFeedbackRepository):

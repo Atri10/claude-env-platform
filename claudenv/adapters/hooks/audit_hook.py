@@ -9,10 +9,10 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from claudenv.adapters.config import get_config
-from claudenv.domain.value_objects import RepoSlug, Tier, SessionId
+from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
 from claudenv.ports import IAuditLogger
 from claudenv.ports.hooks.interfaces import IPostToolUseHook
 
@@ -27,13 +27,13 @@ class AuditHook(IPostToolUseHook):
     ):
         self.audit = audit_logger
         self.repo_root = repo_root
-        self._sinks: List[Any] = []
+        self._sinks: list[Any] = []
 
     def add_sink(self, sink: Any) -> None:
         """Add external audit event sink."""
         self._sinks.append(sink)
 
-    def on_tool_complete(self, tool_outcome: Dict[str, Any]) -> None:
+    def on_tool_complete(self, tool_outcome: dict[str, Any]) -> None:
         tool_name = tool_outcome.get("tool_name", "unknown")
         success = tool_outcome.get("success", False)
         details = tool_outcome.get("details", {})
@@ -54,7 +54,7 @@ class AuditHook(IPostToolUseHook):
                     "details": details,
                 }).encode() + b"\n")
 
-    def record_decision(self, approval: Dict[str, Any]) -> None:
+    def record_decision(self, approval: dict[str, Any]) -> None:
         """Record approval/denial decision."""
         self.audit.agent_action(
             agent="approval_gate",

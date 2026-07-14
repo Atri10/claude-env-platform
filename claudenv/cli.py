@@ -3,10 +3,10 @@ claude-env :: CLI Entry Point
 """
 from __future__ import annotations
 
-import click
-import os
 import sys
 from pathlib import Path
+
+import click
 
 from claudenv.adapters.config import get_config
 from claudenv.application.audit import ComplianceReportGenerator, SessionReplay
@@ -40,9 +40,10 @@ def init(ctx, force_config):
     the code, this provisions the runtime state. Safe to re-run.
     """
     import shutil
+
     from claudenv._data import config_dir, sql_dir
-    from claudenv.adapters.persistence import SQLiteDatabase
     from claudenv.adapters.audit import SqliteAuditLogger
+    from claudenv.adapters.persistence import SQLiteDatabase
     from claudenv.domain.value_objects import SessionId
 
     config = get_config()
@@ -149,9 +150,6 @@ def onboard(ctx, repo_root, repo_name, tier, description, branch, yes, dry_run, 
 @click.pass_context
 def scan(ctx, repo_root):
     """Preview what would be indexed (policy allow/block split)."""
-    config = get_config()
-    service = OnboardingService(config)
-
     # Load policy and simulate
     from claudenv.domain.policy import PolicyEngine
     engine = PolicyEngine.load(repo_root)
@@ -188,7 +186,6 @@ def scan(ctx, repo_root):
 @click.pass_context
 def index(ctx, repo_root):
     """Build full RAG index for a repository."""
-    config = get_config()
     container = get_container()
 
     # Get repo slug from onboarding
@@ -269,7 +266,6 @@ def validate_installation(ctx):
 @click.pass_context
 def rag(ctx, repo_root, query):
     """Test RAG retrieval for a repository."""
-    config = get_config()
     container = get_container()
 
     repo_policy_path = Path(repo_root) / ".claude" / "repo-policy.yaml"
@@ -318,7 +314,6 @@ def hooks(ctx, repo_root):
 @click.pass_context
 def report(ctx, window, repo, format, out):
     """Generate compliance report."""
-    config = get_config()
     container = get_container()
 
     generator = ComplianceReportGenerator(container.get(IDatabase), container.get(IAuditRepository))
@@ -338,7 +333,6 @@ def report(ctx, window, repo, format, out):
 @click.pass_context
 def replay(ctx, list_sessions, session_id):
     """Replay session forensics."""
-    config = get_config()
     container = get_container()
 
     replay = SessionReplay(container.get(IDatabase))

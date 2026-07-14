@@ -3,12 +3,12 @@ claude-env :: Domain - Value Objects - Time helpers
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def utc_now() -> datetime:
     """Current UTC time with timezone info."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def iso_now() -> str:

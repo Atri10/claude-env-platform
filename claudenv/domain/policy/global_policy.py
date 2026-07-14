@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from claudenv.domain.value_objects import (
-    GlobPattern, RegexRule, Tier, ExtensionRule,
+    ExtensionRule,
+    GlobPattern,
+    RegexRule,
+    Tier,
 )
 
 

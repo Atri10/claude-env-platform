@@ -7,8 +7,8 @@ from .database import SQLiteDatabase, SQLiteTransaction
 from .repositories import (
     SQLiteAuditRepository,
     SQLiteMemoryRepository,
-    SQLiteRagBookkeeping,
     SQLitePolicyRepository,
+    SQLiteRagBookkeeping,
 )
 
 __all__ = [

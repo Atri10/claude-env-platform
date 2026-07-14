@@ -7,17 +7,16 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
+from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
 from claudenv.adapters.persistence import SQLiteDatabase
-from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.domain.policy import PolicyService
-from claudenv.domain.value_objects import RepoSlug, Tier, SessionId
+from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
 from claudenv.ports import IAuditLogger, IPolicyEngine
 from claudenv.ports.hooks.interfaces import IPreToolUseHook
 
@@ -111,7 +110,7 @@ class PolicyHook(IPreToolUseHook):
         first = command.split()[0] if command.split() else ""
         return first in net_cmds
 
-    def on_tool_call(self, tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    def on_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
         """
         Evaluate tool call against policy.
 
@@ -175,7 +174,7 @@ class PolicyHook(IPreToolUseHook):
                 # Secret in command string
                 redacted, hits = self._scan_content(command)
                 if hits and hits[0][1] == -1:
-                    return {"allow": False, "reason": self._signed(f"secret in command string")}
+                    return {"allow": False, "reason": self._signed("secret in command string")}
 
             return {"allow": True}
 

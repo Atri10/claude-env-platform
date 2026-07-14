@@ -17,4 +17,7 @@ from claudenv.application.audit.audit_reporting import (
 __all__ = [
     "ComplianceReportGenerator",
     "SessionReplay",
+    # Re-exported for tests / advanced callers (see test_audit_reporting.py).
+    "_parse_window",
+    "_summarize",
 ]

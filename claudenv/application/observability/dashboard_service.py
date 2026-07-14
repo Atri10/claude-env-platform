@@ -8,7 +8,7 @@ Local-only: reads the same SQLite DB, never the network.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from claudenv.domain.observability.metrics import nearest_rank_percentile, parse_window_days
@@ -24,7 +24,7 @@ class DashboardService:
 
     def _since_iso(self, window: str) -> str:
         days = parse_window_days(window)
-        since = datetime.now(timezone.utc) - timedelta(days=days)
+        since = datetime.now(UTC) - timedelta(days=days)
         return since.strftime("%Y-%m-%dT%H:%M:%S")
 
     def summary(self, window: str = "30d") -> dict[str, Any]:

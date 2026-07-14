@@ -9,7 +9,9 @@ and lancedb_rag MCP servers.
 from __future__ import annotations
 
 from claudenv.domain.security import (
-    PromptInjectionDetector, RagPoisonDetector, SecretDetector,
+    PromptInjectionDetector,
+    RagPoisonDetector,
+    SecretDetector,
 )
 
 

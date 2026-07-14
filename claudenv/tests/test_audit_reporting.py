@@ -8,11 +8,14 @@ fake IDatabase/IAuditRepository, matching the read shapes cli.py expects.
 from __future__ import annotations
 
 import json
+from datetime import UTC
 
 import pytest
 
 from claudenv.application.audit import (
-    ComplianceReportGenerator, SessionReplay, _parse_window,
+    ComplianceReportGenerator,
+    SessionReplay,
+    _parse_window,
 )
 from claudenv.domain.audit import ChainVerificationResult
 from claudenv.domain.value_objects import EventId
@@ -47,21 +50,21 @@ class FakeAuditRepository:
 
 class TestParseWindow:
     def test_hours(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
         result = _parse_window("24h")
-        delta = datetime.now(timezone.utc) - result
+        delta = datetime.now(UTC) - result
         assert 23.9 <= delta.total_seconds() / 3600 <= 24.1
 
     def test_days(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
         result = _parse_window("7d")
-        delta = datetime.now(timezone.utc) - result
+        delta = datetime.now(UTC) - result
         assert 6.9 <= delta.total_seconds() / 86400 <= 7.1
 
     def test_weeks(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
         result = _parse_window("2w")
-        delta = datetime.now(timezone.utc) - result
+        delta = datetime.now(UTC) - result
         assert 13.9 <= delta.total_seconds() / 86400 <= 14.1
 
     def test_invalid_format_raises(self):

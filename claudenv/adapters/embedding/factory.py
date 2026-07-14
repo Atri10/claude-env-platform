@@ -9,8 +9,8 @@ from pathlib import Path
 
 from claudenv.domain.rag import RAGConfig
 
-from .embedders import EmbedderBackend, LlamaCppEmbedder, DummyEmbedder
-from .rerankers import RerankerBackend, OnnxCrossEncoderReranker, NoopReranker
+from .embedders import DummyEmbedder, EmbedderBackend, LlamaCppEmbedder
+from .rerankers import NoopReranker, OnnxCrossEncoderReranker, RerankerBackend
 
 _EMBEDDER: EmbedderBackend | None = None
 _EMBEDDER_KEY: tuple | None = None

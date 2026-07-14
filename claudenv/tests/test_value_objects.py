@@ -3,14 +3,30 @@ Tests for claudenv domain value objects.
 """
 from __future__ import annotations
 
-import pytest
 import re
 
+import pytest
+
 from claudenv.domain.value_objects import (
-    RepoSlug, Tier, ChunkId, EventId, RequestId, SessionId,
-    NodeId, EdgeId, BranchName, ContentHash, TableName,
-    utc_now, iso_now, GlobPattern, RegexRule,
-    ExtensionRule, ContentPattern, PolicyRuleSet, ContentScanConfig,
+    BranchName,
+    ChunkId,
+    ContentHash,
+    ContentPattern,
+    ContentScanConfig,
+    EdgeId,
+    EventId,
+    ExtensionRule,
+    GlobPattern,
+    NodeId,
+    PolicyRuleSet,
+    RegexRule,
+    RepoSlug,
+    RequestId,
+    SessionId,
+    TableName,
+    Tier,
+    iso_now,
+    utc_now,
 )
 
 

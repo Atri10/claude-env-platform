@@ -3,29 +3,52 @@ claude-env :: Ports - Consumer-owned interfaces
 """
 from __future__ import annotations
 
-from .approval import IApprovalGate, IApprovalNotifier, IApprovalUI, IApprovalRepository
+from .approval import IApprovalGate, IApprovalNotifier, IApprovalRepository, IApprovalUI
 from .audit import (
-    IAuditLogger, IAuditRepository,
-    IToolAuditLogger, IAgentAuditLogger, ISecurityAuditLogger,
-    IApprovalAuditLogger, IVerifiableLedger,
+    IAgentAuditLogger,
+    IApprovalAuditLogger,
+    IAuditLogger,
+    IAuditRepository,
+    ISecurityAuditLogger,
+    IToolAuditLogger,
+    IVerifiableLedger,
 )
 from .config import (
-    IConfigProvider, IDatabaseConfig, ILanceDBConfig, IRAGConfig,
-    IGlobalPolicyConfig, IRepoPolicyConfig, IMCPConfig, IClaudeEnvHome,
+    IClaudeEnvHome,
+    IConfigProvider,
+    IDatabaseConfig,
+    IGlobalPolicyConfig,
+    ILanceDBConfig,
+    IMCPConfig,
+    IRAGConfig,
+    IRepoPolicyConfig,
 )
 from .database import IDatabase, ITransaction
 from .events import IEventBus
-from .hooks import IPreToolUseHook, IPostToolUseHook, HookInstaller
+from .hooks import HookInstaller, IPostToolUseHook, IPreToolUseHook
 from .memory import (
-    IMemoryGraph, IMemoryRepository, IEmbeddingProvider, IMemoryService,
-    IMemoryWriter, IMemoryReader, IMemoryDecay, IMemoryGraphTraversal,
+    IEmbeddingProvider,
+    IMemoryDecay,
+    IMemoryGraph,
+    IMemoryGraphTraversal,
+    IMemoryReader,
+    IMemoryRepository,
+    IMemoryService,
+    IMemoryWriter,
 )
 from .observability import (
-    IBudgetConfig, IMetricsRepository, IFeedbackRepository, IProjectionRepository,
+    IBudgetConfig,
+    IFeedbackRepository,
+    IMetricsRepository,
+    IProjectionRepository,
 )
 from .policy import IPolicyEngine, IPolicyRepository, IPolicySimulator
 from .rag import (
-    IRagIndexer, IRagRetriever, IRagBookkeeping, IReranker, IVectorStore,
+    IRagBookkeeping,
+    IRagIndexer,
+    IRagRetriever,
+    IReranker,
+    IVectorStore,
 )
 from .services import IServiceRegistry
 

@@ -31,8 +31,7 @@ import html
 import json
 import secrets
 import socket
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs
 
@@ -124,7 +123,7 @@ def _ts(iso: str | None) -> str:
     try:
         t = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
         if t.tzinfo is None:
-            t = t.replace(tzinfo=timezone.utc)
+            t = t.replace(tzinfo=UTC)
         local = t.astimezone()
         return local.strftime("%Y-%m-%d %H:%M:%S %Z")
     except Exception:

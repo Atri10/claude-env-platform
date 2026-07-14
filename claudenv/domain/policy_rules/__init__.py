@@ -4,17 +4,17 @@ Strategy pattern for different rule types.
 """
 from __future__ import annotations
 
-from claudenv.domain.policy_rules.interfaces import IPathRule, IExtensionRule, IContentRule
+from claudenv.domain.policy_rules.compiler import PolicyCompiler, RuleFactory
+from claudenv.domain.policy_rules.interfaces import IContentRule, IExtensionRule, IPathRule
 from claudenv.domain.policy_rules.rules import (
+    ContentScanConfig,
+    ExtensionMatchRule,
     GlobPathRule,
     RegexPathRule,
-    ExtensionMatchRule,
-    SecretContentRule,
     RuleSet,
-    ContentScanConfig,
+    SecretContentRule,
     TierOverrides,
 )
-from claudenv.domain.policy_rules.compiler import RuleFactory, PolicyCompiler
 
 __all__ = [
     "IPathRule",

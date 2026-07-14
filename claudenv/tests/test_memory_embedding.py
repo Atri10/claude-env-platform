@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import struct
 
+from claudenv.domain.memory import MemoryNode, MemoryType
 from claudenv.domain.memory.service import MemoryGraph
-from claudenv.domain.memory import MemoryNode, MemoryType, NodeKind
 
 
 class FakeEmbedder:

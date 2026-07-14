@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from claudenv.domain.policy_rules import RuleSet, ContentScanConfig, IPathRule
+from claudenv.domain.policy_engine.results import ContentScanResult, PolicyDecision
+from claudenv.domain.policy_rules import ContentScanConfig, IPathRule, RuleSet
 from claudenv.domain.value_objects import Path, RepoSlug, Tier
-from claudenv.domain.policy_engine.results import PolicyDecision, ContentScanResult
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,7 +5,7 @@ Consumer-owned interfaces for governance hooks.
 """
 from __future__ import annotations
 
-from .hooks import IPreToolUseHook, IPostToolUseHook, HookInstaller
+from .hooks import HookInstaller, IPostToolUseHook, IPreToolUseHook
 
 __all__ = [
     "IPreToolUseHook",

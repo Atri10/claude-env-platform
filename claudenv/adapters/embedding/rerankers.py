@@ -29,8 +29,8 @@ class OnnxCrossEncoderReranker(RerankerBackend):
 
     def __init__(self, model_dir: str):
         try:
+            import numpy  # noqa: F401  (availability probe; used in _predict)
             import onnxruntime as ort
-            import numpy as np
         except ImportError:
             raise RuntimeError("onnxruntime not installed")
 

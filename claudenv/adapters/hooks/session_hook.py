@@ -6,9 +6,8 @@ Session lifecycle management: context loading, checkpoint restore, context save.
 from __future__ import annotations
 
 import json
-import os
 import sys
-from typing import Any, Dict
+from typing import Any
 
 from claudenv.domain.memory.service import MemoryServiceImpl as MemoryService
 from claudenv.ports.hooks.interfaces import IPostToolUseHook
@@ -26,13 +25,13 @@ class SessionHook(IPostToolUseHook):
         self.memory = memory_service
         self.audit = audit_logger
         self.session_id = session_id
-        self._context: Dict[str, Any] = {}
+        self._context: dict[str, Any] = {}
 
-    def on_tool_complete(self, tool_outcome: Dict[str, Any]) -> None:
+    def on_tool_complete(self, tool_outcome: dict[str, Any]) -> None:
         """Track tool outcomes for session context."""
         pass
 
-    def on_session_start(self, session_id: str) -> Dict[str, Any]:
+    def on_session_start(self, session_id: str) -> dict[str, Any]:
         """Load memory context at session start."""
         graph = self.memory.create_graph(f"session:{session_id}", isolated=True)
         self._context = {
@@ -52,7 +51,7 @@ class SessionHook(IPostToolUseHook):
         )
         self._context.clear()
 
-    def restore_checkpoint(self, session_id: str, checkpoint_id: str) -> Dict[str, Any]:
+    def restore_checkpoint(self, session_id: str, checkpoint_id: str) -> dict[str, Any]:
         """Restore session from checkpoint."""
         graph = self.memory.create_graph(f"session:{session_id}:checkpoint:{checkpoint_id}", isolated=True)
         self._context = {
@@ -86,8 +85,6 @@ def create_hook(
 
 def main() -> None:
     """CLI entry point for PostToolUse hook."""
-    import sys
-    import json
 
     try:
         hook_input = json.load(sys.stdin)

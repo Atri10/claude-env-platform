@@ -4,8 +4,9 @@ claude-env :: Adapters - Configuration - Base loader
 from __future__ import annotations
 
 import os
-import yaml
 from pathlib import Path
+
+import yaml
 
 from claudenv._data import config_dir
 

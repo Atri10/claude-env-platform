@@ -4,51 +4,81 @@ claude-env :: DI - Dependency Injection Container
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import (
+    get_claude_env_home_provider,
     get_config,
     get_database_config,
-    get_lancedb_config,
-    get_rag_config_provider,
     get_global_policy_config,
-    get_repo_policy_config,
+    get_lancedb_config,
     get_mcp_config,
-    get_claude_env_home_provider,
+    get_rag_config_provider,
+    get_repo_policy_config,
 )
 from claudenv.adapters.embedding import get_embedder, get_reranker
-from claudenv.adapters.services import FileServiceRegistry
 from claudenv.adapters.persistence import (
-    SQLiteAuditRepository, SQLiteDatabase, SQLiteMemoryRepository, SQLiteRagBookkeeping,
+    SQLiteAuditRepository,
+    SQLiteDatabase,
+    SQLiteMemoryRepository,
     SQLitePolicyRepository,
+    SQLiteRagBookkeeping,
 )
-from claudenv.adapters.vector.lancedb import LanceDbVectorStore, LanceDbRagRetriever
+from claudenv.adapters.services import FileServiceRegistry
+from claudenv.adapters.vector.lancedb import LanceDbRagRetriever, LanceDbVectorStore
 from claudenv.application.approval import ApprovalGate
 from claudenv.application.rag import RagIndexer, RagService
+from claudenv.di.event_bus import EventBus
 from claudenv.domain.memory.service import (
+    MemoryDecay,
     MemoryGraph,
+    MemoryGraphTraversal,
+    MemoryReader,
     MemoryServiceImpl,
     MemoryWriter,
-    MemoryReader,
-    MemoryDecay,
-    MemoryGraphTraversal,
 )
-from claudenv.di.event_bus import EventBus
-from claudenv.domain.policy import PolicyEngine, PolicyService
+from claudenv.domain.policy import PolicyService
 from claudenv.ports import (
-    IApprovalGate, IAuditLogger, IAuditRepository,
-    IToolAuditLogger, IAgentAuditLogger, ISecurityAuditLogger,
-    IApprovalAuditLogger, IVerifiableLedger,
-    IConfigProvider, IDatabaseConfig, ILanceDBConfig, IRAGConfig, IGlobalPolicyConfig, IRepoPolicyConfig,
-    IMCPConfig, IClaudeEnvHome, IDatabase, IEmbeddingProvider, IEventBus, IMemoryGraph,
-    IMemoryRepository, IMemoryService, IRagBookkeeping, IRagIndexer, IRagRetriever,
-    IReranker, IServiceRegistry, IVectorStore,
-    IPolicyRepository, IPolicyEngine,
-    IMemoryWriter, IMemoryReader, IMemoryDecay, IMemoryGraphTraversal,
-    IBudgetConfig, IMetricsRepository, IFeedbackRepository, IProjectionRepository,
+    IAgentAuditLogger,
+    IApprovalAuditLogger,
+    IApprovalGate,
+    IAuditLogger,
+    IAuditRepository,
+    IBudgetConfig,
+    IClaudeEnvHome,
+    IConfigProvider,
+    IDatabase,
+    IDatabaseConfig,
+    IEmbeddingProvider,
+    IEventBus,
+    IFeedbackRepository,
+    IGlobalPolicyConfig,
+    ILanceDBConfig,
+    IMCPConfig,
+    IMemoryDecay,
+    IMemoryGraph,
+    IMemoryGraphTraversal,
+    IMemoryReader,
+    IMemoryRepository,
+    IMemoryService,
+    IMemoryWriter,
+    IMetricsRepository,
+    IPolicyEngine,
+    IPolicyRepository,
+    IProjectionRepository,
+    IRagBookkeeping,
+    IRAGConfig,
+    IRagIndexer,
+    IRagRetriever,
+    IRepoPolicyConfig,
+    IReranker,
+    ISecurityAuditLogger,
+    IServiceRegistry,
+    IToolAuditLogger,
+    IVectorStore,
+    IVerifiableLedger,
 )
 
 T = TypeVar("T")
@@ -153,8 +183,8 @@ def _configure_container(c: Container) -> None:
     # AuditLogger factory (session-scoped)
     def make_audit_logger(session_id: str = "default", actor: str = "system",
                           repo: str | None = None, tier: int | None = None) -> IAuditLogger:
-        from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
         from claudenv.adapters.persistence import SQLiteDatabase
+        from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
         # Create a new database connection for the audit logger
         audit_db = SQLiteDatabase(db_config.get_database_dsn())
         return SqliteAuditLogger(
@@ -248,7 +278,7 @@ def _configure_container(c: Container) -> None:
 
     # RagIndexer & RagService (repo-scoped factories)
     def make_rag_indexer(repo: str, branch: str = "main") -> IRagIndexer:
-        from claudenv.domain.value_objects import RepoSlug, BranchName
+        from claudenv.domain.value_objects import BranchName, RepoSlug
         store = c.get(IVectorStore)
         return RagIndexer(
             repo=RepoSlug.from_string(repo),
@@ -303,13 +333,15 @@ def _configure_container(c: Container) -> None:
 
     # --- Observability (budgets / feedback / dashboard) ---
     from claudenv.adapters.observability import (
-        YamlBudgetConfig,
-        SQLiteMetricsRepository,
         SQLiteFeedbackRepository,
+        SQLiteMetricsRepository,
         SQLiteProjectionRepository,
+        YamlBudgetConfig,
     )
     from claudenv.application.observability import (
-        BudgetService, FeedbackService, DashboardService,
+        BudgetService,
+        DashboardService,
+        FeedbackService,
     )
 
     budget_config = YamlBudgetConfig()

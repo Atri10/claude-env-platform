@@ -12,10 +12,10 @@ untested (docs/guide/observability-budgets.md): boost(n) = 0.05 * ln(1+min(n,20)
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import pytest
 
+from claudenv._data import sql_dir as _sql_dir
 from claudenv.adapters.observability import (
     SQLiteFeedbackRepository,
     SQLiteMetricsRepository,
@@ -38,7 +38,6 @@ from claudenv.domain.observability import (
     usage_boost,
 )
 from claudenv.domain.observability.budget import RepoSpend, evaluate_budgets
-from claudenv._data import sql_dir as _sql_dir
 
 _SQL_DIR = _sql_dir()
 

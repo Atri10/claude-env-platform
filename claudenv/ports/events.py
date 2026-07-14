@@ -4,7 +4,8 @@ claude-env :: Ports - Event Bus Interface
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Callable, Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
 
 class IEventBus(Protocol):

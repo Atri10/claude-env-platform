@@ -8,18 +8,18 @@ from __future__ import annotations
 
 import json
 import os
-from claudenv.application.docs import DocsService
+from pathlib import Path
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
-from pathlib import Path
-from typing import Any
 
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
 from claudenv.adapters.persistence import SQLiteDatabase
+from claudenv.application.docs import DocsService
 from claudenv.domain.policy import PolicyService
-from claudenv.domain.value_objects import RepoSlug, Tier, SessionId
+from claudenv.domain.value_objects import RepoSlug, SessionId
 
 
 class DocumentationServer:

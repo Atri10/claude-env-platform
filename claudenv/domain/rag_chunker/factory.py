@@ -8,10 +8,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from claudenv.domain.rag import Chunk, RepoSlug, BranchName, Tier
-from claudenv.domain.rag_chunker.chunkers import IChunker, WindowConfig, MarkdownChunkConfig, FallbackChunker
-from claudenv.domain.rag_chunker.tree_sitter_chunker import TreeSitterChunker
+from claudenv.domain.rag import BranchName, Chunk, RepoSlug, Tier
+from claudenv.domain.rag_chunker.chunkers import (
+    FallbackChunker,
+    IChunker,
+    MarkdownChunkConfig,
+    WindowConfig,
+)
 from claudenv.domain.rag_chunker.markdown_chunker import MarkdownChunker
+from claudenv.domain.rag_chunker.tree_sitter_chunker import TreeSitterChunker
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,9 +7,6 @@ import re
 import subprocess
 from pathlib import Path
 
-from claudenv.domain.value_objects import RepoSlug, Tier, BranchName
-from claudenv.ports import IConfigProvider
-
 from claudenv.application.onboarding.base import OnboardingContext, OnboardingResult, OnboardingStep
 from claudenv.application.onboarding.steps import (
     AgentsStep,
@@ -22,6 +19,8 @@ from claudenv.application.onboarding.steps import (
     PolicyStep,
     TemplateStep,
 )
+from claudenv.domain.value_objects import BranchName, RepoSlug, Tier
+from claudenv.ports import IConfigProvider
 
 
 class OnboardingService:
@@ -76,7 +75,7 @@ class OnboardingService:
             no_post_commit=no_post_commit,
         )
 
-        print(f"\n=== claude-env onboarding ===")
+        print("\n=== claude-env onboarding ===")
         print(f"  repo: {repo_path}")
         print(f"  slug: {slug}")
         print(f"  tier: {int(tier)} ({tier.label})")

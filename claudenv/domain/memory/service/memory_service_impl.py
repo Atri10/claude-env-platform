@@ -5,16 +5,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from claudenv.domain.value_objects import RepoSlug, Tier
-from claudenv.domain.memory.service.interfaces import IMemoryGraph, IMemoryRepository, IConfigProvider
-from claudenv.domain.memory.service.services import (
-    MemoryGraph,
-    MemoryWriter,
-    MemoryReader,
-    MemoryDecay,
-    MemoryGraphTraversal,
+from claudenv.domain.memory.service.interfaces import (
+    IConfigProvider,
+    IMemoryGraph,
+    IMemoryRepository,
 )
 from claudenv.domain.memory.service.maintenance import MemoryConsolidator, MemoryPruner, MemorySync
+from claudenv.domain.memory.service.services import (
+    MemoryDecay,
+    MemoryGraph,
+    MemoryGraphTraversal,
+    MemoryReader,
+    MemoryWriter,
+)
+from claudenv.domain.value_objects import RepoSlug, Tier
 
 
 class MemoryServiceImpl:

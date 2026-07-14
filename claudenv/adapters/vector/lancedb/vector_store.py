@@ -7,14 +7,19 @@ import json
 from pathlib import Path
 
 try:
-    import lancedb
     import pyarrow as pa
+
+    import lancedb
 except ImportError:
     lancedb = None
     pa = None
 
 from claudenv.domain.rag import (
-    BranchName, Chunk, RetrievalQuery, RetrievalResult, RepoSlug,
+    BranchName,
+    Chunk,
+    RepoSlug,
+    RetrievalQuery,
+    RetrievalResult,
 )
 
 

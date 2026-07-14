@@ -7,7 +7,7 @@ Never blocks anything — the caller decides what to do with `overall`.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from claudenv.domain.observability.budget import (
     BudgetEvaluation,
@@ -18,7 +18,7 @@ from claudenv.ports.observability import IBudgetConfig, IMetricsRepository
 
 
 def _month_start_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-01T00:00:00")
+    return datetime.now(UTC).strftime("%Y-%m-01T00:00:00")
 
 
 class BudgetService:

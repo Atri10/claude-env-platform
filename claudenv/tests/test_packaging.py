@@ -15,7 +15,6 @@ import claudenv.di as di
 from claudenv._data import config_dir, sql_dir, templates_dir
 from claudenv.cli import cli
 
-
 # --------------------------------------------------------------------------
 # Packaged data resolution
 # --------------------------------------------------------------------------

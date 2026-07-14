@@ -8,12 +8,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from claudenv.domain.rag import Chunk, ChunkId, ChunkType, RepoSlug, BranchName, ContentHash, Tier
+from claudenv.domain.rag import BranchName, Chunk, ChunkId, ChunkType, ContentHash, RepoSlug, Tier
 from claudenv.domain.rag_chunker.chunkers import (
+    FallbackChunker,
     IChunker,
     WindowConfig,
     sliding_window_chunks,
-    FallbackChunker,
 )
 
 
@@ -105,8 +105,9 @@ class TreeSitterChunker(IChunker):
             return self._parsers[lang]
 
         try:
-            from tree_sitter import Parser, Language
             import importlib
+
+            from tree_sitter import Language, Parser
 
             # Try to load language from common tree-sitter packages
             lang_module_name = f"tree_sitter_{lang.replace('-', '_')}"

@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-from claudenv.domain.rag import Chunk, ChunkId, ChunkType, RepoSlug, BranchName, ContentHash, Tier
+from claudenv.domain.rag import BranchName, Chunk, ChunkId, ChunkType, ContentHash, RepoSlug, Tier
 
 
 class IChunker(ABC):

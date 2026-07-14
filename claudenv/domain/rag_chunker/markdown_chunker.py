@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from claudenv.domain.rag import Chunk, ChunkId, ChunkType, RepoSlug, BranchName, ContentHash, Tier
+from claudenv.domain.rag import BranchName, Chunk, ChunkId, ChunkType, ContentHash, RepoSlug, Tier
 from claudenv.domain.rag_chunker.chunkers import (
     IChunker,
     MarkdownChunkConfig,
