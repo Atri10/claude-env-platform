@@ -7,10 +7,12 @@ implement them. The concrete adapters live in claudenv.adapters.observability.
 """
 from __future__ import annotations
 
-from claudenv.ports.observability.budget_config import IBudgetConfig
-from claudenv.ports.observability.feedback_repository import IFeedbackRepository
-from claudenv.ports.observability.metrics_repository import IMetricsRepository
-from claudenv.ports.observability.projection_repository import IProjectionRepository
+from claudenv.ports.observability.interfaces import (
+    IBudgetConfig,
+    IFeedbackRepository,
+    IMetricsRepository,
+    IProjectionRepository,
+)
 
 __all__ = [
     "IBudgetConfig",

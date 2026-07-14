@@ -11,8 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from claudenv.domain.observability.boost_calculator import usage_boosts_from_counts
-from claudenv.domain.observability.query_hash import query_hash
+from claudenv.domain.observability.metrics import query_hash, usage_boosts_from_counts
 from claudenv.ports.observability import IFeedbackRepository
 
 

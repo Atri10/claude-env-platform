@@ -7,9 +7,11 @@ config provider. These implement the ports in claudenv.ports.observability.
 from __future__ import annotations
 
 from claudenv.adapters.observability.budget_config import YamlBudgetConfig
-from claudenv.adapters.observability.feedback_repository import SQLiteFeedbackRepository
-from claudenv.adapters.observability.metrics_repository import SQLiteMetricsRepository
-from claudenv.adapters.observability.projection_repository import SQLiteProjectionRepository
+from claudenv.adapters.observability.repositories import (
+    SQLiteFeedbackRepository,
+    SQLiteMetricsRepository,
+    SQLiteProjectionRepository,
+)
 
 __all__ = [
     "YamlBudgetConfig",

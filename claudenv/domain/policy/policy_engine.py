@@ -6,8 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from claudenv.domain.value_objects import Path
-from claudenv.domain.policy.policy_decision import PolicyDecision
-from claudenv.domain.policy.content_scan_result import ContentScanResult
+from claudenv.domain.policy.results import PolicyDecision, ContentScanResult
 from claudenv.domain.policy.compiled_policy import CompiledPolicy
 from claudenv.domain.policy.global_policy import GlobalPolicy
 from claudenv.domain.policy.repo_policy import RepoPolicy

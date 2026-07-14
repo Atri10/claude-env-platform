@@ -6,8 +6,7 @@ MemoryType/NodeKind; kept together here to avoid one-constant-per-file noise.
 """
 from __future__ import annotations
 
-from claudenv.domain.memory.memory_type import MemoryType
-from claudenv.domain.memory.node_kind import NodeKind
+from claudenv.domain.memory.entities import MemoryType, NodeKind
 
 # Valid (memory_type, node_kind) combinations
 VALID_KINDS: dict[MemoryType, set[NodeKind]] = {

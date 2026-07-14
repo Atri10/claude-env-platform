@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from claudenv.domain.value_objects import (
     GlobPattern, Path, PolicyRuleSet, ContentScanConfig, RepoSlug, Tier,
 )
-from claudenv.domain.policy.policy_decision import PolicyDecision
+from claudenv.domain.policy.results import PolicyDecision
 
 
 @dataclass(frozen=True, slots=True)

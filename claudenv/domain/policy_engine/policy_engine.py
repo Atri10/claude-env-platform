@@ -7,8 +7,7 @@ from typing import Any
 
 from claudenv.domain.policy_rules import RuleFactory, PolicyCompiler
 from claudenv.domain.value_objects import Path, RepoSlug, Tier
-from claudenv.domain.policy_engine.policy_decision import PolicyDecision
-from claudenv.domain.policy_engine.content_scan_result import ContentScanResult
+from claudenv.domain.policy_engine.results import PolicyDecision, ContentScanResult
 from claudenv.domain.policy_engine.compiled_policy import CompiledPolicy
 
 

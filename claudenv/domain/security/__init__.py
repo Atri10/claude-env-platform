@@ -22,10 +22,12 @@ in CLAUDE.md for the documentation and lancedb_rag MCP servers.
 from __future__ import annotations
 
 from claudenv.domain.security._patterns import INJECTION_PATTERNS, SECRET_PATTERNS
-from claudenv.domain.security.verdict import Verdict
-from claudenv.domain.security.prompt_injection_detector import PromptInjectionDetector
-from claudenv.domain.security.secret_detector import SecretDetector
-from claudenv.domain.security.rag_poison_detector import RagPoisonDetector
+from claudenv.domain.security.detectors import (
+    Verdict,
+    PromptInjectionDetector,
+    SecretDetector,
+    RagPoisonDetector,
+)
 
 __all__ = [
     "INJECTION_PATTERNS",

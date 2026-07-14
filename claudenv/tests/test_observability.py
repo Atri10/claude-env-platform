@@ -37,7 +37,7 @@ from claudenv.domain.observability import (
     query_hash,
     usage_boost,
 )
-from claudenv.domain.observability.budget_evaluator import RepoSpend, evaluate_budgets
+from claudenv.domain.observability.budget import RepoSpend, evaluate_budgets
 
 _SQL_DIR = Path(__file__).resolve().parents[2] / "sql"
 

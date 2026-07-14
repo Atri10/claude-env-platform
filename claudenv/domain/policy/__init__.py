@@ -10,8 +10,7 @@ from claudenv.domain.value_objects import (
     RepoSlug, Tier, ExtensionRule, PolicyRuleSet, ContentScanConfig,
 )
 
-from claudenv.domain.policy.policy_decision import PolicyDecision
-from claudenv.domain.policy.content_scan_result import ContentScanResult
+from claudenv.domain.policy.results import PolicyDecision, ContentScanResult
 from claudenv.domain.policy.compiled_policy import CompiledPolicy
 from claudenv.domain.policy.repo_policy import RepoPolicy
 from claudenv.domain.policy.global_policy import GlobalPolicy

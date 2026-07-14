@@ -6,17 +6,15 @@ from __future__ import annotations
 from typing import Any
 
 from claudenv.domain.value_objects import RepoSlug, Tier
-from claudenv.domain.memory.service.i_memory_graph import IMemoryGraph
-from claudenv.domain.memory.service.i_memory_repository import IMemoryRepository
-from claudenv.domain.memory.service.i_config_provider import IConfigProvider
-from claudenv.domain.memory.service.memory_graph import MemoryGraph
-from claudenv.domain.memory.service.memory_writer import MemoryWriter
-from claudenv.domain.memory.service.memory_reader import MemoryReader
-from claudenv.domain.memory.service.memory_decay import MemoryDecay
-from claudenv.domain.memory.service.memory_graph_traversal import MemoryGraphTraversal
-from claudenv.domain.memory.service.memory_consolidator import MemoryConsolidator
-from claudenv.domain.memory.service.memory_pruner import MemoryPruner
-from claudenv.domain.memory.service.memory_sync import MemorySync
+from claudenv.domain.memory.service.interfaces import IMemoryGraph, IMemoryRepository, IConfigProvider
+from claudenv.domain.memory.service.services import (
+    MemoryGraph,
+    MemoryWriter,
+    MemoryReader,
+    MemoryDecay,
+    MemoryGraphTraversal,
+)
+from claudenv.domain.memory.service.maintenance import MemoryConsolidator, MemoryPruner, MemorySync
 
 
 class MemoryServiceImpl:

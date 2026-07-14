@@ -9,12 +9,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from claudenv.domain.observability.budget_evaluator import (
+from claudenv.domain.observability.budget import (
     BudgetEvaluation,
-    RepoSpend,
+    BudgetStatus,
     evaluate_budgets,
 )
-from claudenv.domain.observability.budget_status import BudgetStatus
 from claudenv.ports.observability import IBudgetConfig, IMetricsRepository
 
 

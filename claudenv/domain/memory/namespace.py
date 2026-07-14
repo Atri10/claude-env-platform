@@ -1,11 +1,13 @@
 """
 claude-env :: Domain - Memory Entities - Namespace
+
+Groups: Namespace, NamespaceConfig.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from claudenv.domain.value_objects import RepoSlug
+from claudenv.domain.value_objects import RepoSlug, Tier
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,3 +33,12 @@ class Namespace:
         if self.isolated or other.isolated:
             return self.name == other.name or other.name in self.shared_with
         return True
+
+
+@dataclass(frozen=True, slots=True)
+class NamespaceConfig:
+    """Configuration for a memory namespace."""
+    name: str
+    isolated: bool = False
+    tier: Tier = Tier.INTERNAL
+    shared_with: tuple[str, ...] = ()

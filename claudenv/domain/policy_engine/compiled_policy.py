@@ -7,8 +7,7 @@ from dataclasses import dataclass
 
 from claudenv.domain.policy_rules import RuleSet, ContentScanConfig, IPathRule
 from claudenv.domain.value_objects import Path, RepoSlug, Tier
-from claudenv.domain.policy_engine.policy_decision import PolicyDecision
-from claudenv.domain.policy_engine.content_scan_result import ContentScanResult
+from claudenv.domain.policy_engine.results import PolicyDecision, ContentScanResult
 
 
 @dataclass(frozen=True, slots=True)
