@@ -27,6 +27,8 @@ from claudenv.domain.policy import PolicyEngine, PolicyService
 from claudenv.domain.value_objects import SessionId
 from claudenv.ports import IAuditLogger, IDatabase
 
+from .command_error import _CommandError
+
 
 # --- Constants ---------------------------------------------------------------
 
@@ -48,11 +50,6 @@ _ENV_ALLOW = {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "VIRTUAL_ENV", "PWD"}
 
 _ALLOWED_OPS = {";", "&&", "||", "|"}
 _PUNCTUATION_CHARS = set("();<>|&")
-
-
-class _CommandError(Exception):
-    """Unsupported shell feature in command string."""
-    pass
 
 
 class TerminalServer:

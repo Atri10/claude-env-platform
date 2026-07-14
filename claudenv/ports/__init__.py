@@ -26,6 +26,9 @@ from .memory import (
     IMemoryGraph, IMemoryRepository, IEmbeddingProvider, IMemoryService,
     IMemoryWriter, IMemoryReader, IMemoryDecay, IMemoryGraphTraversal,
 )
+from .observability import (
+    IBudgetConfig, IMetricsRepository, IFeedbackRepository, IProjectionRepository,
+)
 from .policy import IPolicyEngine, IPolicyRepository, IPolicySimulator
 from .rag import (
     IRagIndexer, IRagRetriever, IRagBookkeeping, IReranker, IVectorStore,
@@ -46,6 +49,8 @@ __all__ = [
     "IMemoryWriter", "IMemoryReader", "IMemoryDecay", "IMemoryGraphTraversal",
     # RAG
     "IRagIndexer", "IRagRetriever", "IRagBookkeeping", "IReranker", "IVectorStore",
+    # Observability
+    "IBudgetConfig", "IMetricsRepository", "IFeedbackRepository", "IProjectionRepository",
     # Audit
     "IAuditLogger", "IAuditRepository",
     "IToolAuditLogger", "IAgentAuditLogger", "ISecurityAuditLogger",

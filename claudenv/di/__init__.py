@@ -36,6 +36,7 @@ from claudenv.domain.memory.service import (
     MemoryDecay,
     MemoryGraphTraversal,
 )
+from claudenv.di.event_bus import EventBus
 from claudenv.domain.policy import PolicyEngine, PolicyService
 from claudenv.ports import (
     IApprovalGate, IAuditLogger, IAuditRepository,
@@ -47,6 +48,7 @@ from claudenv.ports import (
     IReranker, IServiceRegistry, IVectorStore,
     IPolicyRepository, IPolicyEngine,
     IMemoryWriter, IMemoryReader, IMemoryDecay, IMemoryGraphTraversal,
+    IBudgetConfig, IMetricsRepository, IFeedbackRepository, IProjectionRepository,
 )
 
 T = TypeVar("T")
@@ -299,27 +301,29 @@ def _configure_container(c: Container) -> None:
     policy_repo = SQLitePolicyRepository(db)
     c.register_singleton(IPolicyRepository, policy_repo)
 
+    # --- Observability (budgets / feedback / dashboard) ---
+    from claudenv.adapters.observability import (
+        YamlBudgetConfig,
+        SQLiteMetricsRepository,
+        SQLiteFeedbackRepository,
+        SQLiteProjectionRepository,
+    )
+    from claudenv.application.observability import (
+        BudgetService, FeedbackService, DashboardService,
+    )
 
-# ============================================================================
-# Utility Classes
-# ============================================================================
+    budget_config = YamlBudgetConfig()
+    c.register_singleton(IBudgetConfig, budget_config)
 
-class EventBus:
-    """Simple in-process event bus."""
+    metrics_repo = SQLiteMetricsRepository(db)
+    c.register_singleton(IMetricsRepository, metrics_repo)
 
-    def __init__(self):
-        self._subscribers: dict[str, list[Callable]] = {}
+    feedback_repo = SQLiteFeedbackRepository(db)
+    c.register_singleton(IFeedbackRepository, feedback_repo)
 
-    def publish(self, event_type: str, payload: dict[str, Any]) -> None:
-        for handler in self._subscribers.get(event_type, []):
-            try:
-                handler(payload)
-            except Exception:
-                pass  # Don't let handler errors break the publisher
+    projection_repo = SQLiteProjectionRepository(db)
+    c.register_singleton(IProjectionRepository, projection_repo)
 
-    def subscribe(self, event_type: str, handler: Callable[[dict], None]) -> None:
-        self._subscribers.setdefault(event_type, []).append(handler)
-
-    def unsubscribe(self, event_type: str, handler: Callable[[dict], None]) -> None:
-        if event_type in self._subscribers:
-            self._subscribers[event_type] = [h for h in self._subscribers[event_type] if h != handler]
+    c.register_factory(BudgetService, lambda: BudgetService(metrics_repo, budget_config))
+    c.register_factory(FeedbackService, lambda: FeedbackService(feedback_repo))
+    c.register_factory(DashboardService, lambda: DashboardService(metrics_repo, projection_repo))

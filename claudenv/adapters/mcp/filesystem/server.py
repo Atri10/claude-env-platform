@@ -22,14 +22,11 @@ from claudenv.domain.policy import PolicyEngine, PolicyDecision, PolicyService
 from claudenv.domain.value_objects import SessionId
 from claudenv.ports import IAuditLogger
 
+from .policy_blocked import PolicyBlocked
+
 # Constants
 SCRATCH_PREFIX = "scratch://"
 MAX_READ_BYTES = int(os.environ.get("CLAUDE_ENV_MAX_READ_BYTES", "2000000"))
-
-
-class PolicyBlocked(Exception):
-    """Raised when policy denies an operation."""
-    pass
 
 
 class FilesystemPolicyServer:
