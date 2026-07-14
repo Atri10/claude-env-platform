@@ -7,6 +7,8 @@ import os
 import yaml
 from pathlib import Path
 
+from claudenv._data import config_dir
+
 
 class _ConfigBase:
     """Base class with shared configuration loading logic."""
@@ -16,23 +18,24 @@ class _ConfigBase:
         self._raw_config = self._load_config()
 
     def _resolve_config_path(self) -> Path:
-        """Resolve config file path."""
+        """Resolve config file path.
+
+        Order: explicit env override -> deployed user copy under
+        $CLAUDE_ENV_HOME/config/ (editable, authoritative) -> packaged default
+        shipped in the wheel.
+        """
         # Check env override
         if override := os.environ.get("RAG_CONFIG_YAML"):
             return Path(os.path.expanduser(override))
 
-        # Check relative to this file
-        relative = Path(__file__).resolve().parents[3] / "config" / "rag.yaml"
-        if relative.exists():
-            return relative
-
-        # Check deployed location
+        # Deployed (user-editable) copy takes precedence.
         home = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
         deployed = home / "config" / "rag.yaml"
         if deployed.exists():
             return deployed
 
-        return relative
+        # Fall back to the packaged default.
+        return config_dir() / "rag.yaml"
 
     def _load_config(self) -> dict:
         if not self._config_path.exists():

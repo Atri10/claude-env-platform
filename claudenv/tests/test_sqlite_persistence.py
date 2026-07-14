@@ -28,8 +28,9 @@ from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.persistence.sqlite import SQLiteDatabase, SQLiteMemoryRepository
 from claudenv.domain.memory import EdgeRelation, MemoryNode, MemoryType, NodeKind
 from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
+from claudenv._data import sql_dir as _sql_dir
 
-_SQL_DIR = Path(__file__).resolve().parents[2] / "sql"
+_SQL_DIR = _sql_dir()
 
 
 @pytest.fixture()

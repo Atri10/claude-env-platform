@@ -206,7 +206,8 @@ class TestCreateServerWiring:
 
     @pytest.fixture
     def sql_dir(self):
-        return Path(__file__).resolve().parents[2] / "sql"
+        from claudenv._data import sql_dir as _sql_dir
+        return _sql_dir()
 
     @pytest.fixture
     def env_home(self, tmp_path, monkeypatch, sql_dir):

@@ -25,8 +25,22 @@ from claudenv.ports import (
     IRepoPolicyConfig,
 )
 
+from claudenv._data import config_dir
 from .base import _ConfigBase
 from .models import EmbeddingConfig, RerankerConfig
+
+
+def _resolve_config_file(name: str) -> Path:
+    """Resolve a config file: deployed user copy first, packaged default second.
+
+    The deployed copy under ``$CLAUDE_ENV_HOME/config/`` is authoritative and
+    user-editable; the packaged default shipped in the wheel is the fallback.
+    """
+    home = Path(os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env")))
+    deployed = home / "config" / name
+    if deployed.exists():
+        return deployed
+    return config_dir() / name
 
 
 class DatabaseConfigProvider(_ConfigBase, IDatabaseConfig):
@@ -93,7 +107,7 @@ class GlobalPolicyConfigProvider(_ConfigBase, IGlobalPolicyConfig):
     """Global policy configuration provider."""
 
     def get_global_policy(self) -> dict[str, Any]:
-        config_path = Path(self.get_claude_env_home()) / "config" / "global-policy.yaml"
+        config_path = _resolve_config_file("global-policy.yaml")
         if config_path.exists():
             return yaml.safe_load(config_path.read_text()) or {}
         return {}
@@ -103,7 +117,7 @@ class RepoPolicyConfigProvider(_ConfigBase, IRepoPolicyConfig):
     """Repository policy template configuration provider."""
 
     def get_repo_policy_template(self) -> dict[str, Any]:
-        config_path = Path(self.get_claude_env_home()) / "config" / "repo-policy.template.yaml"
+        config_path = _resolve_config_file("repo-policy.template.yaml")
         if config_path.exists():
             return yaml.safe_load(config_path.read_text()) or {}
         return {}
@@ -113,7 +127,7 @@ class MCPConfigProvider(_ConfigBase, IMCPConfig):
     """MCP servers configuration provider."""
 
     def get_mcp_servers_config(self) -> dict[str, Any]:
-        config_path = Path(self.get_claude_env_home()) / "config" / "mcp-servers.json"
+        config_path = _resolve_config_file("mcp-servers.json")
         if config_path.exists():
             return json.loads(config_path.read_text())
         return {}

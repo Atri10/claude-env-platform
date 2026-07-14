@@ -46,14 +46,24 @@ postgres = [
     "psycopg[binary]>=3.1",
 ]
 
-[project.entry-points]
-console_scripts = [
-    "claude-env = claudenv.cli:cli",
-]
+[project.scripts]
+claude-env = "claudenv.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["claudenv*"]
+
+[tool.setuptools.package-data]
+claudenv = [
+    "_data/config/*",
+    "_data/sql/*",
+    "_data/templates/**/*",
+    # Explicit patterns for the .claude/ dotdir tree (setuptools' ** skips
+    # dotfiles/dotdirs by default).
+    "_data/templates/repo-onboarding/.claude/agents/*",
+    "_data/templates/repo-onboarding/.claude/skills/*/*",
+    "_data/templates/repo-onboarding/.claude/**/*",
+]
 
 [tool.ruff]
 line-length = 100

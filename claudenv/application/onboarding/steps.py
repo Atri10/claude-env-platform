@@ -16,8 +16,18 @@ import sys
 from pathlib import Path
 
 from claudenv.domain.value_objects import Tier
+from claudenv._data import config_dir, templates_dir
 
 from claudenv.application.onboarding.base import OnboardingContext, OnboardingStep
+
+
+def _resolve_deployed_or_packaged(home_rel: Path, packaged: Path) -> Path:
+    """Return the deployed copy under $CLAUDE_ENV_HOME if present, else packaged.
+
+    ``home_rel`` is an already-joined path under $CLAUDE_ENV_HOME; ``packaged``
+    is the fallback shipped in the wheel.
+    """
+    return home_rel if home_rel.exists() else packaged
 
 
 class PolicyStep(OnboardingStep):
@@ -33,7 +43,10 @@ class PolicyStep(OnboardingStep):
             ctx.add_step("policy", skipped=True)
             return False
 
-        tmpl = Path(self.config.get_claude_env_home()) / "config" / "repo-policy.template.yaml"
+        tmpl = _resolve_deployed_or_packaged(
+            Path(self.config.get_claude_env_home()) / "config" / "repo-policy.template.yaml",
+            config_dir() / "repo-policy.template.yaml",
+        )
         if not tmpl.exists():
             ctx.add_step("policy", skipped=True)
             return False
@@ -160,7 +173,10 @@ class TemplateStep(OnboardingStep):
             ctx.add_step("template", skipped=True)
             return False
 
-        template_dir = Path(self.config.get_claude_env_home()) / "templates" / "repo-onboarding"
+        template_dir = _resolve_deployed_or_packaged(
+            Path(self.config.get_claude_env_home()) / "templates" / "repo-onboarding",
+            templates_dir() / "repo-onboarding",
+        )
         if not template_dir.exists():
             ctx.add_step("template", skipped=True)
             return False
@@ -334,7 +350,10 @@ class AgentsStep(OnboardingStep):
             ctx.add_step("agents", skipped=True)
             return False
 
-        src_dir = Path(self.config.get_claude_env_home()) / "templates" / "repo-onboarding" / ".claude" / "agents"
+        src_dir = _resolve_deployed_or_packaged(
+            Path(self.config.get_claude_env_home()) / "templates" / "repo-onboarding" / ".claude" / "agents",
+            templates_dir() / "repo-onboarding" / ".claude" / "agents",
+        )
         dst_dir = Path(ctx.repo_root) / ".claude" / "agents"
         if not src_dir.exists():
             ctx.add_step("agents", skipped=True)

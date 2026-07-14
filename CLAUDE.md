@@ -25,20 +25,22 @@ full product guide is [`README.md`](README.md) (read it once).
    git add <files> && git commit    # only after you're on the branch
    ```
    Commit messages end with the Co-Authored-By trailer. Push/PR only when asked.
-2. **Code runs from this checkout; config is read from `$CLAUDE_ENV_HOME`.** There is no code
-   mirror step anymore — `claudenv/` is imported directly from this repo (the venv at
-   `~/.claude-env/venv` runs it in-place), so a code edit takes effect on the next process start;
-   **restart Claude Code** for MCP-server / hook changes (those are long-lived processes).
-   Config files, however, are still read from the **deployed copy** at `~/.claude-env/config/`
-   (`global-policy.yaml`, `rag.yaml`, `mcp-servers.json`, `budgets.yaml`) — see
-   `claudenv/adapters/config/base.py`, which prefers `$CLAUDE_ENV_HOME/config/` over the repo
-   copy. Editing `config/*.yaml` in the repo does nothing live; edit `~/.claude-env/config/…`
-   for a live change (machine-local values like `rag.yaml`'s `embedding.model_path` live only in
-   the deployed copy).
-   > **Known gap:** `config/mcp-servers.json` still launches `${CLAUDE_ENV_HOME}/mcp-servers/*/server.py`,
-   > paths the refactor deleted (the servers now live at `claudenv/adapters/mcp/*/server.py`). The
-   > MCP launch wiring needs re-pointing before the live servers work — fix it if your change
-   > touches MCP startup.
+2. **The package is pip-installable; runtime state lives in `$CLAUDE_ENV_HOME`.** `claudenv/` is a
+   proper Python package — `pip install .` (or the wheel) puts it on the venv path and installs
+   the `claude-env` console script. Default config/SQL/onboarding templates ship inside the wheel
+   under `claudenv/_data/` (resolved via `claudenv/_data/__init__.py`'s `config_dir()`/`sql_dir()`/
+   `templates_dir()`). First-time setup is `claude-env init` (idempotent): it creates
+   `~/.claude-env/{state,config,knowledge,logs}`, copies the packaged default config into
+   `~/.claude-env/config/`, applies the SQL schema, and writes the genesis audit event. There is
+   **no** `bootstrap.py` and no code-mirror step.
+   Config resolution is **deployed-first, packaged-fallback**: the user-editable copy at
+   `~/.claude-env/config/` wins; the packaged default is the fallback (see
+   `claudenv/adapters/config/base.py` + `providers.py::_resolve_config_file`). So a live config
+   change means editing `~/.claude-env/config/…` (or re-running `claude-env init --force-config`
+   to reset to defaults); machine-local values like `rag.yaml`'s `embedding.model_path` live only
+   in the deployed copy. **Restart Claude Code** for MCP-server / hook changes (long-lived
+   processes). MCP servers launch as modules: `python -m claudenv.adapters.mcp.<srv>.server` (see
+   `mcp-servers.json`).
 3. **Run the tests.** `~/.claude-env/venv/bin/python -m pytest claudenv/tests/ -q` (the platform
    venv has `pytest` + deps). Add/extend tests for every behavioral change.
 4. **Never weaken the invariants below to make something pass.** They are the product.
@@ -103,15 +105,16 @@ claudenv/
   ports/                consumer-owned interfaces (the single import surface — see ports/__init__.py):
                         audit · config · database · memory · policy · rag · observability ·
                         approval · hooks · events · services
-  templates/repo-onboarding/  CLAUDE.md + skills + 11 native .claude/agents/*.md installed INTO
+  _data/                packaged default data shipped in the wheel (resolved via
+                        _data/__init__.py's config_dir()/sql_dir()/templates_dir()):
+    config/             global-policy · repo-policy.template · rag.yaml · mcp-servers.json ·
+                        budgets.yaml — deployed to ~/.claude-env/config/ by `claude-env init`,
+                        which then takes precedence (deployed-first, packaged-fallback)
+    sql/                001_schema · 002_retention · 003_extensions · 004_audit_trace_metadata
+    templates/repo-onboarding/  CLAUDE.md + skills + 11 native .claude/agents/*.md installed INTO
                         onboarded repos (a deliverable — not platform source)
-  bin/claude-env        thin wrapper that adds the repo to sys.path and calls claudenv.cli:cli
+  bin/claude-env        thin wrapper (the pip-installed `claude-env` console script is preferred)
   tests/                pytest suite (testpaths in pyproject.toml)
-
-config/                 repo copies of global-policy · repo-policy.template · rag.yaml ·
-                        mcp-servers.json · budgets.yaml — live copies read from ~/.claude-env/config/
-sql/                    001_schema · 002_retention · 003_extensions · 004_audit_trace_metadata
-                        (LIVE: the test suite + apply_schema() load from this root dir)
 ```
 
 ## Common tasks

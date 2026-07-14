@@ -17,8 +17,9 @@ from click.testing import CliRunner
 
 import claudenv.di as di
 from claudenv.cli import cli
+from claudenv._data import sql_dir as _sql_dir
 
-_SQL_DIR = Path(__file__).resolve().parents[2] / "sql"
+_SQL_DIR = _sql_dir()
 
 
 @pytest.fixture()
@@ -55,7 +56,7 @@ class TestCliWiring:
     def test_help_lists_expected_commands(self):
         result = _run("--help")
         assert result.exit_code == 0
-        for cmd in ("budget", "dashboard", "feedback", "report", "replay",
+        for cmd in ("init", "budget", "dashboard", "feedback", "report", "replay",
                     "incident", "services", "scan", "index", "rag", "onboard",
                     "hooks", "validate"):
             assert cmd in result.output

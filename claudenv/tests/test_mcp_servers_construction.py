@@ -21,7 +21,9 @@ from pathlib import Path
 
 import pytest
 
-_SQL_DIR = Path(__file__).resolve().parents[2] / "sql"
+from claudenv._data import sql_dir as _sql_dir
+
+_SQL_DIR = _sql_dir()
 
 
 @pytest.fixture()

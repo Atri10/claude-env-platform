@@ -28,6 +28,83 @@ def cli(ctx, verbose):
 
 
 @cli.command()
+@click.option("--force-config", is_flag=True,
+              help="Overwrite existing deployed config files with the packaged defaults.")
+@click.pass_context
+def init(ctx, force_config):
+    """Initialize the local claude-env home (one-time, idempotent).
+
+    Creates $CLAUDE_ENV_HOME (default ~/.claude-env), applies the SQL schema,
+    copies the packaged default config, and writes the genesis audit event.
+    Replaces the old bootstrap.py for the data-provisioning step; pip installs
+    the code, this provisions the runtime state. Safe to re-run.
+    """
+    import shutil
+    from claudenv._data import config_dir, sql_dir
+    from claudenv.adapters.persistence import SQLiteDatabase
+    from claudenv.adapters.audit import SqliteAuditLogger
+    from claudenv.domain.value_objects import SessionId
+
+    config = get_config()
+    home = Path(config.get_claude_env_home())
+    verbose = ctx.obj.get("verbose", False)
+
+    def say(msg: str) -> None:
+        click.echo(msg)
+
+    # 1. Directory skeleton.
+    for sub in ("state", "config", "knowledge/lancedb", "logs"):
+        (home / sub).mkdir(parents=True, exist_ok=True)
+    say(f"  [ok] home ready at {home}")
+
+    # 2. Copy packaged default config (skip existing unless --force-config).
+    copied, skipped = 0, 0
+    for src in sorted(config_dir().glob("*")):
+        if not src.is_file():
+            continue
+        dst = home / "config" / src.name
+        if dst.exists() and not force_config:
+            skipped += 1
+            if verbose:
+                say(f"       skip {src.name} (exists)")
+            continue
+        shutil.copy2(src, dst)
+        copied += 1
+        if verbose:
+            say(f"       copy {src.name}")
+    say(f"  [ok] config: {copied} copied, {skipped} kept")
+
+    # 3. Apply SQL schema (idempotent) against the state DB.
+    dsn = config.get_database_dsn()
+    db = SQLiteDatabase(dsn)
+    schema_files = [str(p) for p in sorted(sql_dir().glob("*.sql"))]
+    db.apply_schema(*schema_files)
+    say(f"  [ok] schema applied ({len(schema_files)} files) -> {dsn}")
+
+    # 4. Genesis audit event (the logger writes GENESIS-chained on first append).
+    logger = SqliteAuditLogger(
+        db=db,
+        session_id=SessionId.from_string("init"),
+        actor="claude-env-init",
+    )
+    logger.agent_action(
+        agent="claude-env-init",
+        action="init",
+        target=str(home),
+        summary="claude-env home initialized",
+    )
+    result = logger.verify_chain()
+    db.close()
+    ok = result.ok
+    say(f"  [ok] audit ledger initialized (verify_chain: {'green' if ok else 'FAILED'})")
+
+    if not ok:
+        click.echo("\nInitialization completed but the audit chain did not verify!", err=True)
+        sys.exit(1)
+    click.echo("\nclaude-env is ready. Next: `claude-env onboard <repo>`.")
+
+
+@cli.command()
 @click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.option("--repo-name", help="Repo slug for namespaces")
 @click.option("--tier", type=click.Choice(["0", "1", "2", "3"]), help="Privacy tier")

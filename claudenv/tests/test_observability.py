@@ -38,8 +38,9 @@ from claudenv.domain.observability import (
     usage_boost,
 )
 from claudenv.domain.observability.budget import RepoSpend, evaluate_budgets
+from claudenv._data import sql_dir as _sql_dir
 
-_SQL_DIR = Path(__file__).resolve().parents[2] / "sql"
+_SQL_DIR = _sql_dir()
 
 
 @pytest.fixture()

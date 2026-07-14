@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from claudenv._data import config_dir
 from claudenv.ports.observability import IBudgetConfig
 
 
@@ -31,7 +32,7 @@ class YamlBudgetConfig(IBudgetConfig):
         deployed = self._claude_env_home() / "config" / "budgets.yaml"
         if deployed.exists():
             return deployed
-        return Path(__file__).resolve().parents[3] / "config" / "budgets.yaml"
+        return config_dir() / "budgets.yaml"
 
     def _load(self) -> dict:
         if not self._config_path.exists():
