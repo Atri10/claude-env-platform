@@ -10,7 +10,7 @@ import os
 import sys
 from typing import Any, Dict
 
-from claudenv.application.memory import MemoryService
+from claudenv.domain.memory.service import MemoryServiceImpl as MemoryService
 from claudenv.ports.hooks.interfaces import IPostToolUseHook
 
 

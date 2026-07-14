@@ -28,31 +28,6 @@ def cli(ctx, verbose):
 
 
 @cli.command()
-@click.option("--with-brew", is_flag=True, help="Install system dependencies via Homebrew")
-@click.option("--no-deps", is_flag=True, help="Skip pip install (venv must exist)")
-@click.option("--no-venv-create", is_flag=True, help="Reuse existing venv, just update deps")
-@click.option("--recreate-venv", is_flag=True, help="Delete and rebuild venv from scratch")
-@click.option("--dsn", help="PostgreSQL DSN (default: SQLite)")
-@click.option("--force-config", is_flag=True, help="Reset all config files to templates")
-@click.pass_context
-def bootstrap(ctx, with_brew, no_deps, no_venv_create, recreate_venv, dsn, force_config):
-    """Bootstrap the platform (run once per machine)."""
-    config = get_config()
-    home = Path(config.get_claude_env_home())
-
-    # Run the original bootstrap.py logic
-    from claudenv.bootstrap import run_bootstrap
-    run_bootstrap(
-        with_brew=with_brew,
-        no_deps=no_deps,
-        no_venv_create=no_venv_create,
-        recreate_venv=recreate_venv,
-        dsn=dsn,
-        force_config=force_config,
-    )
-
-
-@cli.command()
 @click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.option("--repo-name", help="Repo slug for namespaces")
 @click.option("--tier", type=click.Choice(["0", "1", "2", "3"]), help="Privacy tier")

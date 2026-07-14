@@ -1,9 +1,9 @@
 """
 claude-env :: Domain - Memory Service (Domain Layer)
 
-This module contains the core domain logic for memory operations.
-It was moved from application/memory.py to break the circular dependency
-where domain/policy.py -> application.memory -> domain/memory.
+This module contains the core domain logic for memory operations. It lives in
+the domain layer (not the application layer) so that domain/policy.py can depend
+on it without a cycle through the application package.
 
 The domain layer must not depend on the application layer or ports package.
 """

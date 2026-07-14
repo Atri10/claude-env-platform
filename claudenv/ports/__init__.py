@@ -9,12 +9,6 @@ from .audit import (
     IToolAuditLogger, IAgentAuditLogger, ISecurityAuditLogger,
     IApprovalAuditLogger, IVerifiableLedger,
 )
-from .bootstrap import (
-    BootstrapContext,
-    BootstrapResult,
-    IBootstrapOrchestrator,
-    IBootstrapStep,
-)
 from .config import (
     IConfigProvider, IDatabaseConfig, ILanceDBConfig, IRAGConfig,
     IGlobalPolicyConfig, IRepoPolicyConfig, IMCPConfig, IClaudeEnvHome,
@@ -63,9 +57,4 @@ __all__ = [
     "IServiceRegistry",
     # Hooks
     "IPreToolUseHook", "IPostToolUseHook", "HookInstaller",
-    # Bootstrap
-    "BootstrapContext",
-    "BootstrapResult",
-    "IBootstrapOrchestrator",
-    "IBootstrapStep",
 ]

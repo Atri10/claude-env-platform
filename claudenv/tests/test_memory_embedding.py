@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import struct
 
-from claudenv.application.memory import MemoryGraph
+from claudenv.domain.memory.service import MemoryGraph
 from claudenv.domain.memory import MemoryNode, MemoryType, NodeKind
 
 
