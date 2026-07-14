@@ -5,9 +5,14 @@ Claude Code (policy-enforced file access, tamper-evident audit ledger, local RAG
 servers, approvals, incident mode). This file is guidance for developing *the platform*; the
 full product guide is [`README.md`](README.md) (read it once).
 
-> Not to be confused with `templates/repo-onboarding/` — that `CLAUDE.md` + `.claude/` is the
-> **deliverable installed into other repos** by `claude-env onboard`. This file governs work on
-> the platform's own source.
+> Not to be confused with `claudenv/templates/repo-onboarding/` — that `CLAUDE.md` + `.claude/`
+> is the **deliverable installed into other repos** by `claude-env onboard`. This file governs
+> work on the platform's own source.
+
+> **Layout note:** the platform was refactored from a flat top-level layout (`security/`,
+> `audit/`, `hooks/`, `mcp-servers/`, `rag/`, `memory/`, `bootstrap.py`) into a single hexagonal
+> `claudenv/` package (`domain/`, `application/`, `adapters/`, `ports/`, `di/`). Old paths in any
+> stale doc map to `claudenv/<layer>/…` now. The standalone `bootstrap.py` was removed.
 
 ## Golden workflow rules (do these — they've bitten us)
 
@@ -20,84 +25,120 @@ full product guide is [`README.md`](README.md) (read it once).
    git add <files> && git commit    # only after you're on the branch
    ```
    Commit messages end with the Co-Authored-By trailer. Push/PR only when asked.
-2. **Deploy edits to `$CLAUDE_ENV_HOME` or they don't take effect.** The live MCP servers, hooks,
-   and CLI run from `~/.claude-env/` (a mirror created by `bootstrap.py`), **not** from this repo.
-   After editing platform code, copy it over (or re-mirror) and restart Claude Code for MCP/hook
-   changes:
-   ```bash
-   cp -v mcp-servers/terminal/server.py ~/.claude-env/mcp-servers/terminal/server.py   # targeted
-   python3 bootstrap.py --no-deps                                                       # re-mirror code
-   ```
-   Config files (`config/*.yaml|json`) are also read from the deployed copy — editing the repo
-   copy alone does nothing until deployed. `bootstrap.py` only *writes* a config file the first
-   time it runs; a later `--no-deps` re-mirror leaves an already-deployed `config/*.yaml|json`
-   untouched (a machine-local value like `rag.yaml`'s `embedding.model_path` must survive every
-   later bootstrap). Use `--force-config` only when you intend to discard local edits to
-   `global-policy.yaml`/`rag.yaml`/`mcp-servers.json`/`budgets.yaml`.
-3. **Run the tests.** `pytest tests/ -q` (needs `pytest` + `pyyaml`; the platform venv is at
-   `~/.claude-env/venv`). Add/extend tests for every behavioral change.
+2. **Code runs from this checkout; config is read from `$CLAUDE_ENV_HOME`.** There is no code
+   mirror step anymore — `claudenv/` is imported directly from this repo (the venv at
+   `~/.claude-env/venv` runs it in-place), so a code edit takes effect on the next process start;
+   **restart Claude Code** for MCP-server / hook changes (those are long-lived processes).
+   Config files, however, are still read from the **deployed copy** at `~/.claude-env/config/`
+   (`global-policy.yaml`, `rag.yaml`, `mcp-servers.json`, `budgets.yaml`) — see
+   `claudenv/adapters/config/base.py`, which prefers `$CLAUDE_ENV_HOME/config/` over the repo
+   copy. Editing `config/*.yaml` in the repo does nothing live; edit `~/.claude-env/config/…`
+   for a live change (machine-local values like `rag.yaml`'s `embedding.model_path` live only in
+   the deployed copy).
+   > **Known gap:** `config/mcp-servers.json` still launches `${CLAUDE_ENV_HOME}/mcp-servers/*/server.py`,
+   > paths the refactor deleted (the servers now live at `claudenv/adapters/mcp/*/server.py`). The
+   > MCP launch wiring needs re-pointing before the live servers work — fix it if your change
+   > touches MCP startup.
+3. **Run the tests.** `~/.claude-env/venv/bin/python -m pytest claudenv/tests/ -q` (the platform
+   venv has `pytest` + deps). Add/extend tests for every behavioral change.
 4. **Never weaken the invariants below to make something pass.** They are the product.
 
 ## Invariants (the platform's guarantees — preserve them)
 
-- **Persistence is abstracted.** No module imports `sqlite3`/`psycopg` directly — everything goes
-  through `lib/db.py::get_db()`. Keep SQL portable (`?` placeholders, standard SQL).
+- **Persistence is abstracted behind ports.** No module imports `sqlite3`/`psycopg` directly —
+  everything goes through the `IDatabase`/`ITransaction` ports (`claudenv/ports/database/`),
+  implemented by `claudenv/adapters/persistence/sqlite/`. Keep SQL portable (`?` placeholders,
+  standard SQL).
 - **Audit ledger is append-only + hash-chained.** Never `UPDATE`/`DELETE` `audit_events` (DB
-  triggers reject it). Write via `AuditLogger`; keep `verify_chain()` green. Projections
-  (`policy_violations`, `human_approvals`, …) are written in the same transaction as the event.
-- **One filesystem chokepoint, fail-closed.** `mcp-servers/filesystem-policy` is the only
-  sanctioned path to disk for agents; `security/policy_engine.py` decides. Deny always wins;
-  tier-3 is default-deny. The native-tool hooks (`hooks/`) extend the same engine to Read/Write/
-  Edit/Bash — including parsing Bash command strings.
+  triggers reject it). Write via the audit logger (`claudenv/adapters/audit.py`, domain chain in
+  `claudenv/domain/audit/`); keep `verify_chain()` green. Projections (`policy_violations`,
+  `human_approvals`, …) are written in the same transaction as the event.
+- **One filesystem chokepoint, fail-closed.** `claudenv/adapters/mcp/filesystem/` is the only
+  sanctioned path to disk for agents; the policy engine (`claudenv/domain/policy/`) decides. Deny
+  always wins; tier-3 is default-deny. The native-tool hooks (`claudenv/adapters/hooks/`) extend
+  the same engine to Read/Write/Edit/Bash — including parsing Bash command strings.
 - **Retrieved/external text is data, never instructions** — RAG/doc results are delimited and
   poison/injection-screened.
 - **No network egress by default.** Local inference only (llama.cpp + ONNX); the sole outbound is
   the tier-gated documentation fetch.
-- **Model choice lives in config, never in code.** RAG code always goes through
-  `rag.config.get_embedder()` / `get_reranker()`; no model name/path is hardcoded.
+- **Model choice lives in config, never in code.** RAG code always goes through the embedding
+  factory (`claudenv/adapters/embedding/factory.py`) resolving config from `rag.yaml`; no model
+  name/path is hardcoded.
+- **Ports are the single import surface.** Adapters/application depend on interfaces re-exported
+  from `claudenv/ports/` (never reach across into another adapter's internals). The domain layer
+  depends on nothing outward.
 
 ## Repo map
 
+Single hexagonal package `claudenv/`, four layers + a DI wiring module. Dependencies point
+inward: `adapters` → `ports` ← `application` → `domain`; `domain` depends on nothing outward.
+
 ```
-bootstrap.py            one-command setup: builds the venv (uv-preferred), installs deps,
-                        applies sql/, mirrors code + config into $CLAUDE_ENV_HOME
-lib/db.py               persistence abstraction (SQLite default, PostgreSQL-ready)
-lib/services.py         runtime service registry: UI servers pick a free port + record it
-                        ($CLAUDE_ENV_HOME/state/services.json); `claude-env services` lists them
-sql/                    001_schema · 002_retention · 003_extensions
-security/               policy_engine · detectors · incident · policy_sim
-audit/                  audit_logger (hash chain) · compliance_report · session_replay
-hooks/                  policy_hook (PreToolUse) · audit_hook (PostToolUse) · install_hooks
-config/                 global-policy · repo-policy.template · rag.yaml · mcp-servers.json · budgets
-mcp-servers/            filesystem-policy · git · lancedb-rag · memory-graph · terminal · documentation
-rag/                    config · chunkers · embeddings · rerankers · retrievers · indexers · pipelines
-memory/                 manager · retriever · consolidator · pruner · session_ingestor · sync
-agents/                 orchestration/ (approval_gate · approvals_ui) · analysts/nightly_analyst
-                        Specialist agents ship as native .claude/agents/*.md files in
-                        templates/repo-onboarding/ — task_router · agent_registry · prompts/ retired.
-scripts/register_repo.py  the `claude-env onboard`/`register` flow
-templates/repo-onboarding/  the CLAUDE.md + skills + agents installed INTO onboarded repos (a deliverable)
-                        .claude/agents/ now ships 11 specialist agents (orchestrator + 10 specialists)
-tests/                  pytest suite
+claudenv/
+  cli.py                click CLI: onboard · scan · index · rag · hooks · report · replay ·
+                        incident · services · budget · dashboard · feedback · validate
+  di/                   dependency-injection container (get_container) + event bus
+  domain/               pure business logic, no I/O:
+    policy/             PolicyEngine · PolicyService · CompiledPolicy · RepoPolicy · GlobalPolicy
+                        (NOTE: domain/policy_engine/ + domain/policy_rules/ are an older parallel
+                         implementation used only by test_policy.py — likely dead; confirm before use)
+    memory/             graph entities + service/ (writer · reader · decay · traversal · maintenance)
+    audit/              hash chain · events · projections
+    rag/ · rag_chunker/ config/models · chunkers (markdown · tree_sitter) + factory
+    security/           secret/PII detectors + patterns
+    observability/      budget · metrics value objects
+    value_objects/      identifiers · enums · path · time · policy primitives
+  application/          use-case services orchestrating domain + ports:
+    onboarding/ · rag/ (indexer · service) · audit/ · observability/ (budget · dashboard ·
+    feedback) · approval.py · docs.py
+  adapters/             outward implementations of ports:
+    mcp/                filesystem · git · lancedb_rag · memory_graph · terminal · documentation
+    persistence/sqlite/ database (IDatabase) + repositories
+    config/             base · providers · models (reads $CLAUDE_ENV_HOME/config/ first)
+    embedding/          embedders · rerankers · factory (model choice from rag.yaml)
+    hooks/              policy_hook (PreToolUse) · audit_hook (PostToolUse) · session_hook · installer
+    vector/lancedb/     vector_store + rag_retriever
+    observability/      budget_config · repositories
+    audit.py · approvals_ui.py · services.py
+  ports/                consumer-owned interfaces (the single import surface — see ports/__init__.py):
+                        audit · config · database · memory · policy · rag · observability ·
+                        approval · hooks · events · services
+  templates/repo-onboarding/  CLAUDE.md + skills + 11 native .claude/agents/*.md installed INTO
+                        onboarded repos (a deliverable — not platform source)
+  bin/claude-env        thin wrapper that adds the repo to sys.path and calls claudenv.cli:cli
+  tests/                pytest suite (testpaths in pyproject.toml)
+
+config/                 repo copies of global-policy · repo-policy.template · rag.yaml ·
+                        mcp-servers.json · budgets.yaml — live copies read from ~/.claude-env/config/
+sql/                    001_schema · 002_retention · 003_extensions · 004_audit_trace_metadata
+                        (LIVE: the test suite + apply_schema() load from this root dir)
 ```
 
 ## Common tasks
 
-- **Onboarding / policy / RAG:** `scripts/register_repo.py`, `security/policy_engine.py`,
-  `rag/indexers/indexer.py`. RAG scope (`rag.index_paths`) is a subset of policy-allowed files;
-  deny always wins; the indexer skips binary files (NUL sniff).
-- **MCP servers** use the low-level `mcp` SDK (`Server`, `@server.list_tools`/`call_tool`,
-  `stdio_server`). Handlers are `async`. Smoke-test with a real stdio client, not just imports.
-- **Terminal approvals:** `mcp-servers/terminal/server.py` opens a `human_approvals` row, opens the
-  web UI, and **blocks** until resolved via `agents/orchestration/approvals_ui.py`; approve records
-  the OS `user@host`. Only allow-listed / explicitly-approved commands run (argv-only, no shell).
+- **Onboarding / policy / RAG:** `claudenv/application/onboarding/` (`OnboardingService` + steps),
+  `claudenv/domain/policy/policy_engine.py`, `claudenv/application/rag/indexer.py`. RAG scope
+  (`rag.index_paths`) is a subset of policy-allowed files; deny always wins; the indexer skips
+  binary files (NUL sniff).
+- **MCP servers** (`claudenv/adapters/mcp/*/server.py`) use the low-level `mcp` SDK (`Server`,
+  `@server.list_tools`/`call_tool`, `stdio_server`). Handlers are `async`. Smoke-test with a real
+  stdio client, not just imports (`claudenv/tests/test_mcp_servers_construction.py` shows the
+  pattern).
+- **Terminal approvals:** `claudenv/adapters/mcp/terminal/server.py` opens a `human_approvals`
+  row, opens the web UI, and **blocks** until resolved via `claudenv/adapters/approvals_ui.py`;
+  approve records the OS `user@host`. Only allow-listed / explicitly-approved commands run
+  (argv-only, no shell).
+- **Wiring:** everything is constructed in `claudenv/di/__init__.py::_configure_container`; resolve
+  a service with `get_container().get(<IPort>)`. Note the container eagerly builds the embedder,
+  so it needs `rag.yaml`'s `embedding.model_path` set (or expect a "No embedding model configured"
+  error outside the test fixtures).
 - **Verify the DB / chain** after risky changes:
-  `~/.claude-env/venv/bin/python -c "import sys;sys.path.insert(0,'$HOME/.claude-env');from audit.audit_logger import AuditLogger;print(AuditLogger('x',actor='x').verify_chain())"`
+  `~/.claude-env/venv/bin/python -m pytest claudenv/tests/test_audit.py -q` (the audit tests build
+  a real ledger and assert `verify_chain()` stays green).
 
 ## Skills & subagents in this repo
 
 Skills (`.claude/skills/`):
-- **`claude-env-development`** — the deploy/test/branch workflow + invariants above.
 - **`principled-engineering`** — decoupled architecture, SOLID, simplicity, testability; load it
   for any non-trivial design/feature/refactor so the code stays easy to extend and maintain.
 - **`solid-design`** — SOLID applied, with the smell + refactoring for each.
