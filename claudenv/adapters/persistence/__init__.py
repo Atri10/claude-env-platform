@@ -8,6 +8,7 @@ from .sqlite import (
     SQLiteDatabase,
     SQLiteMemoryRepository,
     SQLiteRagBookkeeping,
+    SQLitePolicyRepository,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "SQLiteDatabase",
     "SQLiteMemoryRepository",
     "SQLiteRagBookkeeping",
+    "SQLitePolicyRepository",
 ]

@@ -2,7 +2,7 @@
 claude-env :: Adapters - Memory Graph MCP Server
 
 Memory operations: store, retrieve, search, link, expand, session ingest.
-Thin adapter over MemoryService; logic in application/memory.py.
+Thin adapter over IMemoryService; logic in domain/memory/service.py.
 """
 from __future__ import annotations
 
@@ -17,9 +17,10 @@ from typing import Any
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
 from claudenv.adapters.persistence import SQLiteDatabase, SQLiteMemoryRepository
-from claudenv.application.memory import MemoryService
 from claudenv.domain.memory import MemoryType, NodeKind, EdgeRelation
 from claudenv.domain.value_objects import RepoSlug, Tier, SessionId, NodeId
+from claudenv.di import get_container
+from claudenv.ports import IMemoryService
 
 
 class MemoryGraphServer:
@@ -28,7 +29,7 @@ class MemoryGraphServer:
     def __init__(
             self,
             repo: RepoSlug,
-            memory_service: MemoryService,
+            memory_service: IMemoryService,
             audit_logger,
             session_id: str = "mcp-memory",
     ):
@@ -260,8 +261,6 @@ class MemoryGraphServer:
 
         self.audit.tool_call(
             tool="memory.link",
-            # NodeId isn't JSON-serializable; audit.tool_call() JSON-encodes
-            # args, so pass plain strings.
             args={"source": str(source), "target": str(target), "relation": relation.value},
             result_kind="ok",
         )
@@ -329,13 +328,11 @@ def create_server(
     repo_slug = RepoSlug.from_string(repo_slug)
     config = get_config()
 
-    # IConfigProvider has no get_memory_service()/get_audit_logger() -- those
-    # methods never existed on ConfigProvider (see claudenv/ports/config.py).
     # Build the real adapters directly, the same way terminal/server.py's
     # create_server() does.
     db = SQLiteDatabase(config.get_database_dsn())
     mem_repo = SQLiteMemoryRepository(db)
-    memory_service = MemoryService(mem_repo, config)
+    memory_service = get_container().get(IMemoryService)
 
     audit_logger = SqliteAuditLogger(
         db=db,
@@ -360,6 +357,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     import asyncio
-    import os
-
     asyncio.run(main())

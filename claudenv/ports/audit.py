@@ -138,3 +138,32 @@ class IAuditLogger(Protocol):
     @abstractmethod
     def verify_chain(self) -> ChainVerificationResult:
         ...
+
+
+# ============================================================================
+# Role-scoped Audit Logger Ports
+# These are distinct interface types (all backed by the same SqliteAuditLogger)
+# so the DI container can register and resolve them independently. Each is
+# structurally identical to IAuditLogger; the separation exists to make the
+# caller's intent (tool vs agent vs security vs approval) explicit in the type.
+# ============================================================================
+
+
+class IToolAuditLogger(IAuditLogger, Protocol):
+    """Audit logger scoped to native tool calls (Read/Write/Edit/Bash)."""
+
+
+class IAgentAuditLogger(IAuditLogger, Protocol):
+    """Audit logger scoped to agent-initiated actions."""
+
+
+class ISecurityAuditLogger(IAuditLogger, Protocol):
+    """Audit logger scoped to security-relevant events."""
+
+
+class IApprovalAuditLogger(IAuditLogger, Protocol):
+    """Audit logger scoped to human-approval requests and resolutions."""
+
+
+class IVerifiableLedger(IAuditLogger, Protocol):
+    """Audit ledger that can cryptographically verify its own hash chain."""

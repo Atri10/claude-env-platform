@@ -1,0 +1,87 @@
+<svg width="100%" viewBox="0 0 760 900" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>ConflictResolver._decide() ladder</title>
+<desc>A vertical flowchart of the five ordered checks ConflictResolver._decide performs on a list of competing agent proposals: security veto (any is_security_block short-circuits to that proposal as winner), policy/approval block, evidenced-vs-bare correctness check restricted to proposals touching the same files, precedence-ranking gap of at least ten between the top two agents, and a blast-radius tie-break. If none decide it, the resolver returns no winner and escalates to a human. Each deciding step short-circuits immediately; only a step that finds no decisive signal falls through to the next.</desc>
+<defs>
+<marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+<style>
+  text { font-family: "Anthropic Sans", -apple-system, "system-ui", "Segoe UI", sans-serif; }
+  .t { font-size: 13px; font-weight: 500; }
+  .s { font-size: 11px; font-weight: 400; }
+  .edge { fill: none; stroke: rgb(137,135,129); stroke-width: 1.5px; }
+</style>
+
+<!-- Input -->
+<rect x="180" y="10" width="400" height="50" rx="8" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="0.5"/>
+<text x="380" y="30" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(68,68,65)">Multiple agent proposals</text>
+<text x="380" y="48" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">backend, performance, architect, security, ...</text>
+<line x1="380" y1="60" x2="380" y2="82" class="edge" marker-end="url(#a3)"/>
+
+<!-- Step 1: security veto -->
+<rect x="180" y="82" width="400" height="58" rx="8" fill="rgb(250,236,231)" stroke="rgb(153,60,29)" stroke-width="1"/>
+<text x="380" y="103" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(113,43,19)">1. Security veto</text>
+<text x="380" y="121" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(153,60,29)">any proposal.is_security_block == True?</text>
+<line x1="580" y1="111" x2="670" y2="111" class="edge" marker-end="url(#a3)"/>
+<rect x="600" y="82" width="140" height="58" rx="8" fill="rgb(250,236,231)" stroke="rgb(153,60,29)" stroke-width="1"/>
+<text x="670" y="103" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(113,43,19)">winner</text>
+<text x="670" y="121" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(153,60,29)">immediate return</text>
+<line x1="380" y1="140" x2="380" y2="162" class="edge" marker-end="url(#a3)"/>
+<text x="392" y="155" class="s" fill="rgb(95,94,90)">no</text>
+
+<!-- Step 2: policy block -->
+<rect x="180" y="162" width="400" height="58" rx="8" fill="rgb(250,236,231)" stroke="rgb(153,60,29)" stroke-width="1"/>
+<text x="380" y="183" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(113,43,19)">2. Policy / approval-gate block</text>
+<text x="380" y="201" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(153,60,29)">any proposal.is_policy_block == True?</text>
+<line x1="580" y1="191" x2="670" y2="191" class="edge" marker-end="url(#a3)"/>
+<rect x="600" y="162" width="140" height="58" rx="8" fill="rgb(250,236,231)" stroke="rgb(153,60,29)" stroke-width="1"/>
+<text x="670" y="183" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(113,43,19)">winner</text>
+<text x="670" y="201" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(153,60,29)">blocked proposal wins</text>
+<line x1="380" y1="220" x2="380" y2="242" class="edge" marker-end="url(#a3)"/>
+<text x="392" y="235" class="s" fill="rgb(95,94,90)">no</text>
+
+<!-- Step 3: evidence -->
+<rect x="180" y="242" width="400" height="66" rx="8" fill="rgb(238,237,254)" stroke="rgb(83,74,183)" stroke-width="1"/>
+<text x="380" y="262" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(60,52,137)">3. Evidence vs. bare assertion</text>
+<text x="380" y="280" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">evidenced + bare proposals, same file(s) targeted?</text>
+<line x1="580" y1="275" x2="670" y2="275" class="edge" marker-end="url(#a3)"/>
+<rect x="600" y="242" width="140" height="66" rx="8" fill="rgb(238,237,254)" stroke="rgb(83,74,183)" stroke-width="1"/>
+<text x="670" y="262" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(60,52,137)">winner</text>
+<text x="670" y="280" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">highest-precedence</text>
+<text x="670" y="296" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">evidenced proposal</text>
+<line x1="380" y1="308" x2="380" y2="330" class="edge" marker-end="url(#a3)"/>
+<text x="392" y="323" class="s" fill="rgb(95,94,90)">no</text>
+
+<!-- Step 4: precedence gap -->
+<rect x="180" y="330" width="400" height="66" rx="8" fill="rgb(238,237,254)" stroke="rgb(83,74,183)" stroke-width="1"/>
+<text x="380" y="350" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(60,52,137)">4. Design precedence gap</text>
+<text x="380" y="368" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">top two ranked by _PRECEDENCE table;</text>
+<text x="380" y="384" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">gap &#8805; 10?</text>
+<line x1="580" y1="363" x2="670" y2="363" class="edge" marker-end="url(#a3)"/>
+<rect x="600" y="330" width="140" height="66" rx="8" fill="rgb(238,237,254)" stroke="rgb(83,74,183)" stroke-width="1"/>
+<text x="670" y="350" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(60,52,137)">winner</text>
+<text x="670" y="368" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">top-ranked</text>
+<text x="670" y="384" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(83,74,183)">agent (e.g. architect)</text>
+<line x1="380" y1="396" x2="380" y2="418" class="edge" marker-end="url(#a3)"/>
+<text x="392" y="411" class="s" fill="rgb(95,94,90)">no</text>
+
+<!-- Step 5: blast radius -->
+<rect x="180" y="418" width="400" height="58" rx="8" fill="rgb(233,244,236)" stroke="rgb(46,125,86)" stroke-width="1"/>
+<text x="380" y="439" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(30,90,61)">5. Blast-radius tie-break</text>
+<text x="380" y="457" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(30,90,61)">narrowest blast_radius strictly smaller than next?</text>
+<line x1="580" y1="447" x2="670" y2="447" class="edge" marker-end="url(#a3)"/>
+<rect x="600" y="418" width="140" height="58" rx="8" fill="rgb(233,244,236)" stroke="rgb(46,125,86)" stroke-width="1"/>
+<text x="670" y="439" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(30,90,61)">winner</text>
+<text x="670" y="457" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(30,90,61)">narrower change</text>
+<line x1="380" y1="476" x2="380" y2="498" class="edge" marker-end="url(#a3)"/>
+<text x="392" y="491" class="s" fill="rgb(95,94,90)">no</text>
+
+<!-- Escalate -->
+<rect x="140" y="498" width="480" height="60" rx="10" fill="rgb(241,239,232)" stroke="rgb(95,94,90)" stroke-width="1"/>
+<text x="380" y="520" text-anchor="middle" dominant-baseline="central" class="t" fill="rgb(68,68,65)">Escalate to human</text>
+<text x="380" y="538" text-anchor="middle" dominant-baseline="central" class="s" fill="rgb(95,94,90)">winner=None, escalate=True, security_event logged</text>
+
+<text x="380" y="600" text-anchor="middle" class="s" fill="rgb(95,94,90)">Invariant: step 1 is a true short-circuit on a boolean flag, not a weighted score —</text>
+<text x="380" y="618" text-anchor="middle" class="s" fill="rgb(95,94,90)">the security=100 precedence weight is only consulted later, in steps 3-4.</text>
+</svg>

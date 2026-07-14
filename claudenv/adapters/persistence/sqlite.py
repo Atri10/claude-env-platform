@@ -27,8 +27,9 @@ from claudenv.domain.rag import (
 from claudenv.domain.value_objects import (
     ContentHash, utc_now,
 )
+from claudenv.domain.policy import RepoPolicy
 from claudenv.ports import (
-    ITransaction, IDatabase, IAuditRepository, IMemoryRepository, IRagBookkeeping,
+    ITransaction, IDatabase, IAuditRepository, IMemoryRepository, IRagBookkeeping, IPolicyRepository,
 )
 
 
@@ -381,6 +382,13 @@ class SQLiteMemoryRepository(IMemoryRepository):
         rows = self._db.query(sql, tuple(params))
         return [MemoryNode.from_dict(r) for r in rows]
 
+    def delete_node(self, node_id: NodeId) -> None:
+        """Delete a memory node by ID."""
+        self._db.execute(
+            "DELETE FROM memory_nodes WHERE node_id=?",
+            (str(node_id),),
+        )
+
 
 # ============================================================================
 # RAG Bookkeeping Repository
@@ -446,12 +454,69 @@ class SQLiteRagBookkeeping(IRagBookkeeping):
              state.chunk_count, state.embed_model, state.updated_at.isoformat()),
         )
 
-    def apply_schema(self, *sql_files: str) -> None:
-        """Apply SQL schema files."""
-        for f in sql_files:
-            sql = Path(f).read_text()
-            with self._lock:
-                self._conn.executescript(sql)
 
-    def close(self) -> None:
-        self._conn.close()
+# ============================================================================
+# Policy Repository
+# ============================================================================
+
+class SQLitePolicyRepository(IPolicyRepository):
+    """SQLite policy configuration repository."""
+
+    def __init__(self, db: SQLiteDatabase):
+        self._db = db
+
+    def get_global_policy(self) -> dict[str, Any]:
+        row = self._db.query_one(
+            "SELECT policy_json FROM global_policy WHERE id = 1"
+        )
+        if row:
+            return json.loads(row["policy_json"])
+        return {}
+
+    def get_repo_policy(self, repo_root: str) -> RepoPolicy | None:
+        row = self._db.query_one(
+            "SELECT policy_json FROM repo_policy WHERE repo_root = ?",
+            (repo_root,),
+        )
+        if not row:
+            return None
+        return RepoPolicy.from_yaml(json.loads(row["policy_json"]))
+
+    def save_repo_policy(self, repo_root: str, policy: RepoPolicy) -> None:
+        self._db.execute(
+            "INSERT INTO repo_policy (repo_root, policy_json) VALUES (?, ?) "
+            "ON CONFLICT(repo_root) DO UPDATE SET policy_json = excluded.policy_json",
+            (repo_root, json.dumps(policy.to_dict() if hasattr(policy, 'to_dict') else {
+                "version": policy.version,
+                "tier": int(policy.tier),
+                "repo": str(policy.repo),
+                "description": policy.description,
+                "allow": {
+                    "paths": [str(p) for p in policy.allow_paths],
+                    "extensions": [str(e) for e in policy.allow_extensions],
+                },
+                "deny": {
+                    "paths": [str(p) for p in policy.deny_paths],
+                    "extensions": [str(e) for e in policy.deny_extensions],
+                    "regex": [{"pattern": r.pattern.pattern, "reason": r.reason} for r in policy.deny_regex],
+                },
+                "override_deny": [str(p) for p in policy.override_deny],
+                "content_scan": {
+                    "enabled": policy.content_scan.enabled,
+                    "on_match": policy.content_scan.on_match,
+                    "patterns": [{"name": p.name, "pattern": p.pattern.pattern} for p in policy.content_scan.patterns],
+                },
+                "rag": {
+                    "enabled": policy.rag_enabled,
+                    "index_paths": [str(p) for p in policy.rag_index_paths],
+                    "exclude_paths": [str(p) for p in policy.rag_exclude_paths],
+                    "index_only_committed": policy.rag_only_committed,
+                },
+                "memory": {
+                    "namespace": policy.memory_namespace,
+                    "isolated": policy.memory_isolated,
+                    "share_with_agents": list(policy.memory_share_with),
+                },
+                "agent_permissions": policy.agent_permissions,
+            })),
+        )

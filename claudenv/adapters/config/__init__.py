@@ -1,5 +1,5 @@
 """
-claude-env :: Adapters - Configuration Provider
+claude-env :: Adapters - Configuration Providers (Focused Interfaces)
 """
 from __future__ import annotations
 
@@ -11,7 +11,16 @@ from pathlib import Path
 from typing import Any
 
 from claudenv.domain.rag import RAGConfig
-from claudenv.ports import IConfigProvider
+from claudenv.ports import (
+    IDatabaseConfig,
+    ILanceDBConfig,
+    IRAGConfig,
+    IGlobalPolicyConfig,
+    IRepoPolicyConfig,
+    IMCPConfig,
+    IClaudeEnvHome,
+    IConfigProvider,
+)
 
 
 @dataclass
@@ -33,8 +42,8 @@ class RerankerConfig:
     model_dir: str = ""
 
 
-class ConfigProvider(IConfigProvider):
-    """Configuration provider reading from YAML + environment."""
+class _ConfigBase:
+    """Base class with shared configuration loading logic."""
 
     def __init__(self, config_path: Path | None = None):
         self._config_path = config_path or self._resolve_config_path()
@@ -72,6 +81,30 @@ class ConfigProvider(IConfigProvider):
 
     def _get_env(self, key: str, default: str) -> str:
         return os.environ.get(key, self._expand(default))
+
+    def get_claude_env_home(self) -> str:
+        return os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env"))
+
+
+class DatabaseConfigProvider(_ConfigBase, IDatabaseConfig):
+    """Database connection configuration provider."""
+
+    def get_database_dsn(self) -> str:
+        return os.environ.get(
+            "CLAUDE_ENV_DSN",
+            f"sqlite:///{self.get_claude_env_home()}/state/claude-env.db",
+        )
+
+
+class LanceDBConfigProvider(_ConfigBase, ILanceDBConfig):
+    """LanceDB vector store configuration provider."""
+
+    def get_lancedb_path(self) -> str:
+        return os.environ.get("LANCEDB_PATH", str(Path(self.get_claude_env_home()) / "knowledge" / "lancedb"))
+
+
+class RAGConfigProvider(_ConfigBase, IRAGConfig):
+    """RAG pipeline configuration provider."""
 
     def get_embedding_config(self) -> EmbeddingConfig:
         emb = self._raw_config.get("embedding", {})
@@ -112,34 +145,19 @@ class ConfigProvider(IConfigProvider):
             reranker_model_dir=rer.model_dir,
         )
 
-    def get_database_dsn(self) -> str:
-        # Every other getter here derives its path from get_claude_env_home()
-        # (itself CLAUDE_ENV_HOME-aware), but this one hardcoded Path.home() /
-        # ".claude-env", silently ignoring CLAUDE_ENV_HOME. That meant pointing
-        # CLAUDE_ENV_HOME at an isolated/test directory still wrote audit/
-        # memory/rag state into the real deployed database.
-        return os.environ.get(
-            "CLAUDE_ENV_DSN",
-            f"sqlite:///{self.get_claude_env_home()}/state/claude-env.db",
-        )
 
-    def get_lancedb_path(self) -> str:
-        return os.environ.get("LANCEDB_PATH", str(Path(self.get_claude_env_home()) / "knowledge" / "lancedb"))
-
-    def get_claude_env_home(self) -> str:
-        return os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env"))
-
-    def get_mcp_servers_config(self) -> dict[str, Any]:
-        config_path = Path(self.get_claude_env_home()) / "config" / "mcp-servers.json"
-        if config_path.exists():
-            return json.loads(config_path.read_text())
-        return {}
+class GlobalPolicyConfigProvider(_ConfigBase, IGlobalPolicyConfig):
+    """Global policy configuration provider."""
 
     def get_global_policy(self) -> dict[str, Any]:
         config_path = Path(self.get_claude_env_home()) / "config" / "global-policy.yaml"
         if config_path.exists():
             return yaml.safe_load(config_path.read_text()) or {}
         return {}
+
+
+class RepoPolicyConfigProvider(_ConfigBase, IRepoPolicyConfig):
+    """Repository policy template configuration provider."""
 
     def get_repo_policy_template(self) -> dict[str, Any]:
         config_path = Path(self.get_claude_env_home()) / "config" / "repo-policy.template.yaml"
@@ -148,12 +166,134 @@ class ConfigProvider(IConfigProvider):
         return {}
 
 
+class MCPConfigProvider(_ConfigBase, IMCPConfig):
+    """MCP servers configuration provider."""
+
+    def get_mcp_servers_config(self) -> dict[str, Any]:
+        config_path = Path(self.get_claude_env_home()) / "config" / "mcp-servers.json"
+        if config_path.exists():
+            return json.loads(config_path.read_text())
+        return {}
+
+
+class ConfigProvider(_ConfigBase, IConfigProvider):
+    """Aggregate configuration provider implementing all focused interfaces.
+
+    Uses composition over multiple inheritance to avoid MRO conflicts.
+    """
+
+    def __init__(self, config_path: Path | None = None):
+        super().__init__(config_path)
+        # Create sub-providers with the same config path
+        self._db = DatabaseConfigProvider(config_path)
+        self._lancedb = LanceDBConfigProvider(config_path)
+        self._rag = RAGConfigProvider(config_path)
+        self._global_policy = GlobalPolicyConfigProvider(config_path)
+        self._repo_policy = RepoPolicyConfigProvider(config_path)
+        self._mcp = MCPConfigProvider(config_path)
+
+    # IDatabaseConfig
+    def get_database_dsn(self) -> str:
+        return self._db.get_database_dsn()
+
+    # ILanceDBConfig
+    def get_lancedb_path(self) -> str:
+        return self._lancedb.get_lancedb_path()
+
+    # IRAGConfig
+    def get_embedding_config(self) -> EmbeddingConfig:
+        return self._rag.get_embedding_config()
+
+    def get_reranker_config(self) -> RerankerConfig:
+        return self._rag.get_reranker_config()
+
+    def get_rag_config(self) -> RAGConfig:
+        return self._rag.get_rag_config()
+
+    # IGlobalPolicyConfig
+    def get_global_policy(self) -> dict[str, Any]:
+        return self._global_policy.get_global_policy()
+
+    # IRepoPolicyConfig
+    def get_repo_policy_template(self) -> dict[str, Any]:
+        return self._repo_policy.get_repo_policy_template()
+
+    # IMCPConfig
+    def get_mcp_servers_config(self) -> dict[str, Any]:
+        return self._mcp.get_mcp_servers_config()
+
+    # IClaudeEnvHome
+    def get_claude_env_home(self) -> str:
+        return super().get_claude_env_home()
+
+
 # Module-level singleton
 _config_provider: ConfigProvider | None = None
 
 
-def get_config(reload: bool = False) -> ConfigProvider:
+def get_config() -> ConfigProvider:
+    """Get the global config provider singleton."""
     global _config_provider
-    if _config_provider is None or reload:
+    if _config_provider is None:
         _config_provider = ConfigProvider()
     return _config_provider
+
+
+# --- Focused provider singletons for DI registration ---
+
+_db_config_provider: DatabaseConfigProvider | None = None
+_lancedb_config_provider: LanceDBConfigProvider | None = None
+_rag_config_provider: RAGConfigProvider | None = None
+_global_policy_config_provider: GlobalPolicyConfigProvider | None = None
+_repo_policy_config_provider: RepoPolicyConfigProvider | None = None
+_mcp_config_provider: MCPConfigProvider | None = None
+_claude_env_home_provider: _ConfigBase | None = None
+
+
+def get_database_config() -> DatabaseConfigProvider:
+    global _db_config_provider
+    if _db_config_provider is None:
+        _db_config_provider = DatabaseConfigProvider()
+    return _db_config_provider
+
+
+def get_lancedb_config() -> LanceDBConfigProvider:
+    global _lancedb_config_provider
+    if _lancedb_config_provider is None:
+        _lancedb_config_provider = LanceDBConfigProvider()
+    return _lancedb_config_provider
+
+
+def get_rag_config_provider() -> RAGConfigProvider:
+    global _rag_config_provider
+    if _rag_config_provider is None:
+        _rag_config_provider = RAGConfigProvider()
+    return _rag_config_provider
+
+
+def get_global_policy_config() -> GlobalPolicyConfigProvider:
+    global _global_policy_config_provider
+    if _global_policy_config_provider is None:
+        _global_policy_config_provider = GlobalPolicyConfigProvider()
+    return _global_policy_config_provider
+
+
+def get_repo_policy_config() -> RepoPolicyConfigProvider:
+    global _repo_policy_config_provider
+    if _repo_policy_config_provider is None:
+        _repo_policy_config_provider = RepoPolicyConfigProvider()
+    return _repo_policy_config_provider
+
+
+def get_mcp_config() -> MCPConfigProvider:
+    global _mcp_config_provider
+    if _mcp_config_provider is None:
+        _mcp_config_provider = MCPConfigProvider()
+    return _mcp_config_provider
+
+
+def get_claude_env_home_provider() -> _ConfigBase:
+    global _claude_env_home_provider
+    if _claude_env_home_provider is None:
+        _claude_env_home_provider = _ConfigBase()
+    return _claude_env_home_provider

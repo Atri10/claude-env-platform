@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Any, Dict
 
 from claudenv.adapters.config import get_config
-from claudenv.domain.policy import PolicyEngine
+from claudenv.adapters.persistence import SQLiteDatabase
+from claudenv.adapters.audit import SqliteAuditLogger
+from claudenv.domain.policy import PolicyService
 from claudenv.domain.value_objects import RepoSlug, Tier, SessionId
-from claudenv.ports import IAuditLogger
+from claudenv.ports import IAuditLogger, IPolicyEngine
 from claudenv.ports.hooks.interfaces import IPreToolUseHook
 
 
@@ -25,11 +27,11 @@ class PolicyHook(IPreToolUseHook):
 
     def __init__(
             self,
-            policy_engine: PolicyEngine,
+            policy_evaluator: IPolicyEngine,
             audit_logger: IAuditLogger,
             repo_root: Path,
     ):
-        self.engine = policy_engine
+        self.engine = policy_evaluator
         self.audit = audit_logger
         self.repo_root = repo_root
         self.fail_closed = os.environ.get("CLAUDE_ENV_HOOK_FAIL_CLOSED", "").lower() == "true"
@@ -63,7 +65,7 @@ class PolicyHook(IPreToolUseHook):
         if decision.action == "block":
             self.audit.policy_violation(
                 path=rel, rule=decision.rule or decision.reason,
-                decision="block", tier=self.engine.repo.tier if self.engine.repo else None,
+                decision="block", tier=self.engine.get_compiled().tier,
             )
             return False
         return True
@@ -165,7 +167,7 @@ class PolicyHook(IPreToolUseHook):
 
                 # Network egress check
                 if self._is_net_cmd(command):
-                    tier = self.engine.repo.tier if self.engine.repo else 0
+                    tier = self.engine.get_compiled().tier
                     if tier >= 2:
                         return {"allow": False, "reason": self._signed(f"network egress blocked at tier {tier}")}
                     return {"allow": "ask", "reason": self._signed("network egress requires operator approval")}
@@ -191,16 +193,18 @@ def create_hook(
     repo_root = Path(repo_root).resolve()
     config = get_config()
 
-    policy_engine = PolicyEngine.load(str(repo_root))
+    policy_evaluator = PolicyService(config).load_engine(str(repo_root))
 
-    audit_logger = config.get_audit_logger(
+    db = SQLiteDatabase(config.get_database_dsn())
+    audit_logger = SqliteAuditLogger(
+        db=db,
         session_id=SessionId.from_string(session_id),
         actor=actor,
         repo=RepoSlug.from_string(repo_root.name),
-        tier=Tier(policy_engine.repo.tier if policy_engine.repo else 0),
+        tier=Tier(policy_evaluator.get_compiled().tier),
     )
 
-    return PolicyHook(policy_engine, audit_logger, repo_root)
+    return PolicyHook(policy_evaluator, audit_logger, repo_root)
 
 
 def main() -> None:
