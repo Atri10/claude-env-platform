@@ -14,6 +14,7 @@ Stale entries (dead pid or nothing listening) are pruned on read.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from claudenv.ports.services import IServiceRegistry
+logger = logging.getLogger(__name__)
 
 _HOST = "127.0.0.1"
 
@@ -138,6 +140,7 @@ class FileServiceRegistry(IServiceRegistry):
         try:
             return json.loads(self._registry_path.read_text())
         except Exception:
+            logger.warning("failed to read service registry; using empty", exc_info=True)
             return {}
 
     def _write_all(self, data: dict) -> None:
@@ -147,6 +150,7 @@ class FileServiceRegistry(IServiceRegistry):
             tmp.write_text(json.dumps(data, indent=2))
             os.replace(tmp, self._registry_path)  # atomic
         except Exception:
+            logger.warning("failed to persist service registry", exc_info=True)
             pass  # discovery is best-effort
 
     def _live(self, data: dict) -> dict:

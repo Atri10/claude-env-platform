@@ -5,6 +5,7 @@ Safe git operations via MCP. Only allow-listed commands; no push/reset/rebase.
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -18,6 +19,8 @@ from claudenv.adapters.config import get_config
 from claudenv.adapters.persistence import SQLiteDatabase
 from claudenv.domain.policy import PolicyEngine, PolicyService
 from claudenv.domain.value_objects import SessionId
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 # Commands explicitly DENIED - these would modify remote state
 DENIED_COMMANDS = {"push", "reset", "rebase", "merge --no-ff", "filter-branch", "gc"}
@@ -209,8 +212,10 @@ class GitServer:
         try:
             result = self._run_git(args)
         except FileNotFoundError:
+            logger.error("git not found on PATH")
             return [TextContent(type="text", text="ERROR: git not found on PATH")]
         except subprocess.TimeoutExpired:
+            logger.error("git command timed out")
             return [TextContent(type="text", text="ERROR: git command timed out")]
 
         if result.returncode != 0:
@@ -243,6 +248,8 @@ def create_server(
 
 
 async def main() -> None:
+    logger.info("git MCP server starting")
+    configure_logging(console=False)
     repo_root = Path(os.environ.get("CLAUDE_ENV_REPO_ROOT", os.getcwd())).resolve()
     session_id = os.environ.get("CLAUDE_ENV_SESSION", "mcp-git")
     server = create_server(repo_root, session_id)

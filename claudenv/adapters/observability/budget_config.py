@@ -12,9 +12,11 @@ import os
 from pathlib import Path
 
 import yaml
+import logging
 
 from claudenv._data import config_dir
 from claudenv.ports.observability import IBudgetConfig
+logger = logging.getLogger(__name__)
 
 
 class YamlBudgetConfig(IBudgetConfig):
@@ -40,6 +42,7 @@ class YamlBudgetConfig(IBudgetConfig):
         try:
             return yaml.safe_load(self._config_path.read_text()) or {}
         except Exception:
+            logger.warning("failed to load budget config; using defaults", exc_info=True)
             return {}
 
     def get_warn_at(self) -> float:

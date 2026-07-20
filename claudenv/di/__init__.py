@@ -80,6 +80,8 @@ from claudenv.ports import (
     IVectorStore,
     IVerifiableLedger,
 )
+import logging
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -220,6 +222,7 @@ def _configure_container(c: Container) -> None:
         try:
             embedder_for_memory = get_embedder()
         except Exception:
+            logger.warning("embedder unavailable; memory will have no embeddings", exc_info=True)
             pass
         return MemoryGraph(mem_repo, namespace, embedding=embedder_for_memory, isolated=isolated)
 
@@ -235,6 +238,7 @@ def _configure_container(c: Container) -> None:
         try:
             embedder_for_memory = get_embedder()
         except Exception:
+            logger.warning("embedder unavailable; memory will have no embeddings", exc_info=True)
             pass
         return MemoryWriter(mem_repo, namespace, embedding=embedder_for_memory)
 
@@ -257,6 +261,7 @@ def _configure_container(c: Container) -> None:
         try:
             embedder_for_memory = get_embedder()
         except Exception:
+            logger.warning("embedder unavailable; memory will have no embeddings", exc_info=True)
             pass
         return MemoryGraphTraversal(mem_repo, namespace, embedding=embedder_for_memory, isolated=isolated, shared_namespaces=shared_with)
 

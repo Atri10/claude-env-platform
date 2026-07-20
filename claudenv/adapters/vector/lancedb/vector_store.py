@@ -4,13 +4,16 @@ claude-env :: Adapters - LanceDB Vector Store
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+logger = logging.getLogger(__name__)
 
 try:
     import pyarrow as pa
 
     import lancedb
 except ImportError:
+    logger.warning("lancedb/pyarrow not installed; vector features disabled", exc_info=True)
     lancedb = None
     pa = None
 
@@ -78,6 +81,7 @@ class LanceDbVectorStore:
             try:
                 row.update(json.loads(blob))
             except (TypeError, ValueError):
+                logger.warning("failed to parse stored JSON blob; skipping field", exc_info=True)
                 pass
         return row
 
@@ -93,6 +97,7 @@ class LanceDbVectorStore:
         try:
             tbl.create_fts_index("text", replace=True)
         except Exception:
+            logger.warning("FTS index creation failed; search quality degraded", exc_info=True)
             pass  # FTS is optional optimization
         return tbl
 
@@ -105,6 +110,7 @@ class LanceDbVectorStore:
         try:
             tbl.delete(f"chunk_id IN ({id_list})")
         except Exception:
+            logger.warning("chunk delete failed; will re-add", exc_info=True)
             pass
         tbl.add([self._to_row(r) for r in rows])
         return len(rows)
@@ -128,6 +134,7 @@ class LanceDbVectorStore:
             else:
                 res = tbl.search(query.query).limit(top_k).to_list()
         except Exception:
+            logger.warning("vector search failed; falling back to text search", exc_info=True)
             res = tbl.search(query.query_vector or [0.0] * self.dim).limit(top_k).to_list()
 
         results = []
@@ -142,6 +149,7 @@ class LanceDbVectorStore:
         try:
             return self.open(repo, branch).count_rows()
         except Exception:
+            logger.warning("count_rows failed; returning 0", exc_info=True)
             return 0
 
     def get_chunk(self, repo: RepoSlug, branch: BranchName, chunk_id: str) -> Chunk | None:
@@ -152,6 +160,7 @@ class LanceDbVectorStore:
             safe_id = chunk_id.replace("'", "''")
             rows = tbl.search().where(f"chunk_id = '{safe_id}'").limit(1).to_list()
         except Exception:
+            logger.warning("get_chunk failed; returning None", exc_info=True)
             return None
         if not rows:
             return None

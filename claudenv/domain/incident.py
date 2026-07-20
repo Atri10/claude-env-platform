@@ -15,6 +15,8 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 
 def claude_env_home() -> Path:
@@ -47,6 +49,7 @@ class IncidentState:
             data = json.loads(marker.read_text() or "{}")
         except (json.JSONDecodeError, OSError):
             # A present-but-unreadable marker still means "deny everything".
+            logger.warning("incident marker unreadable; treating as active (deny)", exc_info=True)
             return cls(active=True)
         return cls(
             active=True,

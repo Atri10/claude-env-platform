@@ -19,6 +19,8 @@ from claudenv.domain.memory.service.services import (
     MemoryWriter,
 )
 from claudenv.domain.value_objects import RepoSlug, Tier
+import logging
+logger = logging.getLogger(__name__)
 
 
 class MemoryServiceImpl:
@@ -44,6 +46,7 @@ class MemoryServiceImpl:
             from claudenv.adapters.embedding import get_embedder
             embedding = get_embedder()
         except Exception:
+            logger.warning("embedder unavailable; proceeding without embeddings", exc_info=True)
             pass
 
         return MemoryGraph(
@@ -98,6 +101,7 @@ class MemoryServiceImpl:
             from claudenv.adapters.embedding import get_embedder
             embedding = get_embedder()
         except Exception:
+            logger.warning("embedder unavailable; proceeding without embeddings", exc_info=True)
             pass
         return MemoryWriter(self.repo, namespace, embedding)
 
@@ -127,5 +131,6 @@ class MemoryServiceImpl:
             from claudenv.adapters.embedding import get_embedder
             embedding = get_embedder()
         except Exception:
+            logger.warning("embedder unavailable; proceeding without embeddings", exc_info=True)
             pass
         return MemoryGraphTraversal(self.repo, namespace, embedding, isolated, shared_with)

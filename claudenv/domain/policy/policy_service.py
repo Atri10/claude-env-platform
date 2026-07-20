@@ -11,6 +11,8 @@ from claudenv.domain.policy.global_policy import GlobalPolicy
 from claudenv.domain.policy.policy_engine import PolicyEngine
 from claudenv.domain.policy.repo_policy import RepoPolicy
 from claudenv.domain.value_objects import RepoSlug
+import logging
+logger = logging.getLogger(__name__)
 
 
 class PolicyService:
@@ -54,6 +56,7 @@ class PolicyService:
             ).stdout.strip()
             files = out.splitlines() if out else []
         except Exception:
+            logger.warning("git ls-files failed; falling back to rglob", exc_info=True)
             files = [
                 str(p.relative_to(repo_root))
                 for p in _FsPath(repo_root).rglob("*")

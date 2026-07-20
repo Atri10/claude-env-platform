@@ -4,6 +4,7 @@ claude-env :: CLI Entry Point
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -21,6 +22,9 @@ from claudenv.application.onboarding import OnboardingService
 from claudenv.di import get_container
 from claudenv.ports.audit import IAuditRepository
 from claudenv.ports.database import IDatabase
+from claudenv.logging_config import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -30,6 +34,8 @@ def cli(ctx, verbose):
     """claude-env - Local-first AI governance platform."""
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
+    configure_logging(verbose=verbose)
+    logger.debug("claude-env CLI invoked (verbose=%s)", verbose)
 
 
 # --------------------------------------------------------------------------
@@ -64,6 +70,7 @@ def ensure_initialized(ctx):
 
     if click.confirm("claude-env is not initialized. Run 'claude-env init' now?", default=True):
         ctx.invoke(init, force_config=False)
+        logger.debug("[flow] ensure_initialized: invoking init")
     else:
         click.echo(
             "Aborting: claude-env home is not initialized.\n"
@@ -88,7 +95,7 @@ def _detect_branch(repo_root: str) -> str:
             if branch:
                 return str(branch)
         except Exception:
-            pass
+            logger.warning("branch detection failed; defaulting to main", exc_info=True)
     try:
         out = subprocess.run(
             ["git", "-C", repo_root, "rev-parse", "--abbrev-ref", "HEAD"],
@@ -97,7 +104,7 @@ def _detect_branch(repo_root: str) -> str:
         if out:
             return out
     except Exception:
-        pass
+            logger.warning("git branch listing failed; falling back to rglob", exc_info=True)
     return "main"
 
 
@@ -110,6 +117,7 @@ def _rag_service(repo: str, branch: str):
     constructing the LanceDB store directly with the correct signature.
     """
     from claudenv.adapters.vector.lancedb import LanceDbRagRetriever, LanceDbVectorStore
+    logger.debug("[flow] _rag_service: building repo=%s branch=%s", repo, branch)
     from claudenv.application.rag import RagIndexer, RagService
     from claudenv.domain.rag import BranchName, RepoSlug
     from claudenv.ports import (
@@ -133,6 +141,7 @@ def _rag_service(repo: str, branch: str):
         store, bk, embedder, rcfg,
     )
     retriever = LanceDbRagRetriever(store, embedder, reranker)
+    logger.debug("[flow] _rag_service: built RagService")
     return RagService(indexer, retriever, embedder, reranker, bookkeeping=bk)
 
 
@@ -143,6 +152,7 @@ def _model_setup_flow(ctx, *, interactive, model_path, pooling_type, embedding_d
     packaged default as the base, so only the user's choices are changed.
     """
     config = get_config()
+    logger.debug("[flow] _model_setup_flow: start interactive=%s", interactive)
     home = config.get_claude_env_home()
     deployed = Path(home) / "config" / "rag.yaml"
     if deployed.exists():
@@ -211,6 +221,7 @@ def _model_setup_flow(ctx, *, interactive, model_path, pooling_type, embedding_d
     rer["model_dir"] = str(reranker_dir) if reranker_dir else ""
 
     path = write_rag_config(home, base)
+    logger.debug("[flow] _model_setup_flow: wrote config path=%s", path)
     click.echo(f"  Wrote RAG config -> {path}")
     return path
 
@@ -239,6 +250,7 @@ def init(ctx, force_config, interactive):
     config = get_config()
     home = Path(config.get_claude_env_home())
 
+    logger.debug("[flow] init: start home=%s force_config=%s interactive=%s", home, force_config, interactive)
     verbose = ctx.obj.get("verbose", False)
 
     # 1. Directory skeleton.
@@ -246,6 +258,7 @@ def init(ctx, force_config, interactive):
         (home / sub).mkdir(parents=True, exist_ok=True)
 
     click.echo(f"  [ok] home ready at {home}")
+    logger.debug("[flow] init: directory skeleton created")
 
     # 2. Copy packaged default config (skip existing unless --force-config).
     copied, skipped = 0, 0
@@ -273,6 +286,7 @@ def init(ctx, force_config, interactive):
             click.echo(f"       copy {src.name}")
 
     click.echo(f"  [ok] config: {copied} copied, {skipped} kept")
+    logger.debug("[flow] init: config copied=%d skipped=%d", copied, skipped)
 
     # 3. Apply SQL schema (idempotent) against the state DB.
     dsn = config.get_database_dsn()
@@ -282,26 +296,28 @@ def init(ctx, force_config, interactive):
     db.apply_schema(*schema_files)
 
     click.echo(f"  [ok] schema applied ({len(schema_files)} files) -> {dsn}")
+    logger.debug("[flow] init: schema applied files=%d dsn=%s", len(schema_files), dsn)
 
     # 4. Genesis audit event (the logger writes GENESIS-chained on first append).
-    logger = SqliteAuditLogger(
+    audit_logger = SqliteAuditLogger(
         db=db,
         session_id=SessionId.from_string("init"),
         actor="claude-env-init",
     )
 
-    logger.agent_action(
+    audit_logger.agent_action(
         agent="claude-env-init",
         action="init",
         target=str(home),
         summary="claude-env home initialized",
     )
 
-    result = logger.verify_chain()
+    result = audit_logger.verify_chain()
     db.close()
     ok = result.ok
 
     click.echo(f"  [ok] audit ledger initialized (verify_chain: {'green' if ok else 'FAILED'})")
+    logger.debug("[flow] init: audit ledger initialized ok=%s", ok)
 
     if not ok:
         click.echo("\nInitialization completed but the audit chain did not verify!", err=True)
@@ -345,6 +361,7 @@ def onboard(ctx, repo_root, repo_name, tier, description, branch, interactive, y
     # Explicit --interactive overrides; explicit --yes forces non-interactive
     is_tty = sys.stdin.isatty()
     use_interactive = interactive or (is_tty and not yes)
+    logger.debug("[flow] onboard: start repo_root=%s use_interactive=%s dry_run=%s", repo_root, use_interactive, dry_run)
 
     if use_interactive:
         repo_root, repo_name, tier, description, branch = _prompt_onboarding_inputs(
@@ -375,11 +392,13 @@ def onboard(ctx, repo_root, repo_name, tier, description, branch, interactive, y
         click.echo(f"Onboarded: {result.slug} (tier {result.tier})")
         click.echo(f"  RAG table: {result.rag_table}")
         click.echo(f"  Memory ns: {result.memory_namespace} (isolated={result.memory_isolated})")
+    logger.debug("[flow] onboard: complete slug=%s tier=%s dry_run=%s", result.slug, result.tier, dry_run)
 
 
 @cli.group()
 def model():
     """Model configuration (embedding + reranker)."""
+    logger.debug("[flow] group: model")
     pass
 
 
@@ -399,6 +418,7 @@ def model():
 def model_setup(ctx, model_path, pooling_type, embedding_dim, reranker_dir, yes):
     """Configure the embedding + reranker models (writes deployed rag.yaml)."""
     interactive = (not yes) and sys.stdin.isatty()
+    logger.debug("[flow] model setup: start interactive=%s", interactive)
     _model_setup_flow(
         ctx, interactive=interactive,
         model_path=model_path, pooling_type=pooling_type,
@@ -512,6 +532,7 @@ def _prompt_onboarding_inputs(
 def scan(ctx, repo_root):
     """Preview what would be indexed (policy allow/block split)."""
     ensure_initialized(ctx)
+    logger.debug("[flow] scan: start repo_root=%s", repo_root)
     # Load the policy engine for this repo via the live PolicyService.
     from claudenv.domain.policy import PolicyService
     engine = PolicyService(get_config()).load_engine(repo_root)
@@ -525,6 +546,7 @@ def scan(ctx, repo_root):
         ).stdout.strip()
         files = out.splitlines() if out else []
     except Exception:
+        logger.warning("git ls-files failed; falling back to rglob", exc_info=True)
         files = [str(p.relative_to(repo_root)) for p in Path(repo_root).rglob("*") if p.is_file()]
 
     allowed, blocked = [], []
@@ -550,6 +572,7 @@ def scan(ctx, repo_root):
 def index(ctx, repo_root, branch):
     """Build full RAG index for a repository."""
     ensure_initialized(ctx)
+    logger.debug("[flow] index: start repo_root=%s branch=%s", repo_root, branch)
 
     # Get repo slug from onboarding
     repo_policy_path = Path(repo_root) / ".claude" / "repo-policy.yaml"
@@ -577,17 +600,19 @@ def index(ctx, repo_root, branch):
         try:
             files_dict[f] = path.read_text(errors="ignore")
         except Exception:
-            pass
+            logger.warning("could not read file for indexing; skipping", exc_info=True)
 
     result = service.indexer.full_index(
         repo=slug, branch=branch, files=files_dict,
     )
     click.echo(f"Indexed: {result['files']} files, {result['chunks']} chunks")
+    logger.debug("[flow] index: complete files=%s chunks=%s", result['files'], result['chunks'])
 
 
 @cli.group()
 def validate():
     """Run validation checks."""
+    logger.debug("[flow] group: validate")
     pass
 
 
@@ -596,6 +621,7 @@ def validate():
 def validate_installation(ctx):
     """Validate full installation."""
     config = get_config()
+    logger.debug("[flow] validate installation: start")
     home = Path(config.get_claude_env_home())
 
     checks = [
@@ -624,6 +650,7 @@ def validate_installation(ctx):
 @cli.group()
 def policy_sim():
     """Dry-run a candidate policy before it goes live."""
+    logger.debug("[flow] group: policy_sim")
 
 
 @policy_sim.command("simulate")
@@ -635,6 +662,7 @@ def policy_sim():
 def policy_sim_simulate(ctx, repo_root, candidate):
     """Show what a candidate repo policy would change (dry-run, nothing written)."""
     import yaml
+    logger.debug("[flow] policy sim simulate: start repo_root=%s candidate=%s", repo_root, candidate)
 
     from claudenv.domain.policy import PolicyService
 
@@ -670,6 +698,7 @@ def policy_sim_simulate(ctx, repo_root, candidate):
 def rag(ctx, repo_root, query, branch):
     """Test RAG retrieval for a repository."""
     ensure_initialized(ctx)
+    logger.debug("[flow] rag: start repo_root=%s branch=%s", repo_root, branch)
 
     repo_policy_path = Path(repo_root) / ".claude" / "repo-policy.yaml"
     if not repo_policy_path.exists():
@@ -699,9 +728,11 @@ def rag(ctx, repo_root, query, branch):
 def hooks(ctx, repo_root):
     """Install native-tool governance hooks."""
     from claudenv.adapters.hooks import HookInstaller
+    logger.debug("[flow] hooks: install repo_root=%s", repo_root)
 
     result = HookInstaller(repo_root).install()
     click.echo(json.dumps(result, indent=2))
+    logger.debug("[flow] hooks: installed=%s", result.get("installed"))
     if not result.get("installed"):
         sys.exit(1)
 
@@ -715,10 +746,12 @@ def hooks(ctx, repo_root):
 def report(ctx, window, repo, format, out):
     """Generate compliance report."""
     container = get_container()
+    logger.debug("[flow] report: start window=%s repo=%s format=%s out=%s", window, repo, format, out)
 
     generator = ComplianceReportGenerator(container.get(IDatabase), container.get(IAuditRepository))
 
     result = generator.generate(window=window, repo=repo, format=format)
+    logger.debug("[flow] report: generated")
 
     if out:
         Path(out).write_text(result)
@@ -734,6 +767,7 @@ def report(ctx, window, repo, format, out):
 def replay(ctx, list_sessions, session_id):
     """Replay session forensics."""
     container = get_container()
+    logger.debug("[flow] replay: start list_sessions=%s session_id=%s", list_sessions, session_id)
 
     replay = SessionReplay(container.get(IDatabase))
 
@@ -757,6 +791,7 @@ def replay(ctx, list_sessions, session_id):
 def incident(ctx, action, reason, by):
     """Incident mode kill switch."""
     from claudenv.domain.incident import IncidentState, clear_incident, write_incident
+    logger.debug("[flow] incident: action=%s reason=%s by=%s", action, reason, by)
 
     config = get_config()
     home = Path(config.get_claude_env_home())
@@ -783,11 +818,13 @@ def incident(ctx, action, reason, by):
             db.close()
         except Exception:
             # Best-effort: incident mode must still arm even if the gate is down.
-            pass
+            logger.warning("incident gate unavailable; arming incident mode anyway")
         write_incident(reason=reason, by=by, home=home)
+        logger.debug("[flow] incident: ON armed reason=%s by=%s", reason, by)
         click.echo(f"Incident mode ON: {reason}")
     elif action == "off":
         clear_incident(home=home)
+        logger.debug("[flow] incident: OFF cleared")
         click.echo("Incident mode OFF")
     else:
         state = IncidentState.read(home=home)
@@ -805,6 +842,7 @@ def services(ctx):
     """List running local UI services."""
     config = get_config()
     home = Path(config.get_claude_env_home())
+    logger.debug("[flow] services: list")
     registry_file = home / "state" / "services.json"
 
     if not registry_file.exists():
@@ -827,6 +865,7 @@ def budget(ctx, repo, fmt):
     Exits non-zero only when a budget is EXCEEDED, so a CI job or shell prompt
     can gate on it. Warnings alone still exit 0.
     """
+    logger.debug("[flow] budget: start repo=%s format=%s", repo, fmt)
     svc = get_container().get(BudgetService)
     result = svc.evaluate(repo=repo)
 
@@ -857,6 +896,7 @@ def budget(ctx, repo, fmt):
 @click.pass_context
 def dashboard(ctx, window, fmt):
     """Read-only operational summary (costs, latency, retrieval quality, violations)."""
+    logger.debug("[flow] dashboard: start window=%s format=%s", window, fmt)
     svc = get_container().get(DashboardService)
     summary = svc.summary(window=window)
 
@@ -901,6 +941,7 @@ def dashboard(ctx, window, fmt):
 @click.pass_context
 def feedback(ctx, repo):
     """Show RAG retrieval feedback stats (retrieved/used counts, top files)."""
+    logger.debug("[flow] feedback: start repo=%s", repo)
     svc = get_container().get(FeedbackService)
     stats = svc.stats(repo=repo)
     click.echo(f"retrieved: {stats.get('retrieved', 0)}")

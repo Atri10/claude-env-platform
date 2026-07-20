@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+import logging
 
 from claudenv.domain.observability.budget import RepoSpend
 from claudenv.ports.database import IDatabase
@@ -17,6 +18,7 @@ from claudenv.ports.observability import (
     IProjectionRepository,
     ISessionMetricsRepository,
 )
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -61,6 +63,7 @@ class SQLiteFeedbackRepository(IFeedbackRepository):
                     params,
                 )
         except Exception:
+            logger.warning("feedback signal insert failed; ignored", exc_info=True)
             pass  # feedback must never break retrieval
 
     def used_counts(self, repo: str, branch: str) -> dict[str, int]:
@@ -73,6 +76,7 @@ class SQLiteFeedbackRepository(IFeedbackRepository):
             )
             return {r["chunk_id"]: int(r["n"]) for r in rows}
         except Exception:
+            logger.warning("feedback used_counts query failed; returning empty", exc_info=True)
             return {}
 
     def signal_totals(self, repo: str | None = None) -> dict[str, int]:

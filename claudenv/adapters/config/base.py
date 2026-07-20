@@ -4,11 +4,13 @@ claude-env :: Adapters - Configuration - Base loader
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 
 import yaml
 
 from claudenv._data import config_dir
+logger = logging.getLogger(__name__)
 
 
 class _ConfigBase:
@@ -44,6 +46,7 @@ class _ConfigBase:
         try:
             return yaml.safe_load(self._config_path.read_text()) or {}
         except Exception:
+            logger.error("failed to load config; using empty defaults", exc_info=True)
             return {}
 
     def _expand(self, value: str) -> str:

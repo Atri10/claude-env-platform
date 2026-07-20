@@ -6,6 +6,7 @@ PreToolUse hook for path/command validation against policy engine.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import sys
@@ -20,6 +21,8 @@ from claudenv.domain.policy import PolicyService
 from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
 from claudenv.ports import IAuditLogger, IPolicyEngine
 from claudenv.ports.hooks.interfaces import IPreToolUseHook
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 
 class PolicyHook(IPreToolUseHook):
@@ -63,6 +66,7 @@ class PolicyHook(IPreToolUseHook):
         try:
             rel, _ = self._resolve_path(path)
         except PermissionError:
+            logger.warning("path escapes repo root; denying: %s", path)
             return False
 
         decision = self.engine.evaluate_path(rel)
@@ -188,6 +192,7 @@ class PolicyHook(IPreToolUseHook):
             return {"allow": True}
 
         except Exception as e:
+            logger.exception("policy hook error during evaluation")
             if self.fail_closed:
                 return {"allow": False, "reason": self._signed(f"hook error (fail-closed): {e}")}
             return {"allow": True}
@@ -216,6 +221,7 @@ def create_hook(
 
 
 def main() -> None:
+    configure_logging(console=False)
     """CLI entry point for hook execution."""
     try:
         hook_input = json.load(sys.stdin)
@@ -229,6 +235,7 @@ def main() -> None:
 
         json.dump(result, sys.stdout)
     except Exception:
+        logger.exception("policy hook failed; emitted fail-open allow")
         json.dump({"allow": True}, sys.stdout)
 
 

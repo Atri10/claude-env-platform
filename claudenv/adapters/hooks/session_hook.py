@@ -12,6 +12,7 @@ the whole body is wrapped so a failure can never disrupt the user's session.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,8 @@ from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
 from claudenv.adapters.persistence import SQLiteDatabase
 from claudenv.domain.value_objects import SessionId, Tier
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 
 class SessionHook:
@@ -42,6 +45,7 @@ class SessionHook:
                 or payload.get("sessionId")
                 or "unknown"
             )
+            logger.info("session hook event=%s session=%s", event, session_id)
             if audit is None:
                 audit = SessionHook._build_audit()
             if event == "SessionStart":
@@ -53,6 +57,7 @@ class SessionHook:
                     agent="session", action="session_end", target=session_id,
                 )
         except Exception:
+            logger.exception("session hook failed; continuing")
             # A session hook must never break the session.
             pass
         return 0
@@ -80,6 +85,7 @@ class SessionHook:
 
 
 def main() -> None:
+    configure_logging(console=False)
     """Module entry point: ``python -m claudenv.adapters.hooks.session_hook``."""
     SessionHook.main()
 

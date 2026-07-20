@@ -27,6 +27,7 @@ from claudenv.adapters.hooks.policy_hook import PolicyHook
 from claudenv.adapters.hooks.session_hook import SessionHook
 from claudenv.adapters.hooks.session_metrics_hook import SessionMetricsHook
 from claudenv.ports.hooks.interfaces import IPostToolUseHook, IPreToolUseHook
+from claudenv.logging_config import configure_logging
 
 # Default matcher: which tools trigger a hook. Mirrors the legacy
 # install_hooks.py behaviour; a hook class may override via HOOK_MATCHER.
@@ -161,6 +162,7 @@ class HookInstaller:
                     hooks = settings.get("hooks", {})
                     results[name] = expected.issubset(set(hooks))
                 except Exception:
+                    logger.warning("hook validation failed for %s; marking invalid", name, exc_info=True)
                     results[name] = False
         return results
 
@@ -178,6 +180,7 @@ def create_installer(
 
 
 def main() -> None:
+    configure_logging()
     """CLI entry point (``python -m claudenv.adapters.hooks.installer``)."""
     import argparse
 

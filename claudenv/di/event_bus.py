@@ -9,6 +9,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EventBus:
     """Simple in-process event bus."""
@@ -21,7 +24,7 @@ class EventBus:
             try:
                 handler(payload)
             except Exception:
-                pass  # Don't let handler errors break the publisher
+                logger.warning("event handler raised; event dropped: %s", event_type, exc_info=True)
 
     def subscribe(self, event_type: str, handler: Callable[[dict], None]) -> None:
         self._subscribers.setdefault(event_type, []).append(handler)

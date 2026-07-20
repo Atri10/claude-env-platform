@@ -10,6 +10,8 @@ from typing import Any
 
 from claudenv.domain.security import RagPoisonDetector
 from claudenv.domain.value_objects import Tier
+import logging
+logger = logging.getLogger(__name__)
 
 _SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", ".claude-env", "dist", "build"}
 _README_NAMES = ("README.md", "README.rst", "README.txt", "readme.md")
@@ -83,6 +85,7 @@ class DocsService:
             try:
                 data = json.loads(package_json.read_text(errors="replace"))
             except Exception:
+                logger.warning("failed to parse package.json; using empty", exc_info=True)
                 data = {}
             for section in ("dependencies", "devDependencies"):
                 for name, version in (data.get(section) or {}).items():
@@ -120,6 +123,7 @@ class DocsService:
             try:
                 lines = path.read_text(errors="replace").splitlines()
             except Exception:
+                logger.warning("failed to read file while scanning; skipping", exc_info=True)
                 continue
             for i, line in enumerate(lines):
                 for k in kinds:
@@ -140,6 +144,7 @@ class DocsService:
         try:
             return resolved.read_text(errors="replace")
         except Exception:
+            logger.warning("failed to read file; returning None", exc_info=True)
             return None
 
     def get_readme(self) -> str | None:
@@ -150,6 +155,7 @@ class DocsService:
                 try:
                     return path.read_text(errors="replace")
                 except Exception:
+                    logger.warning("failed to read README; skipping", exc_info=True)
                     continue
         return None
 
@@ -167,6 +173,7 @@ class DocsService:
             try:
                 text = f.read_text(errors="replace")
             except Exception:
+                logger.warning("failed to read corpus file; skipping", exc_info=True)
                 continue
             low = text.lower()
             score = sum(low.count(t) for t in terms)

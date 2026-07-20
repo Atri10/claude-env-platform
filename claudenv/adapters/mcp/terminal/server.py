@@ -7,6 +7,7 @@ run (with human approval). All argv-only, no shell, scrubbed env.
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import os
 import shlex
@@ -26,6 +27,8 @@ from claudenv.adapters.services import FileServiceRegistry
 from claudenv.domain.policy import PolicyEngine, PolicyService
 from claudenv.domain.value_objects import SessionId
 from claudenv.ports import IAuditLogger, IDatabase
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 from .command_error import _CommandError
 
@@ -197,6 +200,7 @@ class TerminalServer:
                         cmds[k] = user[k]
                         configured.add(k)
             except Exception:
+                logger.warning("could not read configured commands", exc_info=True)
                 pass
         return cmds, configured
 
@@ -251,6 +255,7 @@ class TerminalServer:
                 return
             await proc.wait()
         except Exception:
+            logger.warning("audio cue failed; ignoring", exc_info=True)
             pass  # missing player binary/audio device must never break approval
 
     def _ensure_approvals_ui(self) -> None:
@@ -303,6 +308,7 @@ class TerminalServer:
                     stderr=asyncio.subprocess.DEVNULL)
                 await proc.wait()
         except Exception:
+            logger.warning("auto-open browser failed; ignoring", exc_info=True)
             pass  # auto-opening is a convenience; the request still blocks
 
     # --- Command parsing -----------------------------------------------------
@@ -398,6 +404,7 @@ class TerminalServer:
                 self.session_id, self.repo_root.name, command, output
             )
         except Exception:
+            logger.warning("command parse failed", exc_info=True)
             pass
 
     def _run(self, template: str, kind: str, root: Path | None = None) -> str:
@@ -488,6 +495,8 @@ def create_server(
 
 
 async def main() -> None:
+    logger.info("terminal MCP server starting")
+    configure_logging(console=False)
     repo_root = Path(os.environ.get("CLAUDE_ENV_REPO_ROOT", os.getcwd())).resolve()
     session_id = os.environ.get("CLAUDE_ENV_SESSION", "mcp-terminal")
     server = create_server(repo_root, session_id)

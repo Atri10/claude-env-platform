@@ -8,6 +8,7 @@ GitHooksStep, CommandsStep, NativeHooksStep, AgentsStep, IndexStep.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -20,6 +21,7 @@ import click
 from claudenv._data import config_dir, templates_dir
 from claudenv.application.onboarding.base import OnboardingContext, OnboardingStep
 from claudenv.domain.value_objects import Tier
+logger = logging.getLogger(__name__)
 
 
 def _resolve_deployed_or_packaged(home_rel: Path, packaged: Path) -> Path:
@@ -275,7 +277,7 @@ class GitHooksStep(OnboardingStep):
         for name in hook_names:
             src = scripts_pkg / name
             if not src.exists():
-                print(f"  WARNING: hook source missing: {name}")
+                logger.warning("hook source missing: %s", name)
                 continue
 
             dst = hooks_dir / name
@@ -361,7 +363,7 @@ class NativeHooksStep(OnboardingStep):
             from claudenv.adapters.hooks import HookInstaller
             result = HookInstaller(ctx.repo_root).install()
             if not result.get("installed"):
-                print(f"  WARNING: hook install failed: {result}")
+                logger.warning("hook install failed: %s", result)
 
         ctx.add_step("native_hooks")
         return True

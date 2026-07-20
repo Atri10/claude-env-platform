@@ -18,6 +18,7 @@ instruction to the agent. Three detectors run on each chunk
 """
 from __future__ import annotations
 
+import logging
 import fnmatch
 import json
 import os
@@ -40,6 +41,8 @@ from claudenv.domain.security import (
     SecretDetector,
 )
 from claudenv.domain.value_objects import BranchName, RepoSlug, SessionId
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 
 class LanceDbRagServer:
@@ -143,6 +146,7 @@ class LanceDbRagServer:
 
             return [TextContent(type="text", text=f"ERROR: unknown tool {name}")]
         except Exception as e:
+            logger.exception("rag tool error")
             self.audit.security_event(
                 category="rag_error", severity="medium",
                 detail=str(e), source=name,
@@ -164,6 +168,7 @@ class LanceDbRagServer:
                 mode=mode,
             )
         except Exception as e:
+            logger.exception("retrieval unavailable")
             return [TextContent(type="text", text=f"ERROR: retrieval unavailable ({e})")]
 
         if file_filter:
@@ -354,6 +359,8 @@ def create_server(
 
 
 async def main() -> None:
+    logger.info("lancedb RAG MCP server starting")
+    configure_logging(console=False)
     repo_slug = os.environ.get("CLAUDE_ENV_REPO_NAME", "default")
     branch = os.environ.get("CLAUDE_ENV_BRANCH", "main")
     session_id = os.environ.get("CLAUDE_ENV_SESSION", "mcp-rag")

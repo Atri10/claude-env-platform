@@ -24,6 +24,8 @@ from claudenv.ports import (
     IRagRetriever,
     IReranker,
 )
+import logging
+logger = logging.getLogger(__name__)
 
 _SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", ".claude-env", "dist", "build"}
 _MAX_FILE_BYTES = 2_000_000
@@ -83,12 +85,14 @@ class RagService:
             try:
                 data = path.read_bytes()
             except Exception:
+                logger.warning("skipped unreadable file during indexing: %s", path, exc_info=True)
                 continue
             if b"\x00" in data[:8192] or len(data) > _MAX_FILE_BYTES:
                 continue
             try:
                 text = data.decode("utf-8")
             except Exception:
+                logger.warning("skipped unreadable file during indexing: %s", path, exc_info=True)
                 continue
             files[str(path.relative_to(repo_root))] = text
         return self.indexer.full_index(repo, branch, files)

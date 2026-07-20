@@ -7,6 +7,7 @@ All policy logic lives in claudenv.domain.policy; this is just transport.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import signal
@@ -23,6 +24,8 @@ from claudenv.domain.incident import is_incident_active
 from claudenv.domain.policy import PolicyDecision, PolicyEngine, PolicyService
 from claudenv.domain.value_objects import SessionId
 from claudenv.ports import IAuditLogger
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 from .policy_blocked import PolicyBlocked
 
@@ -162,6 +165,7 @@ class FilesystemPolicyServer:
             except FileNotFoundError:
                 return [TextContent(type="text", text="ERROR: file not found")]
             except Exception as e:
+                logger.exception("filesystem tool error")
                 self.audit.security_event(
                     category="mcp_fs_error", severity="medium",
                     detail=str(e), source=name,
@@ -340,6 +344,8 @@ def create_server(
 
 
 async def main() -> None:
+    logger.info("filesystem MCP server starting")
+    configure_logging(console=False)
     """Entry point for stdio MCP server."""
     repo_root = Path(os.environ.get("CLAUDE_ENV_REPO_ROOT", os.getcwd())).resolve()
     session_id = os.environ.get("CLAUDE_ENV_SESSION", "mcp-fs")

@@ -15,6 +15,8 @@ from datetime import UTC, datetime, timedelta
 
 from claudenv.ports.audit import IAuditRepository
 from claudenv.ports.database import IDatabase
+import logging
+logger = logging.getLogger(__name__)
 
 
 def _parse_window(win: str) -> datetime:
@@ -184,6 +186,7 @@ class SessionReplay:
             try:
                 body = json.loads(r["payload_json"]).get("body", {})
             except Exception:
+                logger.warning("failed to parse audit event payload; using empty body", exc_info=True)
                 body = {}
             out.append({"event_id": r["event_id"], "ts": r["ts"],
                         "type": r["event_type"], "actor": r["actor"],

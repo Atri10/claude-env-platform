@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import os
 import threading
+import logging
 from pathlib import Path
 
 from claudenv.domain.rag import RAGConfig
 
 from .embedders import DummyEmbedder, EmbedderBackend, LlamaCppEmbedder
 from .rerankers import NoopReranker, OnnxCrossEncoderReranker, RerankerBackend
+logger = logging.getLogger(__name__)
 
 _EMBEDDER: EmbedderBackend | None = None
 _EMBEDDER_KEY: tuple | None = None
@@ -78,6 +80,7 @@ def _create_reranker(cfg: RAGConfig) -> RerankerBackend:
         try:
             return OnnxCrossEncoderReranker(cfg.reranker_model_dir)
         except Exception:
+            logger.warning("reranker init failed; using NoopReranker", exc_info=True)
             return NoopReranker()
     return NoopReranker()
 

@@ -6,6 +6,7 @@ Thin adapter over documentation service; logic in application/docs.py.
 """
 from __future__ import annotations
 
+import logging
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,8 @@ from claudenv.adapters.persistence import SQLiteDatabase
 from claudenv.application.docs import DocsService
 from claudenv.domain.policy import PolicyService
 from claudenv.domain.value_objects import RepoSlug, SessionId
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 
 class DocumentationServer:
@@ -143,6 +146,7 @@ class DocumentationServer:
 
                 return [TextContent(type="text", text=f"ERROR: unknown tool {name}")]
             except Exception as e:
+                logger.exception("docs tool error")
                 self.audit.security_event(
                     category="docs_error", severity="medium",
                     detail=str(e), source=name,
@@ -218,6 +222,7 @@ class DocumentationServer:
         try:
             text, blocked = self.docs.fetch_external(url)
         except Exception as e:
+            logger.exception("docs fetch failed")
             return [TextContent(type="text", text=f"ERROR: fetch failed ({e})")]
 
         self.audit.tool_call(tool="docs.fetch_external", args={"url": url},
@@ -258,6 +263,8 @@ def create_server(
 
 
 async def main() -> None:
+    logger.info("documentation MCP server starting")
+    configure_logging(console=False)
     repo_slug = os.environ.get("CLAUDE_ENV_REPO_NAME", "default")
     session_id = os.environ.get("CLAUDE_ENV_SESSION", "mcp-docs")
 

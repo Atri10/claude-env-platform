@@ -11,6 +11,7 @@ wrapped so a failure can never disrupt the user's session.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,8 @@ import yaml
 
 from claudenv.adapters.config import get_config
 from claudenv.ports.observability import ISessionMetricsRepository
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 # Install metadata (consumed by HookInstaller).
 HOOK_MATCHER = "*"
@@ -48,6 +51,7 @@ class SessionMetricsHook:
                 if repo:
                     return str(repo)
             except Exception:
+                logger.warning("could not resolve repo from cwd", exc_info=True)
                 pass
         return Path(cwd).resolve().name
 
@@ -69,6 +73,7 @@ class SessionMetricsHook:
             try:
                 record = json.loads(line)
             except Exception:
+                logger.warning("skipping unparsable transcript line", exc_info=True)
                 continue
             message = record.get("message", {})
             if message.get("role") != "assistant":
@@ -106,7 +111,7 @@ class SessionMetricsHook:
                 metrics.set_usage_totals(session_id, total_in, total_out)
                 metrics.end_session(session_id)
         except Exception:
-            pass
+            logger.exception("session metrics hook failed; continuing")
         return 0
 
     @staticmethod
@@ -120,6 +125,7 @@ class SessionMetricsHook:
 
 
 def main() -> None:
+    configure_logging(console=False)
     """Module entry point: ``python -m claudenv.adapters.hooks.session_metrics_hook``."""
     SessionMetricsHook.main()
 

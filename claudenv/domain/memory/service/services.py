@@ -31,6 +31,8 @@ from claudenv.domain.memory.service.interfaces import (
     IMemoryRepository,
     IMemoryWriter,
 )
+import logging
+logger = logging.getLogger(__name__)
 from claudenv.domain.value_objects import NodeId, Tier, utc_now
 
 
@@ -70,6 +72,7 @@ class MemoryWriter(IMemoryWriter):
                 vec = self.embedding.embed_documents([text])[0]
                 embedding = struct.pack(f"<{len(vec)}f", *vec)
             except Exception:
+                logger.warning("failed to pack query vector; skipping embeddings", exc_info=True)
                 pass
 
         node = MemoryNode.create(
@@ -244,6 +247,7 @@ class MemoryGraphTraversal(IMemoryGraphTraversal):
             try:
                 query_vector = self.embedding.embed_query(query)
             except Exception:
+                logger.warning("query embedding failed; falling back to keyword recall", exc_info=True)
                 query_vector = None
 
         # Keyword recall

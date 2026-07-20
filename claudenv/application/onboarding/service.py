@@ -2,6 +2,7 @@
 claude-env :: Application - Onboarding Service - OnboardingService
 """
 from __future__ import annotations
+import logging
 
 import re
 import subprocess
@@ -21,6 +22,7 @@ from claudenv.application.onboarding.steps import (
 )
 from claudenv.domain.value_objects import BranchName, RepoSlug, Tier
 from claudenv.ports import IConfigProvider
+logger = logging.getLogger(__name__)
 
 
 class OnboardingService:
@@ -86,7 +88,7 @@ class OnboardingService:
                 try:
                     step.execute(ctx)
                 except Exception as e:
-                    print(f"  WARNING: step {step.__class__.__name__} failed: {e}")
+                    logger.warning("onboarding step %s failed: %s", step.__class__.__name__, e)
 
         return OnboardingResult(
             repo_root=str(repo_path),
@@ -108,6 +110,7 @@ class OnboardingService:
             ).stdout.strip()
             return out or "main"
         except Exception:
+            logger.warning("branch detection failed; defaulting to main", exc_info=True)
             return "main"
 
     def _detect_tier(self, repo: Path) -> Tier:

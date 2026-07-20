@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import logging
 
 from claudenv.domain.rag import BranchName, Chunk, ChunkId, ChunkType, ContentHash, RepoSlug, Tier
 from claudenv.domain.rag_chunker.chunkers import (
@@ -15,6 +16,7 @@ from claudenv.domain.rag_chunker.chunkers import (
     WindowConfig,
     sliding_window_chunks,
 )
+logger = logging.getLogger(__name__)
 
 
 class TreeSitterChunker(IChunker):
@@ -96,6 +98,7 @@ class TreeSitterChunker(IChunker):
             tree = parser.parse(text.encode("utf-8"))
             return self._extract_chunks(tree.root_node, text, file_path, repo, branch, commit, tier, ext)
         except Exception:
+            logger.warning("tree-sitter parse failed; using fallback chunker", exc_info=True)
             # Fallback on any parsing error
             return self._fallback.chunk(file_path, text, repo, branch, commit, tier)
 
@@ -120,6 +123,7 @@ class TreeSitterChunker(IChunker):
                     lang_module = importlib.import_module(f"tree_sitter_{lang}")
                     language = Language(lang_module.language())
                 except ImportError:
+                    logger.warning(f"tree-sitter language '{lang}' unavailable; parser disabled", exc_info=True)
                     self._parsers[lang] = None
                     return None
 
@@ -127,6 +131,7 @@ class TreeSitterChunker(IChunker):
             self._parsers[lang] = parser
             return parser
         except Exception:
+            logger.warning(f"failed to build parser for {lang}; disabled", exc_info=True)
             self._parsers[lang] = None
             return None
 

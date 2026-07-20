@@ -6,6 +6,7 @@ Thin adapter over IMemoryService; logic in domain/memory/service.py.
 """
 from __future__ import annotations
 
+import logging
 import json
 import os
 
@@ -20,6 +21,8 @@ from claudenv.di import get_container
 from claudenv.domain.memory import EdgeRelation, MemoryType, NodeKind
 from claudenv.domain.value_objects import NodeId, RepoSlug, SessionId, Tier
 from claudenv.ports import IMemoryService
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 
 class MemoryGraphServer:
@@ -161,6 +164,7 @@ class MemoryGraphServer:
 
                 return [TextContent(type="text", text=f"ERROR: unknown tool {name}")]
             except Exception as e:
+                logger.exception("memory tool error")
                 self.audit.security_event(
                     category="memory_error", severity="medium",
                     detail=str(e), source=name,
@@ -344,6 +348,8 @@ def create_server(
 
 
 async def main() -> None:
+    logger.info("memory graph MCP server starting")
+    configure_logging(console=False)
     repo_slug = os.environ.get("CLAUDE_ENV_REPO_NAME", "default")
     session_id = os.environ.get("CLAUDE_ENV_SESSION", "mcp-memory")
 

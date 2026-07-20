@@ -6,6 +6,7 @@ PostToolUse hook for recording tool outcomes to audit ledger.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -15,6 +16,8 @@ from claudenv.adapters.config import get_config
 from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
 from claudenv.ports import IAuditLogger
 from claudenv.ports.hooks.interfaces import IPostToolUseHook
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 
 class AuditHook(IPostToolUseHook):
@@ -93,6 +96,8 @@ def create_hook(
 
 
 def main() -> None:
+    configure_logging(console=False)
+    logger.debug("audit hook invoked")
     """CLI entry point."""
     try:
         hook_input = json.load(sys.stdin)
@@ -104,6 +109,7 @@ def main() -> None:
 
         json.dump({}, sys.stdout)
     except Exception:
+        logger.exception("audit hook failed; emitted empty ack")
         json.dump({}, sys.stdout)
 
 

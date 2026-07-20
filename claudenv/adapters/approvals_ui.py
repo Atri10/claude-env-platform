@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import getpass
 import html
 import json
@@ -39,6 +40,8 @@ from claudenv.adapters.config import get_config
 from claudenv.adapters.services import FileServiceRegistry, bind_http
 from claudenv.application.approval import ApprovalGate
 from claudenv.ports.approval import IApprovalGate
+from claudenv.logging_config import configure_logging
+logger = logging.getLogger(__name__)
 
 TOKEN = secrets.token_urlsafe(24)
 
@@ -47,6 +50,7 @@ def _default_decider() -> str:
     try:
         return f"{getpass.getuser()}@{socket.gethostname()}"
     except Exception:
+        logger.warning("failed to resolve current user; defaulting to 'operator'", exc_info=True)
         return "operator"
 
 
@@ -127,6 +131,7 @@ def _ts(iso: str | None) -> str:
         local = t.astimezone()
         return local.strftime("%Y-%m-%d %H:%M:%S %Z")
     except Exception:
+        logger.warning("failed to format timestamp; using raw value", exc_info=True)
         return html.escape(str(iso)[:19])
 
 
@@ -261,6 +266,7 @@ def make_handler(gate: IApprovalGate) -> type[BaseHTTPRequestHandler]:
 
 
 def main() -> int:
+    configure_logging()
     global DECIDED_BY
     ap = argparse.ArgumentParser(description="Local approvals web UI")
     ap.add_argument("--port", type=int, default=8002,
