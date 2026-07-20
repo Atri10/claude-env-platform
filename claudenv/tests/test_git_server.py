@@ -39,6 +39,20 @@ from claudenv.domain.policy import PolicyEngine
 def run(coro):
     return asyncio.run(coro)
 
+@pytest.fixture(autouse=True)
+def _clean_git_env(tmp_path, monkeypatch):
+    """Isolate git from the developer's global/system config (e.g. a 1Password
+    credential helper) so the fixture's `git commit` cannot fail on environment
+    config unrelated to the test's intent (git allow/deny logic).
+
+    The repo-local `user.email`/`user.name` set by _git_repo still apply; only
+    the inherited global/system config is neutralised.
+    """
+    cfg = tmp_path / "_gitconfig"
+    cfg.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
+
 
 class FakeAuditLogger:
     def __init__(self):

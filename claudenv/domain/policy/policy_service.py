@@ -3,6 +3,7 @@ claude-env :: Domain - Policy Entities - PolicyService
 """
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path as _FsPath
 from typing import Any
 
@@ -44,30 +45,68 @@ class PolicyService:
             )
         return PolicyEngine(repo_policy.to_compiled(global_policy))
 
+    def _enumerate_files(self, repo_root: str) -> list[str]:
+        """List the repo's tracked files (git ls-files, fallback to rglob)."""
+        try:
+            out = subprocess.run(
+                ["git", "-C", repo_root, "ls-files"],
+                capture_output=True, text=True, timeout=10, check=True,
+            ).stdout.strip()
+            files = out.splitlines() if out else []
+        except Exception:
+            files = [
+                str(p.relative_to(repo_root))
+                for p in _FsPath(repo_root).rglob("*")
+                if p.is_file()
+            ]
+        return files
+
     def simulate(self, repo_root: str, candidate: dict[str, Any]) -> dict[str, Any]:
-        """Simulate a candidate policy."""
-        # Load current policy
-        current = self.get_repo_policy(repo_root)
+        """Dry-run a candidate repo policy and report what would change.
+
+        Compares the current compiled policy against the candidate over the
+        repo's tracked files. Nothing is written and no agent session is
+        affected -- this is pure "what would change".
+        """
         global_policy = self.get_global_policy()
+        current_repo = self.get_repo_policy(repo_root)
+        if current_repo is None:
+            current_repo = RepoPolicy(
+                version=1,
+                tier=global_policy.tier,
+                repo=RepoSlug.from_string(_FsPath(repo_root).name),
+            )
+        candidate_repo = RepoPolicy.from_yaml(candidate)
+        current_engine = PolicyEngine(current_repo.to_compiled(global_policy))
+        candidate_engine = PolicyEngine(candidate_repo.to_compiled(global_policy))
 
-        # Compile both. Compiling the candidate validates it (to_compiled can
-        # raise on a malformed policy); we don't need to bind the result.
-        current_compiled = current.to_compiled(global_policy) if current else None
-        candidate_policy = RepoPolicy.from_yaml(candidate)
-        candidate_policy.to_compiled(global_policy)
+        files = self._enumerate_files(repo_root)
+        newly_blocked: list[tuple[str, str, str]] = []
+        newly_allowed: list[tuple[str, str, str]] = []
+        changed_rule: list[tuple[str, str, str]] = []
+        blocked_current = blocked_candidate = 0
+        for f in files:
+            cur = current_engine.evaluate_path(f)
+            can = candidate_engine.evaluate_path(f)
+            if not cur.is_allowed:
+                blocked_current += 1
+            if not can.is_allowed:
+                blocked_candidate += 1
+            if cur.is_allowed and not can.is_allowed:
+                newly_blocked.append((f, can.reason, can.rule))
+            elif (not cur.is_allowed) and can.is_allowed:
+                newly_allowed.append((f, can.reason, can.rule))
+            elif (not cur.is_allowed) and (not can.is_allowed) and cur.rule != can.rule:
+                changed_rule.append((f, cur.rule, can.rule))
 
-        # Test paths against both
-        # This is a simplified version - real implementation would test more paths
         return {
-            "current": "compiled" if current_compiled else "none",
-            "candidate": "compiled",
-            "diff": "simulated",
-        }
-
-    def diff(self, repo_root: str, candidate: dict[str, Any]) -> dict[str, Any]:
-        """Diff current vs candidate policy."""
-        current = self.get_repo_policy(repo_root)
-        return {
-            "has_current": current is not None,
-            "candidate_keys": list(candidate.keys()),
+            "repo": str(current_repo.repo),
+            "tier_current": int(current_repo.tier),
+            "tier_candidate": int(candidate_repo.tier),
+            "files": len(files),
+            "blocked_current": blocked_current,
+            "blocked_candidate": blocked_candidate,
+            "newly_blocked": newly_blocked,
+            "newly_allowed": newly_allowed,
+            "changed_rule": changed_rule,
         }

@@ -242,10 +242,12 @@ class SqliteAuditLogger(IAuditLogger):
         })
 
     def verify_chain(self) -> ChainVerificationResult:
+
         rows = self.db.query(
             "SELECT event_id, payload_json, prev_hash, event_hash "
             "FROM audit_events ORDER BY event_id ASC"
         )
+
         ledger = [
             LedgerRow(
                 event_id=EventId.from_string(f"evt-{r['event_id']}"),
@@ -255,4 +257,5 @@ class SqliteAuditLogger(IAuditLogger):
             )
             for r in rows
         ]
+
         return verify_ledger_chain(ledger)

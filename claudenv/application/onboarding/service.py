@@ -58,9 +58,9 @@ class OnboardingService:
             raise ValueError(f"Repo path does not exist: {repo_root}")
 
         # Detect/slug
-        slug = RepoSlug.from_name(slug or repo_path.name)
+        slug = RepoSlug.generate(slug or repo_path.name)
         branch = BranchName.from_string(branch or self._detect_branch(repo_path))
-        tier = Tier.parse(tier) if tier is not None else self._detect_tier(repo_path)
+        tier = Tier.from_string(str(tier)) if tier is not None else self._detect_tier(repo_path)
 
         ctx = OnboardingContext(
             repo_root=str(repo_path),

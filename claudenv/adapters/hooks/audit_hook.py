@@ -19,6 +19,10 @@ from claudenv.ports.hooks.interfaces import IPostToolUseHook
 
 class AuditHook(IPostToolUseHook):
     """Records tool outcomes to audit log."""
+    # Install metadata (consumed by HookInstaller).
+    HOOK_MATCHER = "Read|Write|Edit|NotebookEdit|Glob|Grep|Bash"
+    HOOK_TIMEOUT = 5
+
 
     def __init__(
             self,

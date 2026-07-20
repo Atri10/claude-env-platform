@@ -23,6 +23,10 @@ from claudenv.ports.hooks.interfaces import IPreToolUseHook
 
 class PolicyHook(IPreToolUseHook):
     """Policy enforcement hook for PreToolUse."""
+    # Install metadata (consumed by HookInstaller).
+    HOOK_MATCHER = "Read|Write|Edit|NotebookEdit|Glob|Grep|Bash"
+    HOOK_TIMEOUT = 10
+
 
     def __init__(
             self,

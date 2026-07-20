@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import click
+import json
 
 from claudenv.adapters.config import get_config
 from claudenv.application.audit import ComplianceReportGenerator, SessionReplay
@@ -48,39 +49,50 @@ def init(ctx, force_config):
 
     config = get_config()
     home = Path(config.get_claude_env_home())
+
     verbose = ctx.obj.get("verbose", False)
 
-    def say(msg: str) -> None:
-        click.echo(msg)
-
     # 1. Directory skeleton.
-    for sub in ("state", "config", "knowledge/lancedb", "logs"):
+    for sub in ("state", "config", "knowledge/lancedb"):
         (home / sub).mkdir(parents=True, exist_ok=True)
-    say(f"  [ok] home ready at {home}")
+
+    click.echo(f"  [ok] home ready at {home}")
 
     # 2. Copy packaged default config (skip existing unless --force-config).
     copied, skipped = 0, 0
+
     for src in sorted(config_dir().glob("*")):
+
         if not src.is_file():
             continue
+
         dst = home / "config" / src.name
+
         if dst.exists() and not force_config:
+
             skipped += 1
+
             if verbose:
-                say(f"       skip {src.name} (exists)")
+                click.echo(f"       skip {src.name} (exists)")
+
             continue
+
         shutil.copy2(src, dst)
         copied += 1
+
         if verbose:
-            say(f"       copy {src.name}")
-    say(f"  [ok] config: {copied} copied, {skipped} kept")
+            click.echo(f"       copy {src.name}")
+
+    click.echo(f"  [ok] config: {copied} copied, {skipped} kept")
 
     # 3. Apply SQL schema (idempotent) against the state DB.
     dsn = config.get_database_dsn()
+
     db = SQLiteDatabase(dsn)
     schema_files = [str(p) for p in sorted(sql_dir().glob("*.sql"))]
     db.apply_schema(*schema_files)
-    say(f"  [ok] schema applied ({len(schema_files)} files) -> {dsn}")
+
+    click.echo(f"  [ok] schema applied ({len(schema_files)} files) -> {dsn}")
 
     # 4. Genesis audit event (the logger writes GENESIS-chained on first append).
     logger = SqliteAuditLogger(
@@ -88,41 +100,62 @@ def init(ctx, force_config):
         session_id=SessionId.from_string("init"),
         actor="claude-env-init",
     )
+
     logger.agent_action(
         agent="claude-env-init",
         action="init",
         target=str(home),
         summary="claude-env home initialized",
     )
+
     result = logger.verify_chain()
     db.close()
     ok = result.ok
-    say(f"  [ok] audit ledger initialized (verify_chain: {'green' if ok else 'FAILED'})")
+
+    click.echo(f"  [ok] audit ledger initialized (verify_chain: {'green' if ok else 'FAILED'})")
 
     if not ok:
         click.echo("\nInitialization completed but the audit chain did not verify!", err=True)
         sys.exit(1)
+
     click.echo("\nclaude-env is ready. Next: `claude-env onboard <repo>`.")
 
 
 @cli.command()
-@click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True))
+@click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True), required=False)
 @click.option("--repo-name", help="Repo slug for namespaces")
-@click.option("--tier", type=click.Choice(["0", "1", "2", "3"]), help="Privacy tier")
+@click.option("--tier", type=click.Choice(["0", "1", "2", "3"]), help="Privacy tier (0=public, 1=internal, 2=sensitive, 3=restricted)")
 @click.option("--description", default="", help="Short description")
 @click.option("--branch", help="Default branch")
-@click.option("--yes", "-y", is_flag=True, help="Non-interactive, accept defaults")
+@click.option("--interactive", "-i", is_flag=True, help="Force interactive mode (prompt for all values)")
+@click.option("--yes", "-y", is_flag=True, help="Non-interactive, accept defaults (for CI)")
 @click.option("--dry-run", is_flag=True, help="Print what would change")
 @click.option("--no-template", is_flag=True, help="Skip CLAUDE.md and skills")
 @click.option("--force-template", is_flag=True, help="Overwrite existing skills/agents")
 @click.option("--force-policy", is_flag=True, help="Regenerate repo-policy.yaml")
 @click.option("--no-post-commit", is_flag=True, help="Skip git hooks")
 @click.pass_context
-def onboard(ctx, repo_root, repo_name, tier, description, branch, yes, dry_run, no_template, force_template,
+def onboard(ctx, repo_root, repo_name, tier, description, branch, interactive, yes, dry_run, no_template, force_template,
             force_policy, no_post_commit):
     """Onboard a repository to claude-env."""
+
     config = get_config()
     service = OnboardingService(config)
+
+    # Auto-detect interactive mode: if stdin is a TTY and not --yes, default to interactive
+    # Explicit --interactive overrides; explicit --yes forces non-interactive
+    is_tty = sys.stdin.isatty()
+    use_interactive = interactive or (is_tty and not yes)
+
+    if use_interactive:
+        repo_root, repo_name, tier, description, branch = _prompt_onboarding_inputs(
+            repo_root, repo_name, tier, description, branch, yes, service
+        )
+
+    # Validate required repo_root after interactive prompts
+    if not repo_root:
+        click.echo("ERROR: Repository path is required", err=True)
+        ctx.exit(1)
 
     result = service.onboard(
         repo_root=repo_root,
@@ -145,14 +178,114 @@ def onboard(ctx, repo_root, repo_name, tier, description, branch, yes, dry_run, 
         click.echo(f"  Memory ns: {result.memory_namespace} (isolated={result.memory_isolated})")
 
 
+def _prompt_onboarding_inputs(
+    repo_root: str | None,
+    repo_name: str | None,
+    tier: str | None,
+    description: str,
+    branch: str | None,
+    non_interactive: bool,
+    service: "OnboardingService",
+) -> tuple[str, str | None, str | None, str, str | None]:
+    """Prompt for missing onboarding inputs interactively."""
+    from pathlib import Path
+
+    from claudenv.domain.value_objects import Tier
+
+    # If repo_root not provided, prompt for it
+    if not repo_root:
+        repo_root = click.prompt(
+            "Repository path",
+            type=click.Path(exists=True, file_okay=False, resolve_path=True),
+        )
+
+    repo_path = Path(repo_root).resolve()
+
+    # Detect defaults
+    detected_branch = branch or service._detect_branch(repo_path)
+    detected_tier = tier
+    if detected_tier is None:
+        detected_tier_obj = service._detect_tier(repo_path)
+        detected_tier = str(int(detected_tier_obj))
+    detected_slug = repo_name or repo_path.name
+
+    if non_interactive:
+        # Non-interactive: use detected/provided values without prompting
+        return repo_root, repo_name, tier, description, branch
+
+    click.echo("\n=== claude-env Interactive Onboarding ===")
+    click.echo(f"Repository: {repo_path}")
+    click.echo()
+
+    # Repo slug
+    if not repo_name:
+        repo_name = click.prompt(
+            "Repo slug (namespace-safe identifier)",
+            default=detected_slug,
+            show_default=True,
+        )
+
+    # Privacy tier
+    if tier is None:
+        tier_labels = {
+            "0": "public (open source, no secrets)",
+            "1": "internal (company-internal, no customer data)",
+            "2": "sensitive (PII, secrets, credentials)",
+            "3": "restricted (regulated, classified)",
+        }
+        click.echo("Privacy tier:")
+        for k, v in tier_labels.items():
+            default_marker = " (default)" if k == detected_tier else ""
+            click.echo(f"  {k} - {v}{default_marker}")
+        tier = click.prompt(
+            "Select tier [0-3]",
+            default=detected_tier,
+            show_default=True,
+            type=click.Choice(["0", "1", "2", "3"]),
+        )
+
+    # Description
+    if not description:
+        description = click.prompt(
+            "Short description (optional)",
+            default=description,
+            show_default=False,
+        )
+
+    # Branch
+    if not branch:
+        branch = click.prompt(
+            "Default branch",
+            default=detected_branch,
+            show_default=True,
+        )
+
+    click.echo()
+    click.echo("Summary:")
+    click.echo(f"  Repo:     {repo_path}")
+    click.echo(f"  Slug:     {repo_name}")
+    click.echo(f"  Tier:     {tier} ({Tier(int(tier)).label})")
+    click.echo(f"  Branch:   {branch}")
+    if description:
+        click.echo(f"  Desc:     {description}")
+    click.echo()
+
+    if not click.confirm("Proceed with onboarding?", default=True):
+        click.echo("Aborted.")
+        ctx = click.get_current_context()
+        ctx.exit(0)
+
+    return repo_root, repo_name, tier, description, branch
+
+
 @cli.command()
 @click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.pass_context
 def scan(ctx, repo_root):
     """Preview what would be indexed (policy allow/block split)."""
-    # Load policy and simulate
-    from claudenv.domain.policy import PolicyEngine
-    engine = PolicyEngine.load(repo_root)
+    # Load the policy engine for this repo via the live PolicyService.
+    from claudenv.domain.policy import PolicyService
+    engine = PolicyService(get_config()).load_engine(repo_root)
 
     # Get candidate files
     import subprocess
@@ -260,6 +393,47 @@ def validate_installation(ctx):
         sys.exit(1)
 
 
+@cli.group()
+def policy_sim():
+    """Dry-run a candidate policy before it goes live."""
+
+
+@policy_sim.command("simulate")
+@click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True))
+@click.option("--candidate", required=True,
+              type=click.Path(exists=True, dir_okay=False, resolve_path=True),
+              help="Candidate repo-policy YAML to evaluate (dry-run).")
+@click.pass_context
+def policy_sim_simulate(ctx, repo_root, candidate):
+    """Show what a candidate repo policy would change (dry-run, nothing written)."""
+    import yaml
+
+    from claudenv.domain.policy import PolicyService
+
+    candidate_data = yaml.safe_load(Path(candidate).read_text()) or {}
+    service = PolicyService(get_config())
+    result = service.simulate(repo_root, candidate_data)
+
+    click.echo(f"# policy simulation — {result['repo']}")
+    click.echo(
+        f"tier: {result['tier_current']} -> {result['tier_candidate']}   "
+        f"files: {result['files']}   "
+        f"blocked: {result['blocked_current']} -> {result['blocked_candidate']}"
+    )
+    if result["newly_blocked"]:
+        click.echo(f"\nNEWLY BLOCKED: {len(result['newly_blocked'])}")
+        for f, _reason, rule in result["newly_blocked"][:20]:
+            click.echo(f"  {f}  (deny: {rule})")
+    if result["newly_allowed"]:
+        click.echo(f"\nNEWLY ALLOWED: {len(result['newly_allowed'])}")
+        for f, _reason, rule in result["newly_allowed"][:20]:
+            click.echo(f"  {f}  (allow: {rule})")
+    if result["changed_rule"]:
+        click.echo(f"\nBLOCKED BY DIFFERENT RULE: {len(result['changed_rule'])}")
+        for f, cur, can in result["changed_rule"][:20]:
+            click.echo(f"  {f}  ({cur} -> {can})")
+
+
 @cli.command()
 @click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.argument("query")
@@ -293,17 +467,12 @@ def rag(ctx, repo_root, query):
 @click.pass_context
 def hooks(ctx, repo_root):
     """Install native-tool governance hooks."""
-    config = get_config()
-    home = Path(config.get_claude_env_home())
+    from claudenv.adapters.hooks import HookInstaller
 
-    installer = home / "hooks" / "install_hooks.py"
-    if not installer.exists():
-        click.echo("ERROR: Hook installer not found", err=True)
+    result = HookInstaller(repo_root).install()
+    click.echo(json.dumps(result, indent=2))
+    if not result.get("installed"):
         sys.exit(1)
-
-    import subprocess
-    result = subprocess.run([sys.executable, str(installer), "--repo", repo_root])
-    sys.exit(result.returncode)
 
 
 @cli.command()
@@ -421,7 +590,7 @@ def budget(ctx, repo, fmt):
             click.echo(f"{'repo':<24} {'sessions':>8} {'spent':>10} {'budget':>10} {'pct':>6}  status")
             for r in result.repos:
                 budget_s = f"${r.budget_usd:.2f}" if r.budget_usd else "-"
-                pct_s = f"{r.pct*100:.0f}%" if r.pct is not None else "-"
+                pct_s = f"{r.pct * 100:.0f}%" if r.pct is not None else "-"
                 click.echo(
                     f"{r.repo:<24} {r.sessions:>8} ${r.spent_usd:>8.2f} {budget_s:>10} "
                     f"{pct_s:>6}  {r.status.value}"

@@ -2,7 +2,7 @@
 claude-env :: Adapters - Filesystem Policy MCP Server
 
 Thin adapter exposing the PolicyEngine over MCP stdio.
-All policy logic lives in domain/policy_engine.py; this is just transport.
+All policy logic lives in claudenv.domain.policy; this is just transport.
 """
 from __future__ import annotations
 

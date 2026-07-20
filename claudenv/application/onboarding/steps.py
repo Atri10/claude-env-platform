@@ -324,18 +324,11 @@ class NativeHooksStep(OnboardingStep):
             ctx.add_step("native_hooks", skipped=True)
             return False
 
-        installer = Path(self.config.get_claude_env_home()) / "hooks" / "install_hooks.py"
-        if not installer.exists():
-            ctx.add_step("native_hooks", skipped=True)
-            return False
-
         if not ctx.dry_run:
-            result = subprocess.run(
-                [sys.executable, str(installer), "--repo", ctx.repo_root],
-                capture_output=True, text=True,
-            )
-            if result.returncode != 0:
-                print(f"  WARNING: hook install failed: {result.stderr.strip()}")
+            from claudenv.adapters.hooks import HookInstaller
+            result = HookInstaller(ctx.repo_root).install()
+            if not result.get("installed"):
+                print(f"  WARNING: hook install failed: {result}")
 
         ctx.add_step("native_hooks")
         return True

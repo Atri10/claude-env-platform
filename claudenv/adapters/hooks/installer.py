@@ -1,49 +1,98 @@
 """
 claude-env :: Adapters - Hook Installer
 
-Manages registration and installation of governance hooks.
+Registers governance hooks and writes them into Claude Code's
+``.claude/settings.json`` (repo-local) or ``~/.claude/settings.json`` (global).
+
+Design
+------
+The installer depends on the hook *abstractions* (``IPreToolUseHook`` /
+``IPostToolUseHook``), never on concrete module paths. A hook class is
+registered once; ``install()`` derives its launch command from the class's
+own ``__module__`` and its install metadata (``HOOK_MATCHER`` /
+``HOOK_TIMEOUT``), so adding a new hook needs no change to this file
+(Open/Closed). Each event maps to a *list* of hook entries, so multiple
+hooks can share an event.
 """
 from __future__ import annotations
 
 import json
 import os
+import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from claudenv.adapters.config import get_config
+from claudenv.adapters.hooks.audit_hook import AuditHook
+from claudenv.adapters.hooks.policy_hook import PolicyHook
 from claudenv.ports.hooks.interfaces import IPostToolUseHook, IPreToolUseHook
+
+# Default matcher: which tools trigger a hook. Mirrors the legacy
+# install_hooks.py behaviour; a hook class may override via HOOK_MATCHER.
+DEFAULT_MATCHER = "Read|Write|Edit|NotebookEdit|Glob|Grep|Bash"
+DEFAULT_TIMEOUT = 10
+
+
+@dataclass(frozen=True)
+class HookSpec:
+    """Immutable description of one installed hook entry."""
+
+    event: str  # "PreToolUse" | "PostToolUse"
+    module: str  # importable module path, launched as `python -m <module>`
+    matcher: str
+    timeout: int
 
 
 class HookInstaller:
-    """Manages hook registration and installation."""
+    """Registers governance hooks and installs them into Claude Code settings."""
 
-    def __init__(self, repo_root: Path | str | None = None):
+    def __init__(
+        self,
+        repo_root: Path | str | None = None,
+        python: str | None = None,
+    ):
         self.repo_root = Path(repo_root) if repo_root else Path(os.getcwd())
-        self.config = get_config()
-        self._pre_hooks: list[IPreToolUseHook] = []
-        self._post_hooks: list[IPostToolUseHook] = []
+        # Launch hooks with this interpreter. Defaults to the running process so
+        # the installed command is portable; override for a pinned venv via
+        # the CLAUDE_ENV_HOOK_PYTHON env var.
+        self.python = python or os.environ.get("CLAUDE_ENV_HOOK_PYTHON", sys.executable)
+        self._specs: list[HookSpec] = []
+        self.register_defaults()
 
-    def register_pre_hook(self, hook: IPreToolUseHook) -> None:
-        if hook not in self._pre_hooks:
-            self._pre_hooks.append(hook)
+    # -- Registration -------------------------------------------------------
+    def register_pre_hook(self, hook_cls: type[IPreToolUseHook]) -> None:
+        """Register a PreToolUse hook by its class (not an instance)."""
+        self._specs.append(self._spec_for(hook_cls, "PreToolUse"))
 
-    def register_post_hook(self, hook: IPostToolUseHook) -> None:
-        if hook not in self._post_hooks:
-            self._post_hooks.append(hook)
+    def register_post_hook(self, hook_cls: type[IPostToolUseHook]) -> None:
+        """Register a PostToolUse hook by its class (not an instance)."""
+        self._specs.append(self._spec_for(hook_cls, "PostToolUse"))
 
-    def install(self, scope: str = "repo") -> dict:
+    def register_defaults(self) -> None:
+        """Register the standard governance hooks (policy pre, audit post)."""
+        self.register_pre_hook(PolicyHook)
+        self.register_post_hook(AuditHook)
+
+    @staticmethod
+    def _spec_for(hook_cls: type, event: str) -> HookSpec:
+        return HookSpec(
+            event=event,
+            module=hook_cls.__module__,
+            matcher=getattr(hook_cls, "HOOK_MATCHER", DEFAULT_MATCHER),
+            timeout=getattr(hook_cls, "HOOK_TIMEOUT", DEFAULT_TIMEOUT),
+        )
+
+    # -- Installation -------------------------------------------------------
+    def install(self, scope: str = "repo") -> dict[str, Any]:
         """
-        Install hooks to Claude Code settings.
+        Install registered hooks to Claude Code settings.
 
-        scope: "repo" (per-repo .claude/settings.json) or "global" (~/.claude/settings.json)
+        scope: "repo" (``<repo>/.claude/settings.json``) or
+               "global" (``~/.claude/settings.json``).
         """
-        if scope == "repo":
-            settings_path = self.repo_root / ".claude" / "settings.json"
-        else:
-            settings_path = Path.home() / ".claude" / "settings.json"
-
+        settings_path = self._settings_path(scope)
         settings_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Load existing or create new
         if settings_path.exists():
             try:
                 settings = json.loads(settings_path.read_text())
@@ -52,32 +101,23 @@ class HookInstaller:
         else:
             settings = {}
 
-        # Build hooks config
-        hooks_config = {
-            "PreToolUse": {
-                "matcher": "Read|Write|Edit|NotebookEdit|Glob|Grep|Bash",
-                "command": f"{os.environ.get('CLAUDE_ENV_HOME', '~/.claude-env')}/venv/bin/python -m claudenv.adapters.hooks.policy_hook",
-                "timeout": 10,
-            },
-            "PostToolUse": {
-                "matcher": "Read|Write|Edit|NotebookEdit|Glob|Grep|Bash",
-                "command": f"{os.environ.get('CLAUDE_ENV_HOME', '~/.claude-env')}/venv/bin/python -m claudenv.adapters.hooks.audit_hook",
-                "timeout": 5,
-            },
-        }
+        # Each event maps to a list of hook entries (Claude Code format).
+        hooks_config: dict[str, list[dict[str, Any]]] = {}
+        for spec in self._specs:
+            entry = {
+                "matcher": spec.matcher,
+                "command": f"{self.python} -m {spec.module}",
+                "timeout": spec.timeout,
+            }
+            hooks_config.setdefault(spec.event, []).append(entry)
 
         settings["hooks"] = hooks_config
         settings_path.write_text(json.dumps(settings, indent=2))
+        return {"installed": True, "path": str(settings_path), "hooks": hooks_config}
 
-        return {"installed": True, "path": str(settings_path)}
-
-    def uninstall(self, scope: str = "repo") -> dict:
+    def uninstall(self, scope: str = "repo") -> dict[str, Any]:
         """Remove hooks from settings."""
-        if scope == "repo":
-            settings_path = self.repo_root / ".claude" / "settings.json"
-        else:
-            settings_path = Path.home() / ".claude" / "settings.json"
-
+        settings_path = self._settings_path(scope)
         if not settings_path.exists():
             return {"uninstalled": False, "reason": "no settings file"}
 
@@ -87,16 +127,15 @@ class HookInstaller:
                 del settings["hooks"]
             settings_path.write_text(json.dumps(settings, indent=2))
             return {"uninstalled": True}
-        except Exception as e:
+        except Exception as e:  # pragma: no cover - defensive
             return {"uninstalled": False, "error": str(e)}
 
-    def validate(self) -> dict:
-        """Validate hook installation."""
+    def validate(self) -> dict[str, Any]:
+        """Validate that both PreToolUse and PostToolUse hooks are present."""
         repo_settings = self.repo_root / ".claude" / "settings.json"
         global_settings = Path.home() / ".claude" / "settings.json"
 
-        results = {"repo": False, "global": False}
-
+        results: dict[str, Any] = {"repo": False, "global": False}
         for name, path in [("repo", repo_settings), ("global", global_settings)]:
             if path.exists():
                 try:
@@ -105,16 +144,23 @@ class HookInstaller:
                     results[name] = "PreToolUse" in hooks and "PostToolUse" in hooks
                 except Exception:
                     results[name] = False
-
         return results
 
+    # -- Helpers ------------------------------------------------------------
+    def _settings_path(self, scope: str) -> Path:
+        if scope == "repo":
+            return self.repo_root / ".claude" / "settings.json"
+        return Path.home() / ".claude" / "settings.json"
 
-def create_installer(repo_root: Path | str | None = None) -> HookInstaller:
-    return HookInstaller(repo_root)
+
+def create_installer(
+    repo_root: Path | str | None = None, python: str | None = None
+) -> HookInstaller:
+    return HookInstaller(repo_root, python)
 
 
 def main() -> None:
-    """CLI entry point."""
+    """CLI entry point (``python -m claudenv.adapters.hooks.installer``)."""
     import argparse
 
     parser = argparse.ArgumentParser(description="claude-env hook installer")
@@ -130,13 +176,12 @@ def main() -> None:
 
     if args.validate:
         result = installer.validate()
-        print(json.dumps(result, indent=2))
     elif args.uninstall:
         result = installer.uninstall(scope=args.scope)
-        print(json.dumps(result, indent=2))
     else:
         result = installer.install(scope=args.scope)
-        print(json.dumps(result, indent=2))
+
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
