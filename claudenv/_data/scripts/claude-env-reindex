@@ -1,0 +1,27 @@
+#!/bin/sh
+# claude-env :: auto-reindex entrypoint
+#
+# Invoked by the git hooks (post-commit / post-merge / post-checkout) installed
+# by `claude-env onboard`. Re-indexes the current repository into the claude-env
+# RAG store so retrieval stays fresh after code changes.
+#
+# Design notes:
+#   * Exits 0 in every non-indexing case (no ~/.claude.json, repo not
+#     onboarded, claude-env not on PATH) so it never blocks the surrounding git
+#     operation.
+#   * Indexing failures are swallowed too: a broken index must not fail a commit.
+set -eu
+
+REPO="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$REPO" ] || exit 0
+
+# Only reindex repositories that have been onboarded (repo-policy.yaml present).
+[ -f "$REPO/.claude/repo-policy.yaml" ] || exit 0
+
+# The claude-env entry point must be available.
+command -v claude-env >/dev/null 2>&1 || exit 0
+
+# Run the indexer. Quiet by default; never fail the parent git operation.
+claude-env index "$REPO" >/dev/null 2>&1 || true
+
+exit 0

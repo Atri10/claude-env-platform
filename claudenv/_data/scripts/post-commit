@@ -1,0 +1,5 @@
+#!/bin/sh
+# claude-env :: reindex on commit
+# Installed into <repo>/.git/hooks/post-commit by `claude-env onboard`.
+DIR="$(dirname "$0")"
+exec "$DIR/claude-env-reindex"

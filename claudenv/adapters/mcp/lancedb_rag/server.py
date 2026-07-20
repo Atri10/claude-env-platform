@@ -4,9 +4,17 @@ claude-env :: Adapters - LanceDB RAG MCP Server
 Semantic search over indexed code repositories.
 Thin adapter over RagService; all logic in application/rag.py.
 
+Every retrieval is fail-closed against the shared incident kill-switch
+(claudenv.domain.incident.is_incident_active): when incident mode is active,
+all tool handlers are denied before any data access.
+
 Results are poison/injection-screened and wrapped in <retrieved_context>
 data delimiters before being returned, so retrieved text can never act as an
-instruction to the agent (see claudenv/domain/security.py::RagPoisonDetector).
+instruction to the agent. Three detectors run on each chunk
+(claudenv.domain.security):
+  * RagPoisonDetector       -> blocks chunks above the poison threshold (denied)
+  * PromptInjectionDetector -> blocks instruction-like text above threshold (denied)
+  * SecretDetector          -> redacts credential patterns before delivery (flagged)
 """
 from __future__ import annotations
 
@@ -24,8 +32,13 @@ from claudenv.adapters.config import get_config
 from claudenv.adapters.persistence import SQLiteDatabase, SQLiteRagBookkeeping
 from claudenv.adapters.vector.lancedb import LanceDbVectorStore
 from claudenv.application.rag import RagIndexer, RagService
+from claudenv.domain.incident import is_incident_active
 from claudenv.domain.policy import PolicyService
-from claudenv.domain.security import RagPoisonDetector
+from claudenv.domain.security import (
+    PromptInjectionDetector,
+    RagPoisonDetector,
+    SecretDetector,
+)
 from claudenv.domain.value_objects import BranchName, RepoSlug, SessionId
 
 
@@ -48,6 +61,8 @@ class LanceDbRagServer:
         self.repo_root = repo_root
         self.session_id = session_id
         self._poison = RagPoisonDetector()
+        self._injection = PromptInjectionDetector()
+        self._secret = SecretDetector()
         self.server = Server("lancedb-rag")
         self._register_tools()
 
@@ -101,23 +116,38 @@ class LanceDbRagServer:
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-            try:
-                if name == "rag.search":
-                    return await self._do_search(arguments)
-                if name == "rag.index":
-                    return await self._do_index(arguments)
-                if name == "rag.index_status":
-                    return await self._do_status()
-                if name == "rag.get_chunk":
-                    return await self._do_get_chunk(arguments)
+            return await self._handle_tool(name, arguments)
 
-                return [TextContent(type="text", text=f"ERROR: unknown tool {name}")]
-            except Exception as e:
-                self.audit.security_event(
-                    category="rag_error", severity="medium",
-                    detail=str(e), source=name,
-                )
-                return [TextContent(type="text", text=f"ERROR: {e}")]
+    async def _handle_tool(self, name: str, arguments: dict) -> list[TextContent]:
+        # Fail closed: during an active incident, deny every RAG tool before
+        # any data access. Mirrors the policy engine's incident kill-switch.
+        if is_incident_active():
+            self.audit.security_event(
+                category="rag_denied_incident", severity="high",
+                detail=f"RAG tool '{name}' denied: incident mode active",
+                source=name,
+            )
+            return [TextContent(
+                type="text",
+                text=f"ERROR: incident mode active — RAG operations denied ({name})",
+            )]
+        try:
+            if name == "rag.search":
+                return await self._do_search(arguments)
+            if name == "rag.index":
+                return await self._do_index(arguments)
+            if name == "rag.index_status":
+                return await self._do_status()
+            if name == "rag.get_chunk":
+                return await self._do_get_chunk(arguments)
+
+            return [TextContent(type="text", text=f"ERROR: unknown tool {name}")]
+        except Exception as e:
+            self.audit.security_event(
+                category="rag_error", severity="medium",
+                detail=str(e), source=name,
+            )
+            return [TextContent(type="text", text=f"ERROR: {e}")]
 
     async def _do_search(self, args: dict) -> list[TextContent]:
         query = args["query"]
@@ -139,37 +169,87 @@ class LanceDbRagServer:
         if file_filter:
             results = [r for r in results if fnmatch.fnmatch(r.chunk.file_path, file_filter)]
 
-        # Screen every chunk for prompt-injection/poisoning before it can ever
-        # reach the agent's context -- dropped entirely by the refactor (no
-        # RagPoisonDetector existed anywhere under claudenv/).
-        safe = []
-        for r in results:
-            chunk = r.chunk
-            verdict = self._poison.scan_chunk(
-                chunk.text, source=f"{self.repo_slug}@{self.branch}:{chunk.file_path}")
-            if verdict.blocked:
-                continue
-            safe.append(r)
+        display, denied, redacted, flagged = self._screen_results(results)
 
         self.audit.tool_call(
             tool="rag.search",
-            args={"query": query, "top_k": top_k, "mode": mode, "screened_out": len(results) - len(safe)},
+            args={
+                "query": query, "top_k": top_k, "mode": mode,
+                "screened_out": denied, "redacted": redacted, "flagged": flagged,
+            },
             result_kind="ok",
         )
 
-        if not safe:
+        if not display:
             return [TextContent(type="text", text="<retrieved_context/> (no safe results)")]
 
-        lines = [f"Found {len(safe)} results for: {query}\n"]
-        for r in safe:
-            chunk = r.chunk
+        lines = [f"Found {len(display)} results for: {query}"]
+        if denied or redacted or flagged:
             lines.append(
-                f"- [{r.score:.3f}] {chunk.file_path}:{chunk.start_line}-{chunk.end_line} "
+                f"[screening] denied={denied} redacted={redacted} flagged={flagged}")
+        lines.append("")
+        for r, text, is_flagged in display:
+            chunk = r.chunk
+            tag = " [FLAGGED]" if is_flagged else ""
+            lines.append(
+                f"- [{r.score:.3f}]{tag} {chunk.file_path}:{chunk.start_line}-{chunk.end_line} "
                 f"({chunk.symbol_type.value}:{chunk.symbol_name})")
-            lines.append(f"  {chunk.text[:300]}...")
+            lines.append(f"  {text[:300]}...")
             lines.append("")
 
-        return [TextContent(type="text", text="<retrieved_context>\n" + "\n".join(lines) + "\n</retrieved_context>")]
+        return [TextContent(
+            type="text",
+            text="<retrieved_context>\n" + "\n".join(lines) + "\n</retrieved_context>")]
+
+    def _screen_results(self, results: list) -> tuple[list, int, int, int]:
+        """Screen retrieved chunks before they reach the agent.
+
+        Returns ``(display, denied, redacted, flagged)`` where ``display`` is a
+        list of ``(RetrievalResult, safe_text, is_flagged)`` tuples:
+
+        * poison / prompt-injection hits above the block threshold are DENIED
+          (dropped entirely, never delivered);
+        * sub-threshold poison/injection hits are still delivered but FLAGGED
+          so the agent treats them as suspect data;
+        * secret patterns are REDACTED from the delivered text.
+        """
+        display: list = []
+        denied = redacted = flagged = 0
+        for r in results:
+            chunk = r.chunk
+            source = f"{self.repo_slug}@{self.branch}:{chunk.file_path}"
+            text = chunk.text
+
+            poison = self._poison.scan_chunk(text, source)
+            inj = self._injection.scan(text, source)
+            if poison.blocked or inj.blocked:
+                denied += 1
+                self.audit.security_event(
+                    category="rag_result_denied",
+                    severity="high",
+                    detail=f"denied chunk from {source}: poison={poison.reasons} injection={inj.reasons}",
+                    source=source,
+                )
+                continue
+
+            is_flagged = poison.flagged or inj.flagged
+            if is_flagged:
+                flagged += 1
+
+            secret = self._secret.scan(text, source)
+            if secret.flagged:
+                text = self._secret.redact(text)
+                redacted += 1
+                flagged += 1
+                self.audit.security_event(
+                    category="rag_secret_redacted",
+                    severity="medium",
+                    detail=f"redacted {secret.reasons} in chunk from {source}",
+                    source=source,
+                )
+
+            display.append((r, text, is_flagged))
+        return display, denied, redacted, flagged
 
     async def _do_index(self, args: dict) -> list[TextContent]:
         force_full = args.get("force_full", False)

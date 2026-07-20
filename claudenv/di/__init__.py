@@ -324,7 +324,7 @@ def _configure_container(c: Container) -> None:
 
     # --- Vector Store ---
     c.register_factory(IVectorStore, lambda: LanceDbVectorStore(
-        lancedb_config.get_lancedb_path(), rag_config.get_rag_config().embedding_dim, db
+        lancedb_config.get_lancedb_path(), rag_config.get_rag_config().embedding_dim
     ))
 
     # --- Policy Repository ---

@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import click
+
 from claudenv._data import config_dir, templates_dir
 from claudenv.application.onboarding.base import OnboardingContext, OnboardingStep
 from claudenv.domain.value_objects import Tier
@@ -52,12 +54,18 @@ class PolicyStep(OnboardingStep):
 
         text = tmpl.read_text()
         text = text.replace("EXAMPLE-REPO-SLUG", str(ctx.slug))
-        text = re.sub(r"(?m)^tier:\s*\d+", f"tier: {int(ctx.tier)}", text, count=1)
-        if ctx.description:
-            safe = ctx.description.replace('"', "'")
-            text = re.sub(r'(?m)^description:\s*".*"', f'description: "{safe}"', text, count=1)
         if ctx.tier in (Tier.SENSITIVE, Tier.RESTRICTED):
             text = re.sub(r"(?m)^(\s*isolated:\s*)false", r"\g<1>true", text, count=1)
+
+        # Record the detected/default branch so `claude-env index`/`rag` can
+        # resolve it without re-probing git. Inserted right after the `repo:`
+        # line that the template always contains.
+        if "default_branch" not in text:
+            text = re.sub(
+                r"(?m)^(repo:\s*.*)$",
+                lambda m: f'{m.group(1)}\ndefault_branch: "{ctx.branch}"',
+                text, count=1,
+            )
 
         if not ctx.dry_run:
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -94,10 +102,12 @@ class MCPEnvStep(OnboardingStep):
     def execute(self, ctx: OnboardingContext) -> bool:
         claude_json = Path.home() / ".claude.json"
         if not claude_json.exists():
+            print("  Skipped: ~/.claude.json not found — claude-env MCP env vars were not patched.")
+            print("  ACTION REQUIRED: launch Claude Code once to create ~/.claude.json, "
+                  "then re-run `claude-env onboard` to wire the MCP servers.")
             ctx.add_step("mcp_env", skipped=True)
             return False
 
-        # Read MCP config
         mcp_config = Path(self.config.get_claude_env_home()) / "config" / "mcp-servers.json"
         if not mcp_config.exists():
             ctx.add_step("mcp_env", skipped=True)
@@ -116,7 +126,7 @@ class MCPEnvStep(OnboardingStep):
         }
 
         def resolve_env(env: dict) -> dict:
-            return {k: self._resolve(v, subs) for k, v in env.items()}
+            return {k: _resolve(v, subs) for k, v in env.items()}
 
         def _resolve(v: str, subs: dict) -> str:
             for k, val in subs.items():
@@ -150,8 +160,8 @@ class MCPEnvStep(OnboardingStep):
                 updated.append(name)
             existing[name] = {
                 "type": "stdio",
-                "command": self._resolve(srv["command"], subs),
-                "args": [self._resolve(a, subs) for a in srv.get("args", [])],
+                "command": _resolve(srv["command"], subs),
+                "args": [_resolve(a, subs) for a in srv.get("args", [])],
                 "env": resolved_env,
             }
 
@@ -238,9 +248,8 @@ class TemplateStep(OnboardingStep):
             text = text.replace(f"{{{{{k}}}}}", v)
         return text
 
-
 class GitHooksStep(OnboardingStep):
-    """Install git hooks for auto-reindex."""
+    """Install git hooks that reindex the repo on changes."""
 
     def execute(self, ctx: OnboardingContext) -> bool:
         if ctx.no_post_commit:
@@ -252,21 +261,45 @@ class GitHooksStep(OnboardingStep):
             ctx.add_step("git_hooks", skipped=True)
             return False
 
+        # Hooks + the reindex entrypoint ship inside the wheel; resolve them
+        # from the packaged _data/scripts (works from source and from an
+        # installed/zipped wheel).
+        from claudenv._data import data_path
+
+        scripts_pkg = data_path("scripts")
         hook_names = ("post-commit", "post-merge", "post-checkout")
-        hook_src_dir = Path(self.config.get_claude_env_home()) / "scripts"
+        entry_name = "claude-env-reindex"
+        hooks_dir = git_dir / "hooks"
         installed = []
 
         for name in hook_names:
-            src = hook_src_dir / name
+            src = scripts_pkg / name
             if not src.exists():
+                print(f"  WARNING: hook source missing: {name}")
                 continue
-            dst = git_dir / "hooks" / name
+
+            dst = hooks_dir / name
             if dst.exists():
                 existing = dst.read_text(errors="ignore")
-                if "claude-env" not in existing:
-                    installed.append(f"{name} (kept existing)")
+                # Already a claude-env-managed hook: refresh it in place.
+                if "claude-env" in existing:
+                    if not ctx.dry_run:
+                        shutil.copy2(src, dst)
+                        dst.chmod(0o755)
+                    installed.append(name)
                     continue
+                # Some other tool owns this hook — don't clobber it.
+                installed.append(f"{name} (kept existing)")
+                continue
+
             if not ctx.dry_run:
+                # Install the shared reindex entrypoint next to the hook so the
+                # hook can exec it by relative path.
+                entry_src = scripts_pkg / entry_name
+                if entry_src.exists():
+                    entry_dst = hooks_dir / entry_name
+                    shutil.copy2(entry_src, entry_dst)
+                    entry_dst.chmod(0o755)
                 shutil.copy2(src, dst)
                 dst.chmod(0o755)
             installed.append(name)
@@ -381,25 +414,20 @@ class IndexStep(OnboardingStep):
             ctx.add_step("index", skipped=True)
             return False
 
-        try:
-            ans = input("  Build the RAG index for this repo now? (y/N): ").strip().lower()
-        except EOFError:
-            ans = "n"
-
-        if ans not in ("y", "yes"):
-            print(f"  skipped — run {ctx.repo_root} later")
+        if not click.confirm("  Build the RAG index for this repo now?", default=False):
+            print(f"  skipped — run `claude-env index {ctx.repo_root}` later")
             ctx.add_step("index", skipped=True)
             return False
 
-        script = Path(self.config.get_claude_env_home()) / "rag" / "bootstrap_rag.py"
-        if not script.exists():
-            print("  index script not found")
-            ctx.add_step("index", skipped=True)
-            return False
-
+        # Delegate to the real `claude-env index` entry point so the build uses
+        # the same code path as an explicit index (and the same branch/DB
+        # detection). Never fail onboarding if indexing errors.
         env = {**os.environ, "CLAUDE_ENV_REPO_NAME": str(ctx.slug), "CLAUDE_ENV_BRANCH": str(ctx.branch)}
         print(f"  indexing {ctx.repo_root} …")
-        rc = subprocess.run([sys.executable, str(script), ctx.repo_root], env=env).returncode
+        rc = subprocess.run(
+            [sys.executable, "-m", "claudenv.cli", "index", ctx.repo_root],
+            env=env,
+        ).returncode
         print(f"  {'indexed' if rc == 0 else 'indexing reported errors (see above)'}")
         ctx.add_step("index")
         return True

@@ -15,6 +15,7 @@ from typing import Any
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
 from claudenv.adapters.persistence import SQLiteDatabase
+from claudenv.domain.incident import is_incident_active
 from claudenv.domain.policy import PolicyService
 from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
 from claudenv.ports import IAuditLogger, IPolicyEngine
@@ -89,8 +90,14 @@ class PolicyHook(IPreToolUseHook):
             if t in {">", ">>", "<"} and i + 1 < len(tokens):
                 redir_targets.append(tokens[i + 1])
                 i += 2
+            elif t in {"2>", "1>"} and i + 1 < len(tokens):
+                redir_targets.append(tokens[i + 1])
+                i += 2
             elif t.startswith(">") or t.startswith("<"):
                 redir_targets.append(t[1:])
+                i += 1
+            elif t.startswith("2>") or t.startswith("1>"):
+                redir_targets.append(t[2:])
                 i += 1
             elif t in {"cat", "grep", "sed", "awk", "head", "tail", "less", "more", "vim", "nvim", "code"}:
                 if i + 1 < len(tokens):
@@ -124,10 +131,8 @@ class PolicyHook(IPreToolUseHook):
         tool = tool_call.get("tool", "")
         args = tool_call.get("args", {})
 
-        # Incident mode = deny everything
-        incident_marker = Path(
-            os.environ.get("CLAUDE_ENV_HOME", str(Path.home() / ".claude-env"))) / "state" / "INCIDENT"
-        if incident_marker.exists():
+        # Incident mode = deny everything (shared marker, single source of truth)
+        if is_incident_active():
             return {"allow": False, "reason": self._signed("INCIDENT MODE ACTIVE — all operations denied")}
 
         try:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from claudenv.domain.incident import is_incident_active
 from claudenv.domain.policy.compiled_policy import CompiledPolicy
 from claudenv.domain.policy.global_policy import GlobalPolicy
 from claudenv.domain.policy.repo_policy import RepoPolicy
@@ -31,7 +32,18 @@ class PolicyEngine:
         return cls(compiled)
 
     def evaluate_path(self, path: Path | str) -> PolicyDecision:
-        """Evaluate a path against the policy."""
+        """Evaluate a path against the policy.
+
+        During incident mode (the INCIDENT marker is present) every evaluation
+        fails closed: operations must be denied, not merely policy-scored. This
+        is the single choke point that makes the filesystem MCP server, the RAG
+        indexer, and any other consumer that routes through the engine deny
+        everything while incident mode is active.
+        """
+        if is_incident_active():
+            return PolicyDecision.block(
+                "incident mode active — all operations denied", rule="INCIDENT"
+            )
         if isinstance(path, str):
             path = Path.from_string(path)
         return self.compiled.evaluate(path)

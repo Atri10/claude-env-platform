@@ -12,6 +12,7 @@ from claudenv.ports.observability.interfaces import (
     IFeedbackRepository,
     IMetricsRepository,
     IProjectionRepository,
+    ISessionMetricsRepository,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "IMetricsRepository",
     "IFeedbackRepository",
     "IProjectionRepository",
+    "ISessionMetricsRepository",
 ]

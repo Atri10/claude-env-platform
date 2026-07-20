@@ -45,6 +45,7 @@ class DashboardService:
             "window": window,
             "since": since,
             "top_session_costs": self._metrics.top_session_costs(since),
+            "cost_by_repo": self._metrics.cost_by_repo(since),
             "latency": latency_pcts,
             "retrieval_quality": self._metrics.retrieval_quality_by_repo(since),
             "policy_violations": self._projections.recent_policy_violations(),

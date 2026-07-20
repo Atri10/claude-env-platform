@@ -3,3 +3,8 @@ __pycache__/
 .DS_Store
 /state/
 .idea
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+claudenv.egg-info/
+.vscode/

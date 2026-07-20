@@ -19,6 +19,7 @@ from mcp.types import TextContent, Tool
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
 from claudenv.adapters.persistence import SQLiteDatabase
+from claudenv.domain.incident import is_incident_active
 from claudenv.domain.policy import PolicyDecision, PolicyEngine, PolicyService
 from claudenv.domain.value_objects import SessionId
 from claudenv.ports import IAuditLogger
@@ -193,6 +194,10 @@ class FilesystemPolicyServer:
         """Enforce policy on a resolved repo-relative path."""
         if rel.startswith(SCRATCH_PREFIX):
             return  # scratch is allow-all by construction
+        # Incident mode = fail everything closed (explicit, in addition to the
+        # engine-level check, so the chokepoint is unambiguous).
+        if is_incident_active():
+            raise PolicyBlocked("incident mode active — all operations denied")
         decision: PolicyDecision = self.engine.evaluate_path(rel)
         if decision.action == "block":
             self.audit.policy_violation(
@@ -280,6 +285,10 @@ class FilesystemPolicyServer:
         rel, abs_path = self._resolve(path or ".")
         if not abs_path.is_dir():
             raise PolicyBlocked(f"not a directory: {rel}")
+
+        # Incident mode = fail everything closed (no directory contents leaked).
+        if is_incident_active():
+            raise PolicyBlocked("incident mode active — all operations denied")
 
         is_scratch = rel.startswith(SCRATCH_PREFIX)
         entries = []

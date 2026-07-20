@@ -6,13 +6,12 @@ Registers governance hooks and writes them into Claude Code's
 
 Design
 ------
-The installer depends on the hook *abstractions* (``IPreToolUseHook`` /
-``IPostToolUseHook``), never on concrete module paths. A hook class is
-registered once; ``install()`` derives its launch command from the class's
-own ``__module__`` and its install metadata (``HOOK_MATCHER`` /
-``HOOK_TIMEOUT``), so adding a new hook needs no change to this file
-(Open/Closed). Each event maps to a *list* of hook entries, so multiple
-hooks can share an event.
+The installer depends on the hook *abstractions*, never on concrete module
+paths. A hook class is registered once with its Claude Code event
+(PreToolUse, PostToolUse, SessionStart, SessionEnd); ``install()`` derives the
+launch command from the class's own ``__module__`` and its install metadata
+(``HOOK_MATCHER`` / ``HOOK_TIMEOUT``). Adding a hook needs no change to
+``install()`` (Open/Closed), and every event maps to a *list* of hook entries.
 """
 from __future__ import annotations
 
@@ -25,6 +24,8 @@ from typing import Any
 
 from claudenv.adapters.hooks.audit_hook import AuditHook
 from claudenv.adapters.hooks.policy_hook import PolicyHook
+from claudenv.adapters.hooks.session_hook import SessionHook
+from claudenv.adapters.hooks.session_metrics_hook import SessionMetricsHook
 from claudenv.ports.hooks.interfaces import IPostToolUseHook, IPreToolUseHook
 
 # Default matcher: which tools trigger a hook. Mirrors the legacy
@@ -37,7 +38,7 @@ DEFAULT_TIMEOUT = 10
 class HookSpec:
     """Immutable description of one installed hook entry."""
 
-    event: str  # "PreToolUse" | "PostToolUse"
+    event: str  # PreToolUse | PostToolUse | SessionStart | SessionEnd
     module: str  # importable module path, launched as `python -m <module>`
     matcher: str
     timeout: int
@@ -60,18 +61,34 @@ class HookInstaller:
         self.register_defaults()
 
     # -- Registration -------------------------------------------------------
+    def register_hook(self, hook_cls: type, event: str) -> None:
+        """Register a hook class under a Claude Code event.
+
+        ``event`` is one of PreToolUse, PostToolUse, SessionStart, SessionEnd.
+        The launch command is derived from the class's own ``__module__`` and
+        its ``HOOK_MATCHER`` / ``HOOK_TIMEOUT`` metadata. Adding a hook never
+        requires editing ``install()`` (Open/Closed).
+        """
+        self._specs.append(self._spec_for(hook_cls, event))
+
     def register_pre_hook(self, hook_cls: type[IPreToolUseHook]) -> None:
-        """Register a PreToolUse hook by its class (not an instance)."""
-        self._specs.append(self._spec_for(hook_cls, "PreToolUse"))
+        self.register_hook(hook_cls, "PreToolUse")
 
     def register_post_hook(self, hook_cls: type[IPostToolUseHook]) -> None:
-        """Register a PostToolUse hook by its class (not an instance)."""
-        self._specs.append(self._spec_for(hook_cls, "PostToolUse"))
+        self.register_hook(hook_cls, "PostToolUse")
+
+    def register_session_hook(self, hook_cls: type, event: str) -> None:
+        self.register_hook(hook_cls, event)
 
     def register_defaults(self) -> None:
-        """Register the standard governance hooks (policy pre, audit post)."""
-        self.register_pre_hook(PolicyHook)
-        self.register_post_hook(AuditHook)
+        """Register the standard governance + session-cost hooks."""
+        self.register_hook(PolicyHook, "PreToolUse")
+        self.register_hook(AuditHook, "PostToolUse")
+        self.register_hook(SessionMetricsHook, "SessionStart")
+        self.register_hook(SessionMetricsHook, "SessionEnd")
+        # Session lifecycle hook: records session start/end to the audit ledger.
+        self.register_session_hook(SessionHook, "SessionStart")
+        self.register_session_hook(SessionHook, "SessionEnd")
 
     @staticmethod
     def _spec_for(hook_cls: type, event: str) -> HookSpec:
@@ -131,17 +148,18 @@ class HookInstaller:
             return {"uninstalled": False, "error": str(e)}
 
     def validate(self) -> dict[str, Any]:
-        """Validate that both PreToolUse and PostToolUse hooks are present."""
+        """Validate that PreToolUse/PostToolUse/Session* hooks are present."""
         repo_settings = self.repo_root / ".claude" / "settings.json"
         global_settings = Path.home() / ".claude" / "settings.json"
 
         results: dict[str, Any] = {"repo": False, "global": False}
+        expected = {"PreToolUse", "PostToolUse", "SessionStart", "SessionEnd"}
         for name, path in [("repo", repo_settings), ("global", global_settings)]:
             if path.exists():
                 try:
                     settings = json.loads(path.read_text())
                     hooks = settings.get("hooks", {})
-                    results[name] = "PreToolUse" in hooks and "PostToolUse" in hooks
+                    results[name] = expected.issubset(set(hooks))
                 except Exception:
                     results[name] = False
         return results

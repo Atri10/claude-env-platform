@@ -1,0 +1,6 @@
+#!/bin/sh
+# claude-env :: reindex on checkout (branch switch)
+# Installed into <repo>/.git/hooks/post-checkout by `claude-env onboard`.
+# Git passes (previous_HEAD, new_HEAD, flag) as $1 $2 $3; they are ignored.
+DIR="$(dirname "$0")"
+exec "$DIR/claude-env-reindex"

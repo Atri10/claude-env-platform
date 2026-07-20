@@ -20,6 +20,7 @@ from mcp.types import TextContent, Tool
 
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
+from claudenv.adapters.observability import SessionCostCollector, SQLiteMetricsRepository
 from claudenv.adapters.persistence import SQLiteDatabase
 from claudenv.adapters.services import FileServiceRegistry
 from claudenv.domain.policy import PolicyEngine, PolicyService
@@ -69,6 +70,10 @@ class TerminalServer:
         self.service_registry = service_registry
         self.session_id = session_id
         self.scratch_root = (_HOME / "scratch" / repo_root.name).resolve()
+
+        # Cost collector: every executed terminal command is attributed to this
+        # MCP session so `budget`/`dashboard` surface terminal activity.
+        self._cost_collector = SessionCostCollector(SQLiteMetricsRepository(self.db))
 
         self.server = Server("terminal")
         self._register_tools()
@@ -161,6 +166,7 @@ class TerminalServer:
                     if in_scratch:
                         self.scratch_root.mkdir(parents=True, exist_ok=True)
                     out = self._run(command, "run", root=root)
+                    self._record_cost(command, out)
                     return [TextContent(type="text", text=f"APPROVED by {by} (request {req_id}). Executed:\n{out}")]
                 if decision == "denied":
                     return [TextContent(type="text", text=f"DENIED by {by} (request {req_id}). Command was NOT run.")]
@@ -380,6 +386,19 @@ class TerminalServer:
             for p in procs:
                 if p.poll() is None:
                     p.kill()
+
+    def _record_cost(self, command: str, output: str) -> None:
+        """Attribute the executed command's cost to this MCP session.
+
+        Best-effort and never allowed to break command execution: a failure
+        here must never surface to the caller.
+        """
+        try:
+            self._cost_collector.record_command(
+                self.session_id, self.repo_root.name, command, output
+            )
+        except Exception:
+            pass
 
     def _run(self, template: str, kind: str, root: Path | None = None) -> str:
         if root is None:

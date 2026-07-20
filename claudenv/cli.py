@@ -3,17 +3,21 @@ claude-env :: CLI Entry Point
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 import click
-import json
+import yaml
 
+from claudenv._data import config_dir
 from claudenv.adapters.config import get_config
+from claudenv.adapters.config.providers import write_rag_config
 from claudenv.application.audit import ComplianceReportGenerator, SessionReplay
 from claudenv.application.observability import BudgetService, DashboardService, FeedbackService
 from claudenv.application.onboarding import OnboardingService
-from claudenv.application.rag import RagService
 from claudenv.di import get_container
 from claudenv.ports.audit import IAuditRepository
 from claudenv.ports.database import IDatabase
@@ -28,11 +32,196 @@ def cli(ctx, verbose):
     ctx.obj["verbose"] = verbose
 
 
+# --------------------------------------------------------------------------
+# Shared helpers
+# --------------------------------------------------------------------------
+
+def _dsn_to_db_path(dsn: str) -> Path:
+    """Best-effort conversion of a database DSN to a filesystem path."""
+    if dsn.startswith("sqlite:///"):
+        return Path(dsn[len("sqlite:///"):])
+    if dsn.startswith("sqlite://"):
+        return Path(dsn[len("sqlite://"):])
+    return Path(dsn)
+
+
+def _is_initialized() -> bool:
+    """Return True if the claude-env home has been provisioned (DB exists)."""
+    config = get_config()
+    db_path = _dsn_to_db_path(config.get_database_dsn())
+    return db_path.exists()
+
+
+def ensure_initialized(ctx):
+    """Bail out with a helpful message (or auto-init) if the home is uninitialized.
+
+    When the DB/schema is missing we prompt (TTY-aware, via click.confirm) to
+    run ``claude-env init``; declining exits with an actionable error rather
+    than a raw stack trace.
+    """
+    if _is_initialized():
+        return
+
+    if click.confirm("claude-env is not initialized. Run 'claude-env init' now?", default=True):
+        ctx.invoke(init, force_config=False)
+    else:
+        click.echo(
+            "Aborting: claude-env home is not initialized.\n"
+            "Run `claude-env init` first, then retry this command.",
+            err=True,
+        )
+        ctx.exit(1)
+
+
+def _detect_branch(repo_root: str) -> str:
+    """Resolve the indexing branch.
+
+    Prefers ``default_branch`` recorded in ``.claude/repo-policy.yaml`` (written
+    at onboarding), then falls back to ``git rev-parse --abbrev-ref HEAD``, and
+    finally ``main``. Never hardcodes "main" as the sole source of truth.
+    """
+    policy = Path(repo_root) / ".claude" / "repo-policy.yaml"
+    if policy.exists():
+        try:
+            data = yaml.safe_load(policy.read_text()) or {}
+            branch = data.get("default_branch")
+            if branch:
+                return str(branch)
+        except Exception:
+            pass
+    try:
+        out = subprocess.run(
+            ["git", "-C", repo_root, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        if out:
+            return out
+    except Exception:
+        pass
+    return "main"
+
+
+def _rag_service(repo: str, branch: str):
+    """Build a RagService bound to a specific repo/branch.
+
+    Avoids the container's singleton ``RagService`` (which is wired for the
+    "default" repo/branch) so that indexing and retrieval use a consistent
+    repo key. Also sidesteps the broken ``IVectorStore`` DI factory by
+    constructing the LanceDB store directly with the correct signature.
+    """
+    from claudenv.adapters.vector.lancedb import LanceDbRagRetriever, LanceDbVectorStore
+    from claudenv.application.rag import RagIndexer, RagService
+    from claudenv.domain.rag import BranchName, RepoSlug
+    from claudenv.ports import (
+        IEmbeddingProvider,
+        ILanceDBConfig,
+        IRagBookkeeping,
+        IRAGConfig,
+        IReranker,
+    )
+
+    container = get_container()
+    lancedb_config = container.get(ILanceDBConfig)
+    rag_config = container.get(IRAGConfig)
+    rcfg = rag_config.get_rag_config()
+    store = LanceDbVectorStore(lancedb_config.get_lancedb_path(), rcfg.embedding_dim)
+    embedder = container.get(IEmbeddingProvider)
+    reranker = container.get(IReranker)
+    bk = container.get(IRagBookkeeping)
+    indexer = RagIndexer(
+        RepoSlug.from_string(repo), BranchName.from_string(branch),
+        store, bk, embedder, rcfg,
+    )
+    retriever = LanceDbRagRetriever(store, embedder, reranker)
+    return RagService(indexer, retriever, embedder, reranker, bookkeeping=bk)
+
+
+def _model_setup_flow(ctx, *, interactive, model_path, pooling_type, embedding_dim, reranker_dir):
+    """Interactive/CI model onboarding. Writes the deployed rag.yaml.
+
+    Reuses the existing rag.yaml schema (embedding/reranker sub-keys) and the
+    packaged default as the base, so only the user's choices are changed.
+    """
+    config = get_config()
+    home = config.get_claude_env_home()
+    deployed = Path(home) / "config" / "rag.yaml"
+    if deployed.exists():
+        base = yaml.safe_load(deployed.read_text()) or {}
+    else:
+        base = yaml.safe_load((config_dir() / "rag.yaml").read_text()) or {}
+    base.setdefault("embedding", {})
+    base.setdefault("reranker", {})
+    emb = base["embedding"]
+    rer = base["reranker"]
+
+    # --- embedding model path (validate exists; allow empty/skip) ---
+    if model_path is None:
+        current = emb.get("model_path", "")
+        if interactive:
+            model_path = click.prompt(
+                "Embedding model path (GGUF, empty to skip)",
+                default=current, show_default=False,
+            )
+        else:
+            model_path = current
+    if model_path:
+        p = Path(os.path.expanduser(str(model_path)))
+        if not p.exists():
+            if interactive:
+                click.echo(f"  WARNING: model path does not exist: {p}")
+                if not click.confirm("  Continue anyway?", default=False):
+                    ctx.exit(1)
+            else:
+                click.echo(f"ERROR: embedding model path does not exist: {p}", err=True)
+                ctx.exit(1)
+
+    # --- pooling type ---
+    if pooling_type is None:
+        if interactive:
+            pooling_type = click.prompt(
+                "Pooling type", default=emb.get("pooling_type", "mean"),
+                type=click.Choice(["mean", "cls", "last", "none"]), show_default=True,
+            )
+        else:
+            pooling_type = emb.get("pooling_type", "mean")
+
+    # --- embedding dimension ---
+    if embedding_dim is None:
+        if interactive:
+            embedding_dim = click.prompt(
+                "Embedding dimension", default=int(emb.get("embedding_dim", 768)),
+                type=int, show_default=True,
+            )
+        else:
+            embedding_dim = int(emb.get("embedding_dim", 768))
+
+    # --- reranker ONNX dir (optional) ---
+    if reranker_dir is None:
+        if interactive:
+            reranker_dir = click.prompt(
+                "Reranker ONNX dir (optional, empty to disable)",
+                default=rer.get("model_dir", ""), show_default=False,
+            )
+        else:
+            reranker_dir = rer.get("model_dir", "")
+
+    emb["model_path"] = str(model_path) if model_path else ""
+    emb["pooling_type"] = pooling_type
+    emb["embedding_dim"] = int(embedding_dim)
+    rer["model_dir"] = str(reranker_dir) if reranker_dir else ""
+
+    path = write_rag_config(home, base)
+    click.echo(f"  Wrote RAG config -> {path}")
+    return path
+
+
 @cli.command()
 @click.option("--force-config", is_flag=True,
               help="Overwrite existing deployed config files with the packaged defaults.")
+@click.option("--interactive", "-i", is_flag=True,
+              help="After initializing, run interactive model setup (embedding + reranker).")
 @click.pass_context
-def init(ctx, force_config):
+def init(ctx, force_config, interactive):
     """Initialize the local claude-env home (one-time, idempotent).
 
     Creates $CLAUDE_ENV_HOME (default ~/.claude-env), applies the SQL schema,
@@ -120,6 +309,16 @@ def init(ctx, force_config):
 
     click.echo("\nclaude-env is ready. Next: `claude-env onboard <repo>`.")
 
+    if interactive:
+        click.echo("\n=== Model setup ===")
+        # Only prompt interactively when attached to a TTY; otherwise apply
+        # non-interactive defaults so `init --interactive` never hangs in CI.
+        _model_setup_flow(
+            ctx, interactive=sys.stdin.isatty(),
+            model_path=None, pooling_type=None,
+            embedding_dim=None, reranker_dir=None,
+        )
+
 
 @cli.command()
 @click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True), required=False)
@@ -176,6 +375,35 @@ def onboard(ctx, repo_root, repo_name, tier, description, branch, interactive, y
         click.echo(f"Onboarded: {result.slug} (tier {result.tier})")
         click.echo(f"  RAG table: {result.rag_table}")
         click.echo(f"  Memory ns: {result.memory_namespace} (isolated={result.memory_isolated})")
+
+
+@cli.group()
+def model():
+    """Model configuration (embedding + reranker)."""
+    pass
+
+
+@model.command("setup")
+@click.option("--model-path", default=None,
+              help="Path to a local GGUF embedding model. Empty/skip to leave unconfigured.")
+@click.option("--pooling-type", default=None,
+              type=click.Choice(["mean", "cls", "last", "none"]),
+              help="Pooling type for the embedding model.")
+@click.option("--embedding-dim", default=None, type=int,
+              help="Embedding vector dimension.")
+@click.option("--reranker-dir", default=None,
+              help="Directory with an ONNX cross-encoder reranker (empty to disable).")
+@click.option("--yes", "-y", is_flag=True,
+              help="Non-interactive: accept defaults / provided flags (for CI).")
+@click.pass_context
+def model_setup(ctx, model_path, pooling_type, embedding_dim, reranker_dir, yes):
+    """Configure the embedding + reranker models (writes deployed rag.yaml)."""
+    interactive = (not yes) and sys.stdin.isatty()
+    _model_setup_flow(
+        ctx, interactive=interactive,
+        model_path=model_path, pooling_type=pooling_type,
+        embedding_dim=embedding_dim, reranker_dir=reranker_dir,
+    )
 
 
 def _prompt_onboarding_inputs(
@@ -283,6 +511,7 @@ def _prompt_onboarding_inputs(
 @click.pass_context
 def scan(ctx, repo_root):
     """Preview what would be indexed (policy allow/block split)."""
+    ensure_initialized(ctx)
     # Load the policy engine for this repo via the live PolicyService.
     from claudenv.domain.policy import PolicyService
     engine = PolicyService(get_config()).load_engine(repo_root)
@@ -316,33 +545,32 @@ def scan(ctx, repo_root):
 
 @cli.command()
 @click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True))
+@click.option("--branch", help="Branch to index (overrides auto-detection).")
 @click.pass_context
-def index(ctx, repo_root):
+def index(ctx, repo_root, branch):
     """Build full RAG index for a repository."""
-    container = get_container()
+    ensure_initialized(ctx)
 
     # Get repo slug from onboarding
     repo_policy_path = Path(repo_root) / ".claude" / "repo-policy.yaml"
     if not repo_policy_path.exists():
         click.echo("ERROR: Repo not onboarded. Run 'claude-env onboard' first.", err=True)
-        sys.exit(1)
+        ctx.exit(1)
 
-    import yaml
     policy_data = yaml.safe_load(repo_policy_path.read_text())
     slug = policy_data.get("repo", Path(repo_root).name)
-    branch = "main"  # TODO: detect
+    branch = branch or _detect_branch(repo_root)
 
-    service = container.get(RagService)
+    service = _rag_service(slug, branch)
 
     # Get files
-    import subprocess
     out = subprocess.run(
         ["git", "-C", repo_root, "ls-files"],
         capture_output=True, text=True, timeout=10,
     ).stdout.strip()
     files = out.splitlines() if out else []
 
-    click.echo(f"Indexing {len(files)} files...")
+    click.echo(f"Indexing {len(files)} files (branch={branch})...")
     files_dict = {}
     for f in files:
         path = Path(repo_root) / f
@@ -437,18 +665,21 @@ def policy_sim_simulate(ctx, repo_root, candidate):
 @cli.command()
 @click.argument("repo_root", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.argument("query")
+@click.option("--branch", help="Branch to query (overrides auto-detection).")
 @click.pass_context
-def rag(ctx, repo_root, query):
+def rag(ctx, repo_root, query, branch):
     """Test RAG retrieval for a repository."""
-    container = get_container()
+    ensure_initialized(ctx)
 
     repo_policy_path = Path(repo_root) / ".claude" / "repo-policy.yaml"
-    import yaml
+    if not repo_policy_path.exists():
+        click.echo("ERROR: Repo not onboarded. Run 'claude-env onboard' first.", err=True)
+        ctx.exit(1)
     policy_data = yaml.safe_load(repo_policy_path.read_text())
     slug = policy_data.get("repo", Path(repo_root).name)
-    branch = "main"
+    branch = branch or _detect_branch(repo_root)
 
-    service = container.get(RagService)
+    service = _rag_service(slug, branch)
     results = service.search(
         repo=slug, branch=branch, query=query, top_k=5,
     )
@@ -525,26 +756,45 @@ def replay(ctx, list_sessions, session_id):
 @click.pass_context
 def incident(ctx, action, reason, by):
     """Incident mode kill switch."""
+    from claudenv.domain.incident import IncidentState, clear_incident, write_incident
+
     config = get_config()
     home = Path(config.get_claude_env_home())
-    marker = home / "state" / "INCIDENT"
 
     if action == "on":
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(
-            f'{{"reason": "{reason}", "by": "{by}", "at": "{__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}"}}')
+        # Fail-closed: deny any in-flight approvals before arming incident mode
+        # so a pending human_approvals request can't be actioned while locked
+        # down. Built directly from the DB/audit ports (not the DI container) so
+        # it still works when other services (e.g. the embedder) are unconfigured.
+        try:
+            from claudenv.adapters.audit import SqliteAuditLogger
+            from claudenv.adapters.persistence import SQLiteDatabase
+            from claudenv.application.approval import ApprovalGate
+            from claudenv.domain.value_objects import SessionId
+
+            db = SQLiteDatabase(config.get_database_dsn())
+            audit = SqliteAuditLogger(
+                db, SessionId.from_string("incident-mode"), actor="incident-mode",
+                repo="", tier=None,
+            )
+            gate = ApprovalGate(audit, db)
+            for row in gate.list_open():
+                gate.resolve(row["request_id"], approved=False, decided_by="INCIDENT")
+            db.close()
+        except Exception:
+            # Best-effort: incident mode must still arm even if the gate is down.
+            pass
+        write_incident(reason=reason, by=by, home=home)
         click.echo(f"Incident mode ON: {reason}")
     elif action == "off":
-        if marker.exists():
-            marker.unlink()
-            click.echo("Incident mode OFF")
-        else:
-            click.echo("Incident mode was not active")
+        clear_incident(home=home)
+        click.echo("Incident mode OFF")
     else:
-        if marker.exists():
-            import json
-            data = json.loads(marker.read_text())
-            click.echo(f"Incident mode ACTIVE since {data.get('at')} by {data.get('by')}: {data.get('reason')}")
+        state = IncidentState.read(home=home)
+        if state.active:
+            click.echo(
+                f"Incident mode ACTIVE since {state.since} by {state.by}: {state.reason}"
+            )
         else:
             click.echo("Incident mode OFF")
 
@@ -620,6 +870,10 @@ def dashboard(ctx, window, fmt):
     click.echo("Top session costs:")
     for row in summary["top_session_costs"]:
         click.echo(f"  {row['repo']:<20} ${row['spent_usd']:>8}  {row['session_id']}")
+
+    click.echo("\nCost by repo (total):")
+    for row in summary.get("cost_by_repo", []):
+        click.echo(f"  {row.repo:<20} ${row.spent_usd:>8}  ({row.sessions} sessions)")
 
     click.echo("\nLatency by component (ms):")
     for component, p in summary["latency"].items():

@@ -25,6 +25,7 @@ from claudenv.ports import (
     IRAGConfig,
     IRepoPolicyConfig,
 )
+from claudenv.ports.observability import ISessionMetricsRepository
 
 from .base import _ConfigBase
 from .models import EmbeddingConfig, RerankerConfig
@@ -41,6 +42,21 @@ def _resolve_config_file(name: str) -> Path:
     if deployed.exists():
         return deployed
     return config_dir() / name
+
+
+def write_rag_config(home: str | Path, data: dict) -> Path:
+    """Write a rag.yaml mapping to the deployed config dir.
+
+    Mirrors the loader's path convention (``$CLAUDE_ENV_HOME/config/rag.yaml``)
+    and creates the config dir if missing. Used by ``claude-env model setup``
+    and ``claude-env init --interactive`` to persist model choices.
+    """
+    home = Path(home)
+    cfg_dir = home / "config"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    path = cfg_dir / "rag.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=False))
+    return path
 
 
 class DatabaseConfigProvider(_ConfigBase, IDatabaseConfig):
@@ -152,6 +168,15 @@ class ConfigProvider(_ConfigBase, IConfigProvider):
     # IDatabaseConfig
     def get_database_dsn(self) -> str:
         return self._db.get_database_dsn()
+
+    def get_session_metrics_repository(self) -> "ISessionMetricsRepository":
+        """Session cost-tracking writer backed by the shared SQLite DB."""
+        from claudenv.adapters.observability.repositories import (
+            SQLiteMetricsRepository,
+        )
+        from claudenv.adapters.persistence.sqlite.database import SQLiteDatabase
+
+        return SQLiteMetricsRepository(SQLiteDatabase(self.get_database_dsn()))
 
     # ILanceDBConfig
     def get_lancedb_path(self) -> str:

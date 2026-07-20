@@ -177,8 +177,10 @@ class SqliteAuditLogger(IAuditLogger):
             tx.execute(
                 """INSERT INTO human_approvals (request_id, event_id, agent, repo, tier, action, decision, requested_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (request_id, event_id_int, payload["agent"], self._repo,
-                 payload.get("tier"), payload["action"], "pending", ts),
+                (request_id, event_id_int, payload["agent"],
+                 str(self._repo) if self._repo else None,
+                 int(payload["tier"]) if payload.get("tier") is not None else None,
+                 payload["action"], "pending", ts),
             )
 
         elif event_type == EventType.HUMAN_APPROVAL_RESOLVE:

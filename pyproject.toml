@@ -72,6 +72,8 @@ claudenv = [
     "_data/config/*",
     "_data/sql/*",
     "_data/templates/**/*",
+    # Git hooks + reindex entrypoint shipped for GitHooksStep.
+    "_data/scripts/*",
     # Explicit patterns for the .claude/ dotdir tree (setuptools' ** skips
     # dotfiles/dotdirs by default).
     "_data/templates/repo-onboarding/.claude/agents/*",

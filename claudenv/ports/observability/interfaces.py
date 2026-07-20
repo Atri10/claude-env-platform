@@ -44,6 +44,40 @@ class IMetricsRepository(Protocol):
     def retrieval_quality_by_repo(self, since_iso: str) -> list[dict[str, Any]]:
         ...
 
+    @abstractmethod
+    def cost_by_repo(self, since_iso: str) -> list[RepoSpend]:
+        """Aggregated per-repo cost total since ``since_iso``."""
+        ...
+
+
+class ISessionMetricsRepository(Protocol):
+    """Write access for session cost tracking (SessionStart/SessionEnd)."""
+
+    @abstractmethod
+    def start_session(self, session_id: str, repo: str | None) -> None:
+        """Open (or ignore if exists) a metrics_sessions row for a session."""
+        ...
+
+    @abstractmethod
+    def set_usage_totals(
+        self,
+        session_id: str,
+        input_tokens: int,
+        output_tokens: int,
+        model: str = "default",
+    ) -> None:
+        """Overwrite (not increment) a session's usage/cost totals.
+
+        Called once per SessionEnd with the transcript's full cumulative
+        usage, so it must be idempotent if the hook ever fires twice.
+        """
+        ...
+
+    @abstractmethod
+    def end_session(self, session_id: str) -> None:
+        """Mark a session's ended_at timestamp."""
+        ...
+
 
 class IFeedbackRepository(Protocol):
     """Read/write access to rag_chunk_feedback."""

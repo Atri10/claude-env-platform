@@ -1,0 +1,5 @@
+#!/bin/sh
+# claude-env :: reindex on merge
+# Installed into <repo>/.git/hooks/post-merge by `claude-env onboard`.
+DIR="$(dirname "$0")"
+exec "$DIR/claude-env-reindex"

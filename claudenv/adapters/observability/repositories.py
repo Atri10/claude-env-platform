@@ -15,6 +15,7 @@ from claudenv.ports.observability import (
     IFeedbackRepository,
     IMetricsRepository,
     IProjectionRepository,
+    ISessionMetricsRepository,
 )
 
 
@@ -94,11 +95,12 @@ class SQLiteFeedbackRepository(IFeedbackRepository):
         return [(r["file_path"], int(r["n"])) for r in rows]
 
 
-class SQLiteMetricsRepository(IMetricsRepository):
-    """IMetricsRepository backed by the shared SQLite database.
+class SQLiteMetricsRepository(IMetricsRepository, ISessionMetricsRepository):
+    """Metrics repository backed by the shared SQLite database.
 
     Reads the observability metrics tables (metrics_sessions, metrics_latency,
-    metrics_retrieval_quality) via IDatabase. Read-only aggregation — never writes.
+    metrics_retrieval_quality) and writes session cost rows. Both read and
+    write ports are satisfied by this single adapter.
     """
 
     def __init__(self, db: IDatabase):
@@ -135,6 +137,25 @@ class SQLiteMetricsRepository(IMetricsRepository):
             (since_iso, limit),
         )
 
+    def cost_by_repo(self, since_iso: str) -> list[RepoSpend]:
+        rows = self._db.query(
+            "SELECT COALESCE(repo,'(none)') AS repo, COUNT(*) AS sessions, "
+            "ROUND(COALESCE(SUM(est_cost_usd),0), 4) AS spent_usd "
+            "FROM metrics_sessions WHERE started_at>=? "
+            "GROUP BY repo ORDER BY spent_usd DESC",
+            (since_iso,),
+        )
+        return [
+            RepoSpend(
+                repo=r["repo"],
+                sessions=int(r["sessions"] or 0),
+                input_tokens=0,
+                output_tokens=0,
+                spent_usd=float(r["spent_usd"] or 0.0),
+            )
+            for r in rows
+        ]
+
     def latency_by_component(self, since_iso: str) -> dict[str, list[float]]:
         rows = self._db.query(
             "SELECT component, duration_ms FROM metrics_latency WHERE ts>=?",
@@ -153,7 +174,35 @@ class SQLiteMetricsRepository(IMetricsRepository):
             (since_iso,),
         )
 
+    # -- Session cost writes (ISessionMetricsRepository) --
+    def start_session(self, session_id: str, repo: str | None) -> None:
+        self._db.execute(
+            "INSERT OR IGNORE INTO metrics_sessions (session_id, repo, started_at) "
+            "VALUES (?, ?, ?)",
+            (session_id, repo, _now()),
+        )
 
+    def set_usage_totals(
+        self,
+        session_id: str,
+        input_tokens: int,
+        output_tokens: int,
+        model: str = "default",
+    ) -> None:
+        from claudenv.domain.observability.session_metrics import compute_cost
+
+        cost = compute_cost(input_tokens, output_tokens, model)
+        self._db.execute(
+            "UPDATE metrics_sessions SET input_tokens=?, output_tokens=?, "
+            "est_cost_usd=? WHERE session_id=?",
+            (input_tokens, output_tokens, cost, session_id),
+        )
+
+    def end_session(self, session_id: str) -> None:
+        self._db.execute(
+            "UPDATE metrics_sessions SET ended_at=? WHERE session_id=?",
+            (_now(), session_id),
+        )
 class SQLiteProjectionRepository(IProjectionRepository):
     """IProjectionRepository backed by the shared SQLite database.
 
