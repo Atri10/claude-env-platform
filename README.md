@@ -255,7 +255,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)** — every com
 | `validate installation` | Health check |
 | `report` | Generate compliance report |
 | `replay` | Session forensics |
-| `incident on\|off\|status` | Kill switch |
+| `incident on` / `off` / `status` | Kill switch |
 | `services` | List running local UI services |
 | `budget` | Per-repo monthly cost against limits |
 | `dashboard` | Read-only operational summary |
@@ -282,7 +282,7 @@ claudenv/
 |---|---|
 | **Why** the platform enforces things this way | [`docs/OVERVIEW.md`](docs/OVERVIEW.md) |
 | Code-level internals of any subsystem | [`docs/guide/README.md`](docs/guide/README.md) |
-| Developing the platform itself | [`CLAUDE.md`](CLAUDE.md) |
+| Developing the platform itself | [`docs/guide/README.md`](docs/guide/README.md) (internal architecture) |
 
 ---
 
