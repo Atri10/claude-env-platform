@@ -23,6 +23,7 @@ For **code-level internals** of any subsystem, see the
 6. [Step 4 — Verify everything works](#step-4--verify-everything-works)
 
 **Reference**
+
 7. [repo-policy.yaml reference](#repo-policyyaml-reference)
 8. [CLI command reference](#cli-command-reference)
 9. [Architecture — where to read more](#architecture--where-to-read-more)
