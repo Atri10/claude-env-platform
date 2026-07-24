@@ -8,3 +8,7 @@ __pycache__/
 .pytest_cache/
 claudenv.egg-info/
 .vscode/
+
+# Local developer configuration — not shipped.
+CLAUDE.md
+.claude/
