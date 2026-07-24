@@ -7,8 +7,8 @@ run (with human approval). All argv-only, no shell, scrubbed env.
 from __future__ import annotations
 
 import asyncio
-import logging
 import json
+import logging
 import os
 import shlex
 import subprocess
@@ -19,18 +19,18 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
+from claudenv.adapters.logging import configure_logging
+from claudenv.adapters.mcp._deps import build_deps
 from claudenv.adapters.observability import SessionCostCollector, SQLiteMetricsRepository
 from claudenv.adapters.persistence import SQLiteDatabase
 from claudenv.adapters.services import FileServiceRegistry
-from claudenv.domain.policy import PolicyEngine, PolicyService
-from claudenv.domain.value_objects import SessionId
+from claudenv.domain.policy import PolicyEngine
 from claudenv.ports import IAuditLogger, IDatabase
-from claudenv.logging_config import configure_logging
+
 logger = logging.getLogger(__name__)
 
-from .command_error import _CommandError
+from .command_error import _CommandError  # noqa: E402
 
 # --- Constants ---------------------------------------------------------------
 
@@ -93,11 +93,23 @@ class TerminalServer:
                 cmd = _DEFAULTS.get(key, "")
                 if key in cmds:
                     cmd = cmds[key]
-                desc = f"Run repo's configured {key.replace('_', ' ')} command (no shell, sandboxed)."
+
+                label = key.replace("_", " ")
+
                 if cmd:
-                    desc += f" Current: {cmd}"
+                    desc = (
+                        f"Run the repo's configured {label} command ({cmd}). "
+                        "The command runs in a sandboxed environment (direct exec, no shell, "
+                        "scrubbed env). Human approval is required before execution. "
+                        "Returns combined stdout/stderr with exit code."
+                    )
                 else:
-                    desc += " NOT CONFIGURED -- set in .claude/commands.json"
+                    desc = (
+                        f"No {label} command configured. To enable, add a '{key}' entry to "
+                        ".claude/commands.json in the repo root. "
+                        "fallback: {_DEFAULTS.get(key, 'none')}"
+                    )
+
                 tools.append(Tool(
                     name=f"terminal.{key}",
                     description=desc,
@@ -107,22 +119,30 @@ class TerminalServer:
             tools.append(Tool(
                 name="terminal.run",
                 description=(
-                    "Run arbitrary command with human approval. Opens approval UI, blocks until "
-                    "decision. Runs in sandbox (no real shell, scrubbed env, repo-root cwd). "
-                    "Supports chaining (; && || |) and leading 'cd dir &&'. "
-                    "Use in_scratch=true for disposable scratch dir."
+                    "Run an arbitrary command or script with human approval required. The command "
+                    "runs in a sandboxed environment: no real shell (direct exec of argv), scrubbed "
+                    "environment variables, working directory set to repo root. Supports shell "
+                    "chaining operators: ; (sequence), && (and), || (or), | (pipe), and leading "
+                    "'cd <dir> &&' for subdirectory execution. Use in_scratch=true to run in a "
+                    "disposable per-repo scratch directory (auto-cleaned on server restart). "
+                    "The approval gate opens a web UI that must be resolved before execution. "
+                    "Results are returned as stdout/stderr with exit code."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "command": {
                             "type": "string",
-                            "description": "Command line (argv-only, no shell). Supports ; && || | and leading cd dir &&"
+                            "description": "Command line to execute. Supports chaining with ;, &&, ||, | "
+                                           "and leading 'cd <dir> &&'. Examples: 'npm test', 'python -m pytest', "
+                                           "'cd src && go build ./...', 'cat config.json | jq .database'.",
                         },
                         "in_scratch": {
                             "type": "boolean",
-                            "description": "Run in per-repo scratch dir instead of repo root",
-                            "default": False
+                            "description": "If true, run in a disposable per-repo scratch directory "
+                                           "instead of the repo root. The scratch dir is created fresh "
+                                           "per server session and wiped on restart.",
+                            "default": False,
                         },
                     },
                     "required": ["command"],
@@ -475,23 +495,11 @@ def create_server(
     session_id: str = "mcp-terminal",
     actor: str = "terminal-mcp",
 ) -> TerminalServer:
-    repo_root = Path(repo_root).resolve()
+    deps = build_deps(repo_root, session_id, actor)
     config = get_config()
-
-    policy_engine = PolicyService(config).load_engine(str(repo_root))
-    tier = policy_engine.get_compiled().tier
-
     db = SQLiteDatabase(config.get_database_dsn())
-    audit_logger = SqliteAuditLogger(
-        db=db,
-        session_id=SessionId.from_string(session_id),
-        actor=actor,
-        repo=repo_root.name,
-        tier=tier,
-    )
     service_registry = FileServiceRegistry(config.get_claude_env_home())
-
-    return TerminalServer(repo_root, audit_logger, policy_engine, db, service_registry, session_id)
+    return TerminalServer(deps.repo_root, deps.audit_logger, deps.policy_engine, db, service_registry, deps.session_id)
 
 
 async def main() -> None:

@@ -18,9 +18,9 @@ instruction to the agent. Three detectors run on each chunk
 """
 from __future__ import annotations
 
-import logging
 import fnmatch
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -28,20 +28,20 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
+from claudenv.adapters.incident import is_incident_active
+from claudenv.adapters.logging import configure_logging
+from claudenv.adapters.mcp._deps import build_deps
 from claudenv.adapters.persistence import SQLiteDatabase, SQLiteRagBookkeeping
 from claudenv.adapters.vector.lancedb import LanceDbVectorStore
 from claudenv.application.rag import RagIndexer, RagService
-from claudenv.domain.incident import is_incident_active
-from claudenv.domain.policy import PolicyService
 from claudenv.domain.security import (
     PromptInjectionDetector,
     RagPoisonDetector,
     SecretDetector,
 )
-from claudenv.domain.value_objects import BranchName, RepoSlug, SessionId
-from claudenv.logging_config import configure_logging
+from claudenv.domain.value_objects import BranchName, RepoSlug
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,42 +75,99 @@ class LanceDbRagServer:
             return [
                 Tool(
                     name="rag.search",
-                    description="Semantic search over indexed repository code. Returns top-k chunks with scores and metadata.",
+                    description=(
+                        "Semantic search over indexed repository code. Returns the top-k matching "
+                        "code chunks with relevance scores, file paths, line ranges, and source "
+                        "text. Results are cross-encoder reranked for accuracy, secret-scanned "
+                        "and poison-screened before delivery. Use with natural language queries "
+                        "about code functionality, not exact string matching (use filesystem.read "
+                        "or grep for that). Supports filtering by file type via file_filter."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "query": {"type": "string", "description": "Search query text"},
-                            "top_k": {"type": "integer", "default": 10, "description": "Number of results"},
-                            "mode": {"type": "string", "enum": ["vector", "fts", "hybrid"], "default": "hybrid",
-                                     "description": "Search mode"},
-                            "file_filter": {"type": "string",
-                                            "description": "Glob pattern to filter files (e.g. '*.py')"},
+                            "query": {
+                                "type": "string",
+                                "description": "Natural language search query about the codebase. "
+                                               "Describe what you're looking for as a question or "
+                                               "description (e.g. 'how does authentication work', "
+                                               "'error handling in the payment service').",
+                            },
+                            "top_k": {
+                                "type": "integer",
+                                "default": 10,
+                                "description": "Number of top results to return. Higher values "
+                                               "provide more candidates but increase latency.",
+                            },
+                            "mode": {
+                                "type": "string",
+                                "enum": ["vector", "fts", "hybrid"],
+                                "default": "hybrid",
+                                "description": "Search mode: vector=embedding similarity only, "
+                                               "fts=full-text search only, hybrid=combined ranking "
+                                               "(default, best quality).",
+                            },
+                            "file_filter": {
+                                "type": "string",
+                                "description": "Restrict search to files matching a glob pattern. "
+                                               "Examples: '*.py' for Python files, 'src/**/*.ts' "
+                                               "for TypeScript source. Omit to search all indexed files.",
+                            },
                         },
                         "required": ["query"],
                     },
                 ),
                 Tool(
                     name="rag.index",
-                    description="Trigger incremental indexing of repository. Returns indexing stats (new/updated/deleted chunks).",
+                    description=(
+                        "Trigger incremental indexing of the repository. By default only re-indexes "
+                        "files that changed since the last index (diff-based). Use force_full=true "
+                        "to rebuild the entire index from scratch. Returns statistics: number of "
+                        "files indexed, chunks created, and any errors."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "force_full": {"type": "boolean", "default": False, "description": "Force full re-index"},
+                            "force_full": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "If true, drop the existing index and rebuild from "
+                                               "scratch. If false (default), only re-index changed "
+                                               "files using git diff since last index commit.",
+                            },
                         },
                     },
                 ),
                 Tool(
                     name="rag.index_status",
-                    description="Get current index state (table name, commit, chunk count, last updated).",
-                    inputSchema={"type": "object", "properties": {}},
+                    description=(
+                        "Get the current state of the repository index. Returns: table name, "
+                        "last indexed commit SHA, total chunk count, embedding model used, and "
+                        "last updated timestamp. Use before rag.search to verify the index exists "
+                        "and is up-to-date."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                    },
                 ),
                 Tool(
                     name="rag.get_chunk",
-                    description="Retrieve a specific chunk by its ID.",
+                    description=(
+                        "Retrieve the full content and metadata of a specific indexed chunk by "
+                        "its chunk_id. Returns the complete text, file path, line range, file "
+                        "type, and any associated metadata. Chunk IDs are obtained from "
+                        "rag.search results."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "chunk_id": {"type": "string", "description": "Chunk identifier"},
+                            "chunk_id": {
+                                "type": "string",
+                                "description": "Unique chunk identifier obtained from the chunk_id "
+                                               "field of a rag.search result. Format: typically "
+                                               "'<repo>/<file_path>:<start_line>-<end_line>'.",
+                            },
                         },
                         "required": ["chunk_id"],
                     },
@@ -322,14 +379,8 @@ def create_server(
     repo_slug_v = RepoSlug.from_string(repo_slug)
     branch_v = BranchName.from_string(branch)
     config = get_config()
-
-    # IConfigProvider has no get_rag_service()/get_audit_logger() -- those
-    # methods never existed on ConfigProvider (see claudenv/ports/config.py).
-    # Build the real adapters directly, the same way terminal/server.py's
-    # create_server() does.
     root = Path(repo_root or os.environ.get("CLAUDE_ENV_REPO_ROOT", os.getcwd())).resolve()
-    policy_engine = PolicyService(config).load_engine(str(root))
-    tier = policy_engine.get_compiled().tier
+    deps = build_deps(root, session_id, actor)
 
     db = SQLiteDatabase(config.get_database_dsn())
     rag_config = config.get_rag_config()
@@ -347,15 +398,7 @@ def create_server(
     )
     rag_service = RagService(indexer, store, embedder, reranker, bookkeeping=bookkeeping)
 
-    audit_logger = SqliteAuditLogger(
-        db=db,
-        session_id=SessionId.from_string(session_id),
-        actor=actor,
-        repo=repo_slug_v,
-        tier=tier,
-    )
-
-    return LanceDbRagServer(repo_slug_v, branch_v, rag_service, audit_logger, root, session_id)
+    return LanceDbRagServer(repo_slug_v, branch_v, rag_service, deps.audit_logger, root, deps.session_id)
 
 
 async def main() -> None:

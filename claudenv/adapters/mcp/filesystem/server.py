@@ -17,17 +17,16 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
-from claudenv.adapters.persistence import SQLiteDatabase
-from claudenv.domain.incident import is_incident_active
-from claudenv.domain.policy import PolicyDecision, PolicyEngine, PolicyService
-from claudenv.domain.value_objects import SessionId
+from claudenv.adapters.incident import is_incident_active
+from claudenv.adapters.logging import configure_logging
+from claudenv.adapters.mcp._deps import build_deps
+from claudenv.domain.policy import PolicyDecision, PolicyEngine
 from claudenv.ports import IAuditLogger
-from claudenv.logging_config import configure_logging
+
 logger = logging.getLogger(__name__)
 
-from .policy_blocked import PolicyBlocked
+from .policy_blocked import PolicyBlocked  # noqa: E402
 
 # Constants
 SCRATCH_PREFIX = "scratch://"
@@ -324,23 +323,8 @@ def create_server(
         actor: str = "filesystem-policy",
 ) -> FilesystemPolicyServer:
     """Factory to create a configured filesystem policy server."""
-    repo_root = Path(repo_root).resolve()
-    config = get_config()
-
-    # Build policy engine from global + repo policy
-    policy_engine = PolicyService(config).load_engine(str(repo_root))
-
-    # Create audit logger
-    db = SQLiteDatabase(config.get_database_dsn())
-    audit_logger = SqliteAuditLogger(
-        db=db,
-        session_id=SessionId.from_string(session_id),
-        actor=actor,
-        repo=repo_root.name,
-        tier=policy_engine.get_compiled().tier,
-    )
-
-    return FilesystemPolicyServer(repo_root, audit_logger, policy_engine, session_id)
+    deps = build_deps(repo_root, session_id, actor)
+    return FilesystemPolicyServer(deps.repo_root, deps.audit_logger, deps.policy_engine, deps.session_id)
 
 
 async def main() -> None:

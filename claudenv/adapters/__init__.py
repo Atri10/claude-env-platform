@@ -5,10 +5,10 @@ from __future__ import annotations
 
 __all__ = [
     "config",
-    "persistence",
     "embedding",
-    "vector",
-    "mcp",
     "hooks",
-    "cli",
+    "logging",
+    "mcp",
+    "persistence",
+    "vector",
 ]

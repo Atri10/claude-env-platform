@@ -10,10 +10,11 @@ idempotently, so re-entry is safe).
 
 What it does
 ------------
-* Attaches a :class:`logging.handlers.RotatingFileHandler` to the **root**
-  logger, gated by a filter that admits only ``claudenv.*`` records (plus the
-  ``__main__`` entry module, so ``python -m`` invocations are covered too).
-  Third-party libraries are intentionally excluded from the operational log.
+* Attaches a :class:`logging.handlers.TimedRotatingFileHandler` to the **root**
+  logger that rotates daily at midnight and retains 7 days of logs, gated by a
+  filter that admits only ``claudenv.*`` records (plus the ``__main__`` entry
+  module, so ``python -m`` invocations are covered too).  Third-party libraries
+  are intentionally excluded from the operational log.
 * Optionally mirrors records to ``stderr`` via a console handler (used by the
   CLI; suppressed for stdio subprocesses such as the MCP servers/hooks, where
   stdout carries the protocol — stderr is still free, but the file is the
@@ -48,8 +49,7 @@ import threading
 from pathlib import Path
 
 APP_LOGGER_NAME = "claudenv"
-DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB per rotated file
-DEFAULT_BACKUP_COUNT = 5
+DEFAULT_BACKUP_COUNT = 7  # retain 7 daily rotations
 
 _FILE_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)-8s %(name)s %(threadName)s %(message)s"
 _CONSOLE_FORMAT = "%(levelname)-8s %(name)s: %(message)s"
@@ -71,6 +71,10 @@ class _ClaudenvFilter(logging.Filter):
         return name == "__main__" or name.startswith("claudenv")
 
 
+class _ConsoleHandler(logging.StreamHandler):
+    """Console handler tagged for idempotent re-attachment by ``configure_logging``."""
+
+
 def _claude_env_home() -> Path:
     return Path(os.environ.get("CLAUDE_ENV_HOME", Path.home() / ".claude-env"))
 
@@ -83,12 +87,14 @@ def log_file_path() -> Path:
 def _build_file_handler() -> logging.Handler:
     path = log_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    handler = logging.handlers.RotatingFileHandler(
+    handler = logging.handlers.TimedRotatingFileHandler(
         path,
-        maxBytes=DEFAULT_MAX_BYTES,
+        when="midnight",
+        interval=1,
         backupCount=DEFAULT_BACKUP_COUNT,
         encoding="utf-8",
     )
+    handler.suffix = "%Y-%m-%d"
     handler.setLevel(logging.DEBUG)
     handler.setFormatter(logging.Formatter(_FILE_FORMAT, datefmt=_DATE_FORMAT))
     handler.addFilter(_ClaudenvFilter())
@@ -143,11 +149,10 @@ def configure_logging(
 
     # (Re)apply the console handler so re-invocation honours current flags.
     for h in list(root.handlers):
-        if getattr(h, "_claudenv_console", False):
+        if isinstance(h, _ConsoleHandler):
             root.removeHandler(h)
     if console:
-        ch = logging.StreamHandler(sys.stderr)
-        ch._claudenv_console = True  # type: ignore[attr-defined]
+        ch = _ConsoleHandler(sys.stderr)
         ch.setLevel(logging.DEBUG if verbose else logging.WARNING)
         ch.setFormatter(logging.Formatter(_CONSOLE_FORMAT, datefmt=_DATE_FORMAT))
         ch.addFilter(_ClaudenvFilter())
@@ -157,7 +162,7 @@ def configure_logging(
     if isinstance(file_level, str):
         file_level = logging.getLevelName(file_level)
     for h in root.handlers:
-        if isinstance(h, logging.handlers.RotatingFileHandler):
+        if isinstance(h, logging.handlers.TimedRotatingFileHandler):
             h.setLevel(file_level)
 
     return logging.getLogger(APP_LOGGER_NAME)

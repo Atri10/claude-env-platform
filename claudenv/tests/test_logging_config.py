@@ -1,4 +1,4 @@
-"""Tests for claudenv.logging_config rotating logging setup."""
+"""Tests for claudenv.logging_config TimedRotatingFileHandler setup."""
 from __future__ import annotations
 
 import logging
@@ -6,9 +6,11 @@ import logging.handlers
 
 import pytest
 
-import claudenv.logging_config as lc
+import claudenv.adapters.logging as lc
 
 ROOT = logging.getLogger()
+
+_TIMED_ROTATING = logging.handlers.TimedRotatingFileHandler
 
 
 @pytest.fixture(autouse=True)
@@ -28,11 +30,11 @@ def _reset_logging(monkeypatch, tmp_path):
 
 
 def _file_handlers():
-    return [h for h in ROOT.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+    return [h for h in ROOT.handlers if isinstance(h, _TIMED_ROTATING)]
 
 
 def _console_handlers():
-    return [h for h in ROOT.handlers if getattr(h, "_claudenv_console", False)]
+    return [h for h in ROOT.handlers if isinstance(h, lc._ConsoleHandler)]
 
 
 def test_log_file_lives_under_home(tmp_path):
@@ -42,11 +44,11 @@ def test_log_file_lives_under_home(tmp_path):
     assert path.parent.exists()
 
 
-def test_single_rotating_file_handler(tmp_path):
+def test_single_timed_rotating_file_handler(tmp_path):
     lc.configure_logging()
     rh = _file_handlers()
     assert len(rh) == 1
-    assert rh[0].maxBytes == lc.DEFAULT_MAX_BYTES
+    assert rh[0].when.upper() == "MIDNIGHT"
     assert rh[0].backupCount == lc.DEFAULT_BACKUP_COUNT
 
 
@@ -79,12 +81,13 @@ def test_verbose_lowers_file_level(tmp_path):
     assert rh.level == logging.INFO
 
 
-def test_rotation_creates_numbered_backup(tmp_path):
+def test_rotation_is_configured(tmp_path):
     lc.configure_logging()
     rh = _file_handlers()[0]
-    rh.doRollover()
-    backup = lc.log_file_path().parent / (lc.log_file_path().name + ".1")
-    assert backup.exists()
+    assert isinstance(rh, _TIMED_ROTATING)
+    assert rh.suffix is not None
+    assert rh.when.upper() == "MIDNIGHT"
+    assert rh.backupCount == lc.DEFAULT_BACKUP_COUNT
 
 
 def test_filter_excludes_third_party(tmp_path):

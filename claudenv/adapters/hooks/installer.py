@@ -16,6 +16,7 @@ launch command from the class's own ``__module__`` and its install metadata
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -26,8 +27,10 @@ from claudenv.adapters.hooks.audit_hook import AuditHook
 from claudenv.adapters.hooks.policy_hook import PolicyHook
 from claudenv.adapters.hooks.session_hook import SessionHook
 from claudenv.adapters.hooks.session_metrics_hook import SessionMetricsHook
+from claudenv.adapters.logging import configure_logging
 from claudenv.ports.hooks.interfaces import IPostToolUseHook, IPreToolUseHook
-from claudenv.logging_config import configure_logging
+
+logger = logging.getLogger(__name__)
 
 # Default matcher: which tools trigger a hook. Mirrors the legacy
 # install_hooks.py behaviour; a hook class may override via HOOK_MATCHER.
@@ -180,8 +183,8 @@ def create_installer(
 
 
 def main() -> None:
-    configure_logging()
     """CLI entry point (``python -m claudenv.adapters.hooks.installer``)."""
+    configure_logging()
     import argparse
 
     parser = argparse.ArgumentParser(description="claude-env hook installer")
@@ -202,7 +205,7 @@ def main() -> None:
     else:
         result = installer.install(scope=args.scope)
 
-    print(json.dumps(result, indent=2))
+    logger.info("hooks result: %s", json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

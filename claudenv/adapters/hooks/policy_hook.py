@@ -15,13 +15,14 @@ from typing import Any
 
 from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
+from claudenv.adapters.incident import is_incident_active
+from claudenv.adapters.logging import configure_logging
 from claudenv.adapters.persistence import SQLiteDatabase
-from claudenv.domain.incident import is_incident_active
-from claudenv.domain.policy import PolicyService
+from claudenv.application.policy import PolicyService
 from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
 from claudenv.ports import IAuditLogger, IPolicyEngine
 from claudenv.ports.hooks.interfaces import IPreToolUseHook
-from claudenv.logging_config import configure_logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,35 +84,48 @@ class PolicyHook(IPreToolUseHook):
         return self.engine.scan_content(content)
 
     def _parse_bash_args(self, command: str) -> tuple[list[str], list[str]]:
-        """Parse bash command for file arguments and redirections."""
-        tokens = shlex.split(command, posix=True)
-        file_args = []
-        redir_targets = []
+        """Parse bash command for file arguments and redirections.
+
+        Delegates shell tokenization and the file/redirection command tables
+        to ``claudenv.domain.security.command_inspector`` (the single source
+        of truth for command-string parsing) instead of reimplementing them
+        here. Unlike that module's conservative ``bash_candidates`` -- which
+        only admits a bare token as a candidate path when it exists on disk
+        -- the policy hook must evaluate a file argument against a deny glob
+        *regardless of whether the target currently exists*: an agent about to
+        run ``cat secret.py`` is blocked by the ``secret.py`` deny rule even
+        before the file is created. So file-command arguments are collected
+        unconditionally and the policy engine decides.
+        """
+        from claudenv.domain.security.command_inspector import (
+            FILE_CMDS,
+            REDIR,
+            shell_tokens,
+        )
+
+        tokens = shell_tokens(command)
+        file_args: list[str] = []
+        redir_targets: list[str] = []
 
         i = 0
-        while i < len(tokens):
+        n = len(tokens)
+        while i < n:
             t = tokens[i]
-            if t in {">", ">>", "<"} and i + 1 < len(tokens):
+            if t in REDIR and i + 1 < n:
                 redir_targets.append(tokens[i + 1])
                 i += 2
-            elif t in {"2>", "1>"} and i + 1 < len(tokens):
-                redir_targets.append(tokens[i + 1])
-                i += 2
-            elif t.startswith(">") or t.startswith("<"):
+            elif t.startswith((">", "<")):
+                # glued redirection (e.g. `>file`); spaced forms are caught
+                # by the REDIR branch above.
                 redir_targets.append(t[1:])
                 i += 1
-            elif t.startswith("2>") or t.startswith("1>"):
-                redir_targets.append(t[2:])
+            elif os.path.basename(t) in FILE_CMDS or t in {"vim", "nvim", "code", "git", "rm"}:
+                # file/dest command: collect its non-flag arguments as
+                # candidate paths (cp/mv/ln/install/rsync dest, git/rm targets,
+                # and readers like cat/grep/sed/...). Flags and further
+                # redirections terminate the run.
                 i += 1
-            elif t in {"cat", "grep", "sed", "awk", "head", "tail", "less", "more", "vim", "nvim", "code"}:
-                if i + 1 < len(tokens):
-                    file_args.append(tokens[i + 1])
-                    i += 1
-                else:
-                    i += 1
-            elif t in {"git", "cp", "mv", "rm"}:
-                i += 1
-                while i < len(tokens) and not tokens[i].startswith("-"):
+                while i < n and not tokens[i].startswith("-") and tokens[i] not in REDIR:
                     file_args.append(tokens[i])
                     i += 1
             else:

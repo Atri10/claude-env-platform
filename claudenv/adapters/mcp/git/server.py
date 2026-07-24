@@ -14,12 +14,10 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from claudenv.adapters.audit import SqliteAuditLogger
-from claudenv.adapters.config import get_config
-from claudenv.adapters.persistence import SQLiteDatabase
-from claudenv.domain.policy import PolicyEngine, PolicyService
-from claudenv.domain.value_objects import SessionId
-from claudenv.logging_config import configure_logging
+from claudenv.adapters.logging import configure_logging
+from claudenv.adapters.mcp._deps import build_deps
+from claudenv.domain.policy import PolicyEngine
+
 logger = logging.getLogger(__name__)
 
 # Commands explicitly DENIED - these would modify remote state
@@ -59,48 +57,157 @@ class GitServer:
             return [
                 Tool(
                     name="git.status",
-                    description="Show working tree status (safe, read-only).",
-                    inputSchema={"type": "object", "properties": {}},
+                    description=(
+                        "Show the current working tree status — which files are staged, modified, "
+                        "untracked, or deleted. Safe read-only operation, always permitted, no "
+                        "approval required. Use before commit to review what will be included."
+                    ),
+                    inputSchema={"type": "object", "properties": {},
+                                 "description": "No parameters needed."},
                 ),
                 Tool(
                     name="git.diff",
-                    description="Show changes in working tree or index (safe, read-only).",
-                    inputSchema={"type": "object", "properties": {"staged": {"type": "boolean", "default": False}}},
+                    description=(
+                        "Show unstaged (working tree) changes by default, or staged changes with "
+                        "staged=true. Returns unified diff format. Safe read-only operation. Use "
+                        "before git add to review exactly what changed."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "staged": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "If true, show staged (index) diff instead of unstaged. "
+                                               "Equivalent to 'git diff --cached'.",
+                            }
+                        },
+                    },
                 ),
                 Tool(
                     name="git.log",
-                    description="Show commit history (safe, read-only).",
-                    inputSchema={"type": "object", "properties": {"oneline": {"type": "boolean", "default": True},
-                                                                  "limit": {"type": "integer", "default": 10}}},
+                    description=(
+                        "Show recent commit history. By default returns the last 10 commits in "
+                        "oneline format (hash + subject line). Use limit to see more, oneline=false "
+                        "for full commit details (author, date, full message). Safe read-only."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "oneline": {
+                                "type": "boolean",
+                                "default": True,
+                                "description": "If true, show abbreviated hash + subject line only. "
+                                               "If false, show full commit details (author, date, message).",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "default": 10,
+                                "description": "Maximum number of commits to show. Pass 0 for unlimited.",
+                            },
+                        },
+                    },
                 ),
                 Tool(
                     name="git.add",
-                    description="Stage files for commit (requires approval if repo policy says so).",
-                    inputSchema={"type": "object", "properties": {
-                        "paths": {"type": "array", "items": {"type": "string"}, "default": ["."]}}},
+                    description=(
+                        "Stage file changes for the next commit. Accepts one or more file paths; "
+                        "defaults to staging all changes ('.'). May require human approval depending "
+                        "on repo policy. Use after reviewing changes with git.diff."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "paths": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "default": ["."],
+                                "description": "File paths to stage (space-separated, relative to repo root). "
+                                               "Defaults to '.' which stages all changes.",
+                            }
+                        },
+                    },
                 ),
                 Tool(
                     name="git.commit",
-                    description="Create a commit from staged changes (requires approval).",
-                    inputSchema={"type": "object", "properties": {"message": {"type": "string"}}},
+                    description=(
+                        "Create a commit from currently staged changes. Requires a commit message. "
+                        "ALWAYS requires human approval — this is a state-mutating operation. "
+                        "Use git add first to stage files, then git commit to create the commit."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "message": {
+                                "type": "string",
+                                "description": "Commit message describing the changes. Should be a "
+                                               "clear, concise description of what and why.",
+                            }
+                        },
+                        "required": ["message"],
+                    },
                 ),
                 Tool(
                     name="git.checkout",
-                    description="Switch branches or restore files (safe local operations).",
-                    inputSchema={"type": "object", "properties": {"target": {"type": "string"},
-                                                                  "create": {"type": "boolean", "default": False}}},
+                    description=(
+                        "Switch to an existing branch, or create a new branch (with create=true) and "
+                        "switch to it. Also works to restore individual files from a past commit. "
+                        "Safe local operation — does NOT interact with remotes."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "target": {
+                                "type": "string",
+                                "description": "Branch name, commit SHA, or tag to check out. "
+                                               "For file restore use the file path.",
+                            },
+                            "create": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "If true, create a new branch with the given target name "
+                                               "before switching. Equivalent to 'git checkout -b <target>'.",
+                            },
+                        },
+                        "required": ["target"],
+                    },
                 ),
                 Tool(
                     name="git.stash",
-                    description="Stash changes temporarily (safe local operation).",
-                    inputSchema={"type": "object", "properties": {
-                        "action": {"type": "string", "enum": ["push", "pop", "list", "drop"], "default": "push"},
-                        "message": {"type": "string"}}},
+                    description=(
+                        "Temporarily stash (save) uncommitted changes so you can work on something "
+                        "else. Actions: push (save changes), pop (restore most recent stash), "
+                        "list (show all stashes), drop (delete a stash). Safe local operation."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["push", "pop", "list", "drop"],
+                                "default": "push",
+                                "description": "What stash operation to perform. push=save changes, "
+                                               "pop=restore latest stash, list=show all, drop=delete a stash.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": "Optional description for 'push' action. Helps identify "
+                                               "the stash later in 'list' output.",
+                            },
+                        },
+                    },
                 ),
                 Tool(
                     name="git.remote",
-                    description="List configured remotes (safe, read-only).",
-                    inputSchema={"type": "object", "properties": {}},
+                    description=(
+                        "List all configured remote repositories with their URLs (fetch/push). "
+                        "Safe read-only operation. Use to check what remote repos are configured "
+                        "before pushing or pulling."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                    },
                 ),
             ]
 
@@ -230,21 +337,8 @@ def create_server(
         session_id: str = "mcp-git",
         actor: str = "git-mcp",
 ) -> GitServer:
-    repo_root = Path(repo_root).resolve()
-    config = get_config()
-
-    policy_engine = PolicyService(config).load_engine(str(repo_root))
-
-    db = SQLiteDatabase(config.get_database_dsn())
-    audit_logger = SqliteAuditLogger(
-        db=db,
-        session_id=SessionId.from_string(session_id),
-        actor=actor,
-        repo=repo_root.name,
-        tier=policy_engine.get_compiled().tier,
-    )
-
-    return GitServer(repo_root, audit_logger, policy_engine, session_id)
+    deps = build_deps(repo_root, session_id, actor)
+    return GitServer(deps.repo_root, deps.audit_logger, deps.policy_engine, deps.session_id)
 
 
 async def main() -> None:

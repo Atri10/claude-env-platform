@@ -13,10 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from claudenv.adapters.config import get_config
+from claudenv.adapters.logging import configure_logging
 from claudenv.domain.value_objects import RepoSlug, SessionId, Tier
 from claudenv.ports import IAuditLogger
 from claudenv.ports.hooks.interfaces import IPostToolUseHook
-from claudenv.logging_config import configure_logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,11 +35,6 @@ class AuditHook(IPostToolUseHook):
     ):
         self.audit = audit_logger
         self.repo_root = repo_root
-        self._sinks: list[Any] = []
-
-    def add_sink(self, sink: Any) -> None:
-        """Add external audit event sink."""
-        self._sinks.append(sink)
 
     def on_tool_complete(self, tool_outcome: dict[str, Any]) -> None:
         tool_name = tool_outcome.get("tool_name", "unknown")
@@ -52,14 +48,6 @@ class AuditHook(IPostToolUseHook):
             duration_ms=tool_outcome.get("duration_ms"),
         )
 
-        # Flush to sinks
-        for sink in self._sinks:
-            if hasattr(sink, "write"):
-                sink.write(json.dumps({
-                    "tool": tool_name,
-                    "success": success,
-                    "details": details,
-                }).encode() + b"\n")
 
     def record_decision(self, approval: dict[str, Any]) -> None:
         """Record approval/denial decision."""
@@ -71,9 +59,6 @@ class AuditHook(IPostToolUseHook):
         )
 
     def flush(self) -> None:
-        for sink in self._sinks:
-            if hasattr(sink, "flush"):
-                sink.flush()
         self.audit.flush()
 
 

@@ -26,10 +26,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import logging
 import getpass
 import html
 import json
+import logging
 import secrets
 import socket
 from datetime import UTC, datetime
@@ -37,10 +37,11 @@ from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs
 
 from claudenv.adapters.config import get_config
+from claudenv.adapters.logging import configure_logging
 from claudenv.adapters.services import FileServiceRegistry, bind_http
 from claudenv.application.approval import ApprovalGate
 from claudenv.ports.approval import IApprovalGate
-from claudenv.logging_config import configure_logging
+
 logger = logging.getLogger(__name__)
 
 TOKEN = secrets.token_urlsafe(24)
@@ -289,12 +290,14 @@ def main() -> int:
 
     srv, port = bind_http(make_handler(gate), args.port)
     registry.register("approvals", port, extra={"decided_by": DECIDED_BY})
-    print(f"approvals UI -> http://127.0.0.1:{port}  "
-          f"(decisions recorded as '{DECIDED_BY}')")
+    logger.info(
+        "approvals UI listening on http://127.0.0.1:%d  (decisions recorded as '%s')",
+        port, DECIDED_BY,
+    )
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\nbye")
+        logger.info("approvals UI shutting down")
     finally:
         registry.unregister("approvals")
     return 0

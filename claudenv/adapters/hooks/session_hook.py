@@ -14,14 +14,11 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from pathlib import Path
 from typing import Any
 
-from claudenv.adapters.audit import SqliteAuditLogger
-from claudenv.adapters.config import get_config
-from claudenv.adapters.persistence import SQLiteDatabase
-from claudenv.domain.value_objects import SessionId, Tier
-from claudenv.logging_config import configure_logging
+from claudenv.adapters.logging import configure_logging
+from claudenv.ports import IAgentAuditLogger
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +32,7 @@ class SessionHook:
     @staticmethod
     def run(
         payload: dict[str, Any],
-        audit: Any | None = None,
+        audit: IAgentAuditLogger,
     ) -> int:
         """Record a SessionStart/SessionEnd event. Returns 0 always."""
         try:
@@ -46,8 +43,6 @@ class SessionHook:
                 or "unknown"
             )
             logger.info("session hook event=%s session=%s", event, session_id)
-            if audit is None:
-                audit = SessionHook._build_audit()
             if event == "SessionStart":
                 audit.agent_action(
                     agent="session", action="session_start", target=session_id,
@@ -58,21 +53,7 @@ class SessionHook:
                 )
         except Exception:
             logger.exception("session hook failed; continuing")
-            # A session hook must never break the session.
-            pass
         return 0
-
-    @staticmethod
-    def _build_audit() -> SqliteAuditLogger:
-        config = get_config()
-        db = SQLiteDatabase(config.get_database_dsn())
-        return SqliteAuditLogger(
-            db,
-            SessionId.from_string("session-hook"),
-            actor="session-hook",
-            repo=Path.cwd().name,
-            tier=Tier.INTERNAL,
-        )
 
     @staticmethod
     def main() -> None:
@@ -81,12 +62,31 @@ class SessionHook:
             payload = json.load(sys.stdin)
         except Exception:
             payload = {}
-        sys.exit(SessionHook.run(payload))
+        audit = _build_audit()
+        sys.exit(SessionHook.run(payload, audit))
+
+
+def _build_audit() -> IAgentAuditLogger:
+    """Build audit logger for the CLI entry point (this process is its own Main)."""
+    from claudenv.adapters.audit import SqliteAuditLogger
+    from claudenv.adapters.config import get_config
+    from claudenv.adapters.persistence import SQLiteDatabase
+    from claudenv.domain.value_objects import SessionId, Tier
+
+    config = get_config()
+    db = SQLiteDatabase(config.get_database_dsn())
+    return SqliteAuditLogger(
+        db,
+        SessionId.from_string("session-hook"),
+        actor="session-hook",
+        repo="session-hook",
+        tier=Tier.INTERNAL,
+    )
 
 
 def main() -> None:
-    configure_logging(console=False)
     """Module entry point: ``python -m claudenv.adapters.hooks.session_hook``."""
+    configure_logging(console=False)
     SessionHook.main()
 
 

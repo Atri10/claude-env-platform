@@ -6,8 +6,8 @@ Thin adapter over documentation service; logic in application/docs.py.
 """
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -15,13 +15,12 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from claudenv.adapters.audit import SqliteAuditLogger
 from claudenv.adapters.config import get_config
-from claudenv.adapters.persistence import SQLiteDatabase
+from claudenv.adapters.logging import configure_logging
+from claudenv.adapters.mcp._deps import build_deps
 from claudenv.application.docs import DocsService
-from claudenv.domain.policy import PolicyService
-from claudenv.domain.value_objects import RepoSlug, SessionId
-from claudenv.logging_config import configure_logging
+from claudenv.domain.value_objects import RepoSlug
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,46 +47,93 @@ class DocumentationServer:
             tools = [
                 Tool(
                     name="docs.list_deps",
-                    description="List all declared dependencies with versions.",
+                    description=(
+                        "List ALL declared dependencies with their version constraints from the "
+                        "project's package manager files (e.g. pyproject.toml, package.json, "
+                        "Cargo.toml, Gemfile, go.mod). Returns structured list with package name, "
+                        "version constraint, and category (prod/dev). Useful for checking dependency "
+                        "versions before updates or security audits."
+                    ),
                     inputSchema={"type": "object", "properties": {}},
                 ),
                 Tool(
                     name="docs.get_schema",
-                    description="Get API schema (OpenAPI/Swagger) if available.",
+                    description=(
+                        "Retrieve the API schema (OpenAPI 3.x / Swagger) if available in the repo. "
+                        "Returns the full schema document in the requested format (JSON or YAML). "
+                        "Use to understand available API endpoints, request/response shapes, and "
+                        "authentication requirements."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "format": {"type": "string", "enum": ["json", "yaml"], "default": "json"},
+                            "format": {
+                                "type": "string",
+                                "enum": ["json", "yaml"],
+                                "default": "json",
+                                "description": "Output format for the schema document: json (compact) "
+                                               "or yaml (more human-readable).",
+                            },
                         },
                     },
                 ),
                 Tool(
                     name="docs.find_reference",
-                    description="Search for symbol/class/function documentation by name or pattern.",
+                    description=(
+                        "Search the repo's documentation for technical references by symbol, class, "
+                        "function, or module name. Supports partial/pattern matching. Optionally "
+                        "filter by the kind of reference you need (class docs, function docs, "
+                        "module docs, variable docs, or any). Returns matching documentation "
+                        "sections with context. Does NOT search source code (use rag.search for that)."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "query": {"type": "string", "description": "Symbol name or pattern"},
-                            "kind": {"type": "string", "enum": ["class", "function", "module", "variable", "any"],
-                                     "default": "any"},
+                            "query": {
+                                "type": "string",
+                                "description": "Symbol name, class name, function name, or pattern "
+                                               "to search for (e.g. 'UserService', 'authenticate', "
+                                               "'database config').",
+                            },
+                            "kind": {
+                                "type": "string",
+                                "enum": ["class", "function", "module", "variable", "any"],
+                                "default": "any",
+                                "description": "Filter results to a specific documentation type: "
+                                               "class, function, module, variable, or any (all types).",
+                            },
                         },
                         "required": ["query"],
                     },
                 ),
                 Tool(
                     name="docs.get_file",
-                    description="Read a documentation/markdown file from the repo.",
+                    description=(
+                        "Read a specific documentation or markdown file from the repo by path. "
+                        "Use for reading guide docs, README files, API reference docs, or any "
+                        "documentation files. Path is relative to repo root. Returns the full "
+                        "file content."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "path": {"type": "string", "description": "Repo-relative path"},
+                            "path": {
+                                "type": "string",
+                                "description": "Repo-relative path to a documentation file (e.g. "
+                                               "'docs/guide/getting-started.md', 'CONTRIBUTING.md').",
+                            },
                         },
                         "required": ["path"],
                     },
                 ),
                 Tool(
                     name="docs.get_readme",
-                    description="Get the repository README content.",
+                    description=(
+                        "Retrieve the repository's README file content (README.md or README.rst). "
+                        "The README typically contains project overview, setup instructions, "
+                        "architecture summary, and usage examples. Use this first when exploring "
+                        "a new repository."
+                    ),
                     inputSchema={"type": "object", "properties": {}},
                 ),
                 Tool(
@@ -238,28 +284,11 @@ def create_server(
 ) -> DocumentationServer:
     repo_slug = RepoSlug.from_string(repo_slug)
     config = get_config()
-
-    # IConfigProvider has no get_docs_service()/get_audit_logger() -- those
-    # methods never existed on ConfigProvider (see claudenv/ports/config.py).
-    # Build the real adapters directly, the same way terminal/server.py's
-    # create_server() does.
     root = Path(repo_root or os.environ.get("CLAUDE_ENV_REPO_ROOT", os.getcwd())).resolve()
-    policy_engine = PolicyService(config).load_engine(str(root))
-    tier = policy_engine.get_compiled().tier
-
+    deps = build_deps(root, session_id, actor)
     docs_dir = Path(config.get_claude_env_home()) / "knowledge" / "docs"
-    docs_service = DocsService(root, tier, docs_dir)
-
-    db = SQLiteDatabase(config.get_database_dsn())
-    audit_logger = SqliteAuditLogger(
-        db=db,
-        session_id=SessionId.from_string(session_id),
-        actor=actor,
-        repo=repo_slug,
-        tier=tier,
-    )
-
-    return DocumentationServer(repo_slug, docs_service, audit_logger, session_id)
+    docs_service = DocsService(root, deps.policy_engine.get_compiled().tier, docs_dir)
+    return DocumentationServer(repo_slug, docs_service, deps.audit_logger, deps.session_id)
 
 
 async def main() -> None:

@@ -19,13 +19,11 @@ from typing import Any
 import yaml
 
 from claudenv.adapters.config import get_config
+from claudenv.adapters.logging import configure_logging
 from claudenv.ports.observability import ISessionMetricsRepository
-from claudenv.logging_config import configure_logging
+
 logger = logging.getLogger(__name__)
 
-# Install metadata (consumed by HookInstaller).
-HOOK_MATCHER = "*"
-HOOK_TIMEOUT = 5
 
 
 class SessionMetricsHook:
@@ -124,14 +122,16 @@ class SessionMetricsHook:
         sys.exit(SessionMetricsHook.run(payload))
 
 
+def run(payload: dict[str, Any], metrics: "ISessionMetricsRepository | None" = None) -> int:
+    """Module-level alias for :meth:`SessionMetricsHook.run`."""
+    return SessionMetricsHook.run(payload, metrics)
+
+
 def main() -> None:
-    configure_logging(console=False)
     """Module entry point: ``python -m claudenv.adapters.hooks.session_metrics_hook``."""
+    configure_logging(console=False)
     SessionMetricsHook.main()
 
 
 if __name__ == "__main__":
     main()
-def run(payload: dict[str, Any], metrics: "ISessionMetricsRepository | None" = None) -> int:
-    """Module-level alias for :meth:`SessionMetricsHook.run`."""
-    return SessionMetricsHook.run(payload, metrics)

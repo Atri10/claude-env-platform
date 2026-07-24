@@ -6,22 +6,21 @@ Thin adapter over IMemoryService; logic in domain/memory/service.py.
 """
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import os
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from claudenv.adapters.audit import SqliteAuditLogger
-from claudenv.adapters.config import get_config
-from claudenv.adapters.persistence import SQLiteDatabase
+from claudenv.adapters.logging import configure_logging
+from claudenv.adapters.mcp._deps import build_deps
 from claudenv.di import get_container
 from claudenv.domain.memory import EdgeRelation, MemoryType, NodeKind
-from claudenv.domain.value_objects import NodeId, RepoSlug, SessionId, Tier
+from claudenv.domain.value_objects import NodeId, RepoSlug
 from claudenv.ports import IMemoryService
-from claudenv.logging_config import configure_logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,99 +47,226 @@ class MemoryGraphServer:
             return [
                 Tool(
                     name="memory.store",
-                    description="Store a memory node. Returns node_id.",
+                    description=(
+                        "Store a new memory node in the persistent knowledge graph. Memories persist "
+                        "across sessions and are retrieved via semantic search or graph traversal. "
+                        "Returns the created node_id. Use for storing decisions, architectural "
+                        "conventions, investigation findings, entity definitions, and any knowledge "
+                        "that should be recallable in future sessions."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "content": {"type": "string", "description": "Memory content"},
-                            "type": {"type": "string", "enum": ["episodic", "semantic", "procedural", "agent"],
-                                     "default": "episodic"},
-                            "kind": {"type": "string",
-                                     "enum": ["session", "decision", "investigation", "entity", "concept",
-                                              "architecture", "preference", "workflow", "convention", "pattern"],
-                                     "default": "session"},
-                            "name": {"type": "string", "description": "Human-readable name"},
-                            "metadata": {"type": "object", "description": "Additional metadata"},
+                            "content": {
+                                "type": "string",
+                                "description": "The content body of the memory. Free-form text that "
+                                               "will be indexed for semantic search via embeddings.",
+                            },
+                            "type": {
+                                "type": "string",
+                                "enum": ["episodic", "semantic", "procedural", "agent"],
+                                "default": "episodic",
+                                "description": "Memory category: episodic (specific past experience), "
+                                               "semantic (factual knowledge), procedural (how-to workflows), "
+                                               "agent (agent-specific namespace).",
+                            },
+                            "kind": {
+                                "type": "string",
+                                "enum": ["session", "decision", "investigation", "entity", "concept",
+                                         "architecture", "preference", "workflow", "convention", "pattern"],
+                                "default": "session",
+                                "description": "Specific node sub-type within the memory category. "
+                                               "Decisions and architecture nodes are never pruned automatically.",
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Human-readable short name for this memory (e.g. "
+                                               "'auth-refactor-decision'). Displayed in search results.",
+                            },
+                            "metadata": {
+                                "type": "object",
+                                "description": "Optional arbitrary key-value metadata to attach to "
+                                               "the node (e.g. {\"file\": \"auth.py\", \"commit\": \"abc123\"}).",
+                            },
                         },
                         "required": ["content"],
                     },
                 ),
                 Tool(
                     name="memory.retrieve",
-                    description="Retrieve a memory node by ID.",
+                    description=(
+                        "Retrieve a single memory node by its node_id. Returns the full node with "
+                        "all properties (name, content, type, kind, confidence, timestamps). "
+                        "Use after memory.store or memory.search to get the complete record."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "node_id": {"type": "string", "description": "Node identifier"},
+                            "node_id": {
+                                "type": "string",
+                                "description": "UUID of the memory node to retrieve. Obtained from "
+                                               "the return value of memory.store or from memory.search "
+                                               "results.",
+                            },
                         },
                         "required": ["node_id"],
                     },
                 ),
                 Tool(
                     name="memory.search",
-                    description="Search memory by query (keyword + embedding). Returns ranked nodes with graph expansion.",
+                    description=(
+                        "Search persistent memory by natural language query. Combines keyword "
+                        "matching with embedding-based semantic similarity for ranked results. "
+                        "Optionally performs graph traversal (configurable depth) to include "
+                        "connected nodes. Returns ranked nodes with scores. Use types filter "
+                        "to narrow to specific memory categories."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "query": {"type": "string", "description": "Search query"},
-                            "depth": {"type": "integer", "default": 2, "description": "Graph traversal depth"},
-                            "top_k": {"type": "integer", "default": 10, "description": "Max results"},
-                            "types": {"type": "array", "items": {"type": "string",
-                                                                 "enum": ["episodic", "semantic", "procedural",
-                                                                          "agent"]}},
+                            "query": {
+                                "type": "string",
+                                "description": "Natural language search query describing what "
+                                               "you're looking for. The system uses both keyword "
+                                               "matching and semantic embedding similarity.",
+                            },
+                            "depth": {
+                                "type": "integer",
+                                "default": 2,
+                                "description": "How many levels of graph connections to traverse "
+                                               "from matching nodes. 0 = no traversal (flat search). "
+                                               "Higher values find more contextually related memories "
+                                               "but may include noise.",
+                            },
+                            "top_k": {
+                                "type": "integer",
+                                "default": 10,
+                                "description": "Maximum number of result nodes to return.",
+                            },
+                            "types": {
+                                "type": "array",
+                                "items": {"type": "string",
+                                          "enum": ["episodic", "semantic", "procedural", "agent"]},
+                                "description": "Optional filter to only return nodes of specific "
+                                               "memory types. Omit to search all types.",
+                            },
                         },
                         "required": ["query"],
                     },
                 ),
                 Tool(
                     name="memory.link",
-                    description="Create an edge between two nodes.",
+                    description=(
+                        "Create a directed edge (relationship) between two existing memory nodes. "
+                        "Edges form the memory graph structure used by memory.search for traversal. "
+                        "Relations describe how nodes are connected. Returns the created edge_id."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "source": {"type": "string", "description": "Source node ID"},
-                            "target": {"type": "string", "description": "Target node ID"},
-                            "relation": {"type": "string",
-                                         "enum": ["relates_to", "depends_on", "decision_about", "discovered_in",
-                                                  "supersedes", "consolidates"]},
-                            "weight": {"type": "number", "default": 1.0},
+                            "source": {
+                                "type": "string",
+                                "description": "node_id of the source node (the subject of the relation).",
+                            },
+                            "target": {
+                                "type": "string",
+                                "description": "node_id of the target node (the object of the relation).",
+                            },
+                            "relation": {
+                                "type": "string",
+                                "enum": ["relates_to", "depends_on", "decision_about", "discovered_in",
+                                         "supersedes", "consolidates"],
+                                "description": "The type of relationship between the nodes. "
+                                               "relates_to=general association, depends_on=prerequisite, "
+                                               "decision_about=this node documents a decision about target, "
+                                               "discovered_in=found during investigation of target, "
+                                               "supersedes=replaces a previous node, consolidates=merge result.",
+                            },
+                            "weight": {
+                                "type": "number",
+                                "default": 1.0,
+                                "description": "Strength of the relationship (0.0 to 1.0). "
+                                               "Higher weights influence traversal ranking.",
+                            },
                         },
                         "required": ["source", "target", "relation"],
                     },
                 ),
                 Tool(
                     name="memory.expand",
-                    description="Expand graph from seed nodes via edges.",
+                    description=(
+                        "Starting from one or more seed nodes, traverse outgoing edges to find "
+                        "connected memories. Optionally filter by relation type. Returns all "
+                        "nodes reachable within the given depth. Use after memory.search or "
+                        "memory.retrieve to explore the graph around a result."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "seed_ids": {"type": "array", "items": {"type": "string"}, "description": "Seed node IDs"},
-                            "depth": {"type": "integer", "default": 2, "description": "Traversal depth"},
-                            "relations": {"type": "array", "items": {"type": "string",
-                                                                     "enum": ["relates_to", "depends_on",
-                                                                              "decision_about", "discovered_in",
-                                                                              "supersedes", "consolidates"]}},
+                            "seed_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "One or more node_ids to use as starting points "
+                                               "for graph expansion.",
+                            },
+                            "depth": {
+                                "type": "integer",
+                                "default": 2,
+                                "description": "How many edge hops to traverse from the seeds. "
+                                               "A depth of 1 returns direct neighbors only.",
+                            },
+                            "relations": {
+                                "type": "array",
+                                "items": {"type": "string",
+                                          "enum": ["relates_to", "depends_on", "decision_about",
+                                                   "discovered_in", "supersedes", "consolidates"]},
+                                "description": "Optional filter: only follow edges of these "
+                                               "relation types. Omit to follow all relations.",
+                            },
                         },
                         "required": ["seed_ids"],
                     },
                 ),
                 Tool(
                     name="memory.session_ingest",
-                    description="Ingest session conversation into episodic memory.",
+                    description=(
+                        "Ingest a session's conversation history into episodic memory. Creates "
+                        "a structured memory node from the session transcript that can later be "
+                        "recalled via memory.search. Use at end of session or when a meaningful "
+                        "interaction should be preserved for future reference."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "session_id": {"type": "string", "description": "Session identifier"},
-                            "messages": {"type": "array", "items": {"type": "object"},
-                                         "description": "Conversation messages"},
+                            "session_id": {
+                                "type": "string",
+                                "description": "Unique identifier for this session (e.g. Claude Code "
+                                               "session UUID). Used for deduplication.",
+                            },
+                            "messages": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                                "description": "Array of conversation messages to ingest. Each "
+                                               "message should have at minimum a 'role' and 'content' "
+                                               "field. The system extracts topics, files touched, "
+                                               "and outcomes automatically.",
+                            },
                         },
                         "required": ["session_id", "messages"],
                     },
                 ),
                 Tool(
                     name="memory.analytics",
-                    description="Get memory graph analytics (node counts, edge types, confidence distribution).",
-                    inputSchema={"type": "object", "properties": {}},
+                    description=(
+                        "Get analytics and statistics about the current memory graph namespace. "
+                        "Returns: total node count broken down by memory type and node kind, "
+                        "edge type distribution, confidence score distribution, and namespace "
+                        "information. Useful for understanding the scope and health of memory."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                    },
                 ),
             ]
 
@@ -329,22 +455,9 @@ def create_server(
         actor: str = "memory-graph-mcp",
 ) -> MemoryGraphServer:
     repo_slug = RepoSlug.from_string(repo_slug)
-    config = get_config()
-
-    # Build the real adapters directly, the same way terminal/server.py's
-    # create_server() does.
-    db = SQLiteDatabase(config.get_database_dsn())
+    deps = build_deps(os.getcwd(), session_id, actor)
     memory_service = get_container().get(IMemoryService)
-
-    audit_logger = SqliteAuditLogger(
-        db=db,
-        session_id=SessionId.from_string(session_id),
-        actor=actor,
-        repo=repo_slug,
-        tier=Tier.INTERNAL,
-    )
-
-    return MemoryGraphServer(repo_slug, memory_service, audit_logger, session_id)
+    return MemoryGraphServer(repo_slug, memory_service, deps.audit_logger, deps.session_id)
 
 
 async def main() -> None:
