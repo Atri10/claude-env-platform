@@ -69,6 +69,9 @@ class ModelManager:
         if model_type == "embedding":
             emb = config.get("embedding", {})
             model_path = emb.get("model_path", "")
+            backend = emb.get("backend", "")
+            if backend not in ("llama_cpp", "onnx", "dummy"):
+                return ModelStatus(configured=False)
             if model_path and Path(os.path.expanduser(model_path)).exists():
                 return ModelStatus(
                     configured=True,
@@ -131,7 +134,9 @@ class ModelManager:
         model_dir = self.models_dir / name
         model_dir.mkdir(parents=True, exist_ok=True)
 
-        files_to_download = [("model.onnx", model_info["url"])]
+        url = model_info["url"]
+        fname = url.rsplit("/", 1)[-1].split("?")[0]  # derive filename from URL
+        files_to_download = [(fname, url)]
         if "tokenizer_url" in model_info:
             files_to_download.append(("tokenizer.json", model_info["tokenizer_url"]))
 
@@ -158,7 +163,7 @@ class ModelManager:
             else:
                 logger.debug("model file %s already exists, skipping", fname)
 
-        model_path = str(model_dir)
+        model_path = str(model_dir / fname)
         self._update_rag_config(model_info, model_type, model_path)
         self._record_download(model_info, model_type, model_path, total_size)
 

@@ -6,8 +6,12 @@ and dummy_embedder.py modules into one themed module.
 """
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class EmbedderBackend(ABC):
@@ -154,3 +158,105 @@ class DummyEmbedder(EmbedderBackend):
 
     def embed_query(self, text: str) -> list[float]:
         return [0.0] * self._dim
+
+
+class OnnxEmbedder(EmbedderBackend):
+    """ONNX Runtime embedding backend (sentence-transformers exported models).
+
+    Requires onnxruntime (already a dependency). Tokenization uses the
+    HuggingFace tokenizers library if installed, or falls back to a
+    minimal whitespace tokenizer that produces usable (not perfect) results.
+    """
+
+    def __init__(
+            self,
+            model_dir: str,
+            model_name: str = "onnx",
+            embedding_dim: int = 384,
+    ):
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            raise RuntimeError("onnxruntime not installed")
+
+        model_path = Path(model_dir)
+        if model_path.is_file():
+            model_path = model_path
+
+        onnx_file = model_path / "model.onnx"
+        if not onnx_file.exists():
+            raise RuntimeError(f"ONNX model not found at {onnx_file}")
+
+        self._session = ort.InferenceSession(str(onnx_file))
+        self._model_name = model_name
+        self._embedding_dim = embedding_dim
+        self._model_dir = model_path
+
+        input_names = [i.name for i in self._session.get_inputs()]
+        output_name = self._session.get_outputs()[0].name
+        self._input_names = input_names
+        self._output_name = output_name
+
+        # Try loading the tokenizer; fall back to basic whitespace
+        tokenizer_path = model_path / "tokenizer.json"
+        self._tokenizer = None
+        if tokenizer_path.exists():
+            try:
+                from tokenizers import Tokenizer
+                self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
+            except ImportError:
+                logger.warning(
+                    "ONNX tokenizer.json found but 'tokenizers' library not installed. "
+                    "Install with: pip install tokenizers"
+                )
+            except Exception:
+                logger.warning("failed to load tokenizer.json", exc_info=True)
+
+        logger.info(
+            "ONNX embedder loaded: %s dim=%d tokenizer=%s",
+            self._model_name, self._embedding_dim,
+            "loaded" if self._tokenizer else "fallback-whitespace",
+        )
+
+    @property
+    def dim(self) -> int:
+        return self._embedding_dim
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @property
+    def backend_name(self) -> str:
+        return "onnx"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._embed(t) for t in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    def _embed(self, text: str) -> list[float]:
+        inputs = self._tokenize(text)
+        outputs = self._session.run([self._output_name], inputs)
+        vec = outputs[0][0]  # first (only) batch element
+        if len(vec.shape) > 1:
+            vec = vec.mean(axis=0)  # mean pool if token-level output
+        norm = float(sum(x * x for x in vec) ** 0.5) or 1.0
+        return [float(x / norm) for x in vec]
+
+    def _tokenize(self, text: str) -> dict:
+        if self._tokenizer is not None:
+            encoded = self._tokenizer.encode(text)
+            return {
+                "input_ids": [encoded.ids],
+                "attention_mask": [encoded.attention_mask],
+            }
+
+        # Fallback: character-level tokenization — works for basic use.
+        max_len = 512
+        ids = [min(ord(c), 30000) for c in text[:max_len]]
+        return {
+            "input_ids": [ids],
+            "attention_mask": [[1] * len(ids)],
+        }

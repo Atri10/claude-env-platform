@@ -10,7 +10,7 @@ from pathlib import Path
 
 from claudenv.domain.rag import RAGConfig
 
-from .embedders import DummyEmbedder, EmbedderBackend, LlamaCppEmbedder
+from .embedders import DummyEmbedder, EmbedderBackend, LlamaCppEmbedder, OnnxEmbedder
 from .rerankers import NoopReranker, OnnxCrossEncoderReranker, RerankerBackend
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,14 @@ def _create_embedder(cfg: RAGConfig) -> EmbedderBackend:
             document_prefix=cfg.embedding_document_prefix,
             query_prefix=cfg.embedding_query_prefix,
             pooling_type=cfg.embedding_pooling_type,
+        )
+    elif cfg.embedding_backend == "onnx":
+        if not cfg.embedding_model_path:
+            raise RuntimeError("No embedding model configured. Set embedding.model_path in config.")
+        return OnnxEmbedder(
+            model_dir=os.path.expanduser(cfg.embedding_model_path),
+            model_name=cfg.embedding_model_name or Path(cfg.embedding_model_path).stem,
+            embedding_dim=cfg.embedding_dim,
         )
     elif cfg.embedding_backend == "dummy":
         return DummyEmbedder(dim=cfg.embedding_dim)
