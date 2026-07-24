@@ -43,9 +43,14 @@ def model_setup(ctx, model_path, pooling_type, embedding_dim, reranker_dir, yes)
 
 @model.command("ensure")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+@click.option("--skip-reranker", is_flag=True, help="Only download the embedding model.")
 @click.pass_context
-def model_ensure(ctx, yes):
-    """Ensure an embedding model is configured (one-click recommended setup)."""
+def model_ensure(ctx, yes, skip_reranker):
+    """Download and configure recommended models (one-click setup).
+
+    Downloads both the embedding model and reranker by default, configures
+    rag.yaml, and shows progress. Skips models already configured on disk.
+    """
     from claudenv.application.model_manager import ModelManager
 
     mgr = ModelManager()
@@ -56,21 +61,61 @@ def model_ensure(ctx, yes):
         click.echo(f"  backend: {status.backend}, dimension: {status.dim}")
         return
 
-    click.echo("No embedding model configured.")
+    click.echo("Recommended models:")
+    click.echo("  Embedding: all-MiniLM-L6-v2 (384-dim ONNX, ~90 MB)")
+    if not skip_reranker:
+        click.echo("  Reranker:  ms-marco-MiniLM-L-6-v2 (cross-encoder ONNX, ~90 MB)")
+    click.echo(f"  Total:     ~{'90' if skip_reranker else '180'} MB")
     click.echo()
-    if not yes and not click.confirm(
-        "Download and configure the recommended default model (all-MiniLM-L6-v2, ~90 MB)?",
-        default=True,
-    ):
+
+    if not yes and not click.confirm("Download and configure now?", default=True):
         click.echo("Skipped. Configure manually: claude-env model setup")
         return
 
-    click.echo("Downloading model...")
-    result = mgr.ensure_model("embedding")
+    all_ok = True
+
+    # --- Embedding model ---
+    click.echo("\nEmbedding model:")
+    bar_state = {}
+
+    def _mk_progress(label):
+        def _cb(downloaded, total):
+            if "bar" not in bar_state:
+                bar_state["bar"] = click.progressbar(length=total, label=label)
+                bar_state["bar"].__enter__()
+            bar_state["bar"].update(downloaded - bar_state.get("last", 0))
+            bar_state["last"] = downloaded
+        return _cb
+
+    result = mgr.ensure_model("embedding", progress_callback=_mk_progress("  model.onnx"))
+    if "bar" in bar_state:
+        bar_state["bar"].render_finish()
+
     if result.success:
-        click.echo(f"Model configured: {result.model_path}")
-        click.echo(f"Downloaded: {result.size_bytes / 1024 / 1024:.1f} MB")
-        click.echo("\nReady to index! Run: claude-env index <repo>")
+        click.echo(f"  Configured at {result.model_path}")
+        click.echo(f"  Size: {result.size_bytes / 1024 / 1024:.1f} MB")
     else:
-        click.echo(f"Failed: {result.message}", err=True)
+        click.echo(f"  FAILED: {result.message}", err=True)
+        all_ok = False
+
+    # --- Reranker ---
+    if not skip_reranker:
+        click.echo("\nReranker model:")
+        bar_state.clear()
+
+        reranker_result = mgr.ensure_model("reranker", progress_callback=_mk_progress("  model.onnx"))
+        if "bar" in bar_state:
+            bar_state["bar"].render_finish()
+
+        if reranker_result.success:
+            click.echo(f"  Configured at {reranker_result.model_path}")
+            click.echo(f"  Size: {reranker_result.size_bytes / 1024 / 1024:.1f} MB")
+        else:
+            click.echo(f"  {reranker_result.message} (RAG works without reranker)", err=True)
+
+    click.echo()
+    if all_ok:
+        click.echo("Done. Ready to index! Run: claude-env index <repo>")
+    else:
+        click.echo("Some downloads failed. Retry with claude-env model ensure.")
         ctx.exit(1)

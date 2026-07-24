@@ -157,13 +157,20 @@ class ModelManager:
     def _download_file(
         self, url: str, dest: Path, progress_callback=None,
     ) -> int:
-        """Download a file with optional progress reporting. Returns size in bytes."""
+        """Download a file with optional progress reporting. Returns size in bytes.
+
+        ``progress_callback``, if given, is called as
+        ``progress_callback(bytes_so_far, total_bytes)`` after every chunk.
+        The first call has ``bytes_so_far == 0`` so the caller can initialise
+        a progress bar keyed on ``total_bytes``."""
         logger.info("downloading %s -> %s", url, dest)
 
         ctx = ssl.create_default_context(cafile=certifi.where())
         req = urllib.request.Request(url, headers={"User-Agent": "claude-env/1.0"})
         with urllib.request.urlopen(req, context=ctx, timeout=300) as resp:
             total = int(resp.headers.get("Content-Length", 0))
+            if progress_callback and total:
+                progress_callback(0, total)
             downloaded = 0
             with open(dest, "wb") as f:
                 while True:

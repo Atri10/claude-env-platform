@@ -13,6 +13,15 @@ from claudenv.adapters.config import get_config
 logger = logging.getLogger(__name__)
 
 
+def _package_importable() -> bool:
+    """Check that the installed claude-env package is importable."""
+    try:
+        import claudenv  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 @click.group("validate")
 def validate():
     """Run validation checks."""
@@ -27,7 +36,8 @@ def validate_installation(ctx):
     logger.debug("[flow] validate installation: start")
     home = Path(config.get_claude_env_home())
     checks = [
-        ("venv exists", (home / "venv" / "bin" / "python").exists()),
+        ("python executable", Path(sys.executable).exists()),
+        ("claude-env importable", _package_importable()),
         ("config dir", (home / "config").exists()),
         ("global policy", (home / "config" / "global-policy.yaml").exists()),
         ("rag.yaml", (home / "config" / "rag.yaml").exists()),
