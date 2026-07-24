@@ -76,6 +76,12 @@ Status legend: ✅ written · 🔜 planned (not yet written)
 |---|---|---|
 | [onboarding.md](onboarding.md) | `claude-env onboard`, `claudenv/_data/templates/repo-onboarding/` | ✅ |
 
+## 9. CLI Reference — every command, flag, and exit code
+
+| Doc | Source | Status |
+|---|---|---|
+| [cli-reference.md](../cli-reference.md) | `claudenv/cli/` | ✅ |
+
 ---
 
 ## Shared format

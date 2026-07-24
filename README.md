@@ -238,6 +238,8 @@ claude-env policy-sim simulate /repo --candidate new-policy.yaml
 
 ## CLI command reference
 
+Full reference: **[docs/cli-reference.md](docs/cli-reference.md)** — every command, flag, argument, default, exit code, and example.
+
 `claude-env <command>` — every command has `--help` for full options.
 
 | Command | Purpose |
