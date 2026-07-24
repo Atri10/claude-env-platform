@@ -1,0 +1,46 @@
+{
+  "_description": "Recommended models for one-click setup. Models are suggested defaults — users can configure any compatible model.",
+  "embedding": {
+    "recommended": {
+      "name": "all-MiniLM-L6-v2",
+      "backend": "onnx",
+      "description": "Lightweight 384-dim sentence transformer (90 MB). Good default for most codebases.",
+      "dim": 384,
+      "pooling_type": "mean",
+      "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx",
+      "tokenizer_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
+      "size_mb": 90
+    },
+    "alternatives": [
+      {
+        "name": "bge-small-en-v1.5",
+        "backend": "onnx",
+        "description": "BAAI general embeddings — 384-dim (130 MB), strong retrieval quality.",
+        "dim": 384,
+        "pooling_type": "mean",
+        "url": "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx",
+        "tokenizer_url": "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.json",
+        "size_mb": 130
+      },
+      {
+        "name": "nomic-embed-text-v1.5",
+        "backend": "llama_cpp",
+        "description": "Nomic embed text GGUF — 768-dim (274 MB). Requires llama-cpp-python.",
+        "dim": 768,
+        "pooling_type": "mean",
+        "url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf",
+        "size_mb": 274
+      }
+    ]
+  },
+  "reranker": {
+    "recommended": {
+      "name": "ms-marco-MiniLM-L-6-v2",
+      "backend": "onnx_cross_encoder",
+      "description": "Cross-encoder reranker (90 MB). Improves retrieval ordering.",
+      "url": "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/onnx/model.onnx",
+      "tokenizer_url": "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/tokenizer.json",
+      "size_mb": 90
+    }
+  }
+}

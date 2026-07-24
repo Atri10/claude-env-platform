@@ -124,19 +124,56 @@ class RagIndexer(IRagIndexer):
                 total_files += 1
                 total_chunks += n
 
+        self._record_index_state(repo, branch, commit, total_chunks)
+        return {"files": total_files, "chunks": total_chunks}
+
+    def incremental_index(
+            self, repo: RepoSlug, branch: BranchName, commit: str,
+            changed: dict[str, str | None],
+    ) -> dict[str, Any]:
+        """Re-index only changed files (diff-based), mirroring master's
+        ``Indexer.incremental()`` but without touching the filesystem: the
+        caller supplies the post-diff contents.
+
+        ``changed`` maps ``file_path`` to either the new text (re-index) or
+        ``None`` (file deleted -> drop its chunks + bookkeeping). Unchanged
+        files are a no-op: ``index_file()`` already short-circuits when the
+        content hash matches the recorded hash in ``IRagBookkeeping``, so
+        feeding an unchanged file's text through here costs only a hash
+        comparison -- no re-embedding. This reuses ``index_file()`` /
+        ``delete_file()`` rather than duplicating ``full_index()`` logic.
+        """
+        total_chunks = total_files = 0
+
+        for path, text in changed.items():
+            if text is None:
+                # File removed from the working tree: drop its chunks and
+                # bookkeeping entry (stale-entry deletion).
+                self.delete_file(repo, branch, path)
+                continue
+            n = self.index_file(repo, branch, commit, path, text)
+            if n:
+                total_files += 1
+                total_chunks += n
+
+        self._record_index_state(repo, branch, commit, total_chunks)
+        return {"files": total_files, "chunks": total_chunks}
+
+    def _record_index_state(
+            self, repo: RepoSlug, branch: BranchName, commit: str,
+            chunk_count: int,
+    ) -> None:
         # IndexState is a frozen dataclass; IndexState.create() always sets
-        # chunk_count=0, so `state.chunk_count = total_chunks` used to raise
-        # dataclasses.FrozenInstanceError on every full_index() call.
+        # chunk_count=0, so `state.chunk_count = chunk_count` used to raise
+        # dataclasses.FrozenInstanceError. Use dataclasses.replace() instead.
         state = IndexState.create(
             repo=repo, branch=branch,
             table_name=str(RepoSlug(f"{repo}_{branch}")),
             commit=commit,
-            model=self.embedder.model_name if hasattr(self.embedder, 'model_name') else "unknown",
+            model=self.embedder.model_name if hasattr(self.embedder, "model_name") else "unknown",
         )
-        state = replace(state, chunk_count=total_chunks)
+        state = replace(state, chunk_count=chunk_count)
         self.bookkeeping.set_index_state(state)
-
-        return {"files": total_files, "chunks": total_chunks}
 
     def _chunk_file(
             self, file_path: str, text: str, repo: RepoSlug, branch: BranchName, commit: str,

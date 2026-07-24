@@ -2,8 +2,8 @@
 claude-env :: Application - Onboarding Service - OnboardingService
 """
 from __future__ import annotations
-import logging
 
+import logging
 import re
 import subprocess
 from pathlib import Path
@@ -22,6 +22,7 @@ from claudenv.application.onboarding.steps import (
 )
 from claudenv.domain.value_objects import BranchName, RepoSlug, Tier
 from claudenv.ports import IConfigProvider
+
 logger = logging.getLogger(__name__)
 
 

@@ -3,6 +3,7 @@ claude-env :: Application Layer
 """
 from __future__ import annotations
 
+from claudenv.application.policy import PolicyService
 from claudenv.domain.memory.service import (
     MemoryConsolidator,
     MemoryGraph,
@@ -12,7 +13,6 @@ from claudenv.domain.memory.service import (
 from claudenv.domain.memory.service import (
     MemoryServiceImpl as MemoryService,
 )
-from claudenv.domain.policy import PolicyService
 
 from .rag import RagIndexer, RagService
 

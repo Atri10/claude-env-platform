@@ -3,6 +3,7 @@ claude-env :: Application - RAG Service - RagService
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ from claudenv.ports import (
     IRagRetriever,
     IReranker,
 )
-import logging
+
 logger = logging.getLogger(__name__)
 
 _SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", ".claude-env", "dist", "build"}

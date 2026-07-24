@@ -4,13 +4,14 @@ claude-env :: Application - Documentation Service
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 from claudenv.domain.security import RagPoisonDetector
 from claudenv.domain.value_objects import Tier
-import logging
+
 logger = logging.getLogger(__name__)
 
 _SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", ".claude-env", "dist", "build"}

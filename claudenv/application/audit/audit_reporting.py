@@ -10,12 +10,13 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 
 from claudenv.ports.audit import IAuditRepository
 from claudenv.ports.database import IDatabase
-import logging
+
 logger = logging.getLogger(__name__)
 
 

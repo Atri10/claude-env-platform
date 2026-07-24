@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from claudenv.ports.services import IServiceRegistry
+
 logger = logging.getLogger(__name__)
 
 _HOST = "127.0.0.1"

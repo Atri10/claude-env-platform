@@ -6,9 +6,9 @@ and projection_repository.py modules into one themed module.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
-import logging
 
 from claudenv.domain.observability.budget import RepoSpend
 from claudenv.ports.database import IDatabase
@@ -18,6 +18,7 @@ from claudenv.ports.observability import (
     IProjectionRepository,
     ISessionMetricsRepository,
 )
+
 logger = logging.getLogger(__name__)
 
 
