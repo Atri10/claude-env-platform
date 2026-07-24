@@ -63,45 +63,47 @@ class RepoPolicy:
         tier = Tier.from_string(data.get("tier", 1))
         repo_slug = RepoSlug.from_string(data.get("repo", "repo"))
 
-        # Build allow rules
-        allow_paths = tuple(GlobPattern(p) for p in data.get("allow", {}).get("paths", []))
-        allow_exts = tuple(ExtensionRule(e) for e in data.get("allow", {}).get("extensions", []))
+        # Build allow rules (use `or {}` so YAML keys set to null don't crash)
+        allow_data = data.get("allow") or {}
+        allow_paths = tuple(GlobPattern(p) for p in allow_data.get("paths", []))
+        allow_exts = tuple(ExtensionRule(e) for e in allow_data.get("extensions", []))
 
         # Build deny rules
-        deny_paths = tuple(GlobPattern(p) for p in data.get("deny", {}).get("paths", []))
-        deny_exts = tuple(ExtensionRule(e) for e in data.get("deny", {}).get("extensions", []))
+        deny_data = data.get("deny") or {}
+        deny_paths = tuple(GlobPattern(p) for p in deny_data.get("paths", []))
+        deny_exts = tuple(ExtensionRule(e) for e in deny_data.get("extensions", []))
         deny_regex = tuple(RegexRule.create(r["pattern"], r.get("reason", "regex"))
-                           for r in data.get("deny", {}).get("regex", []))
+                           for r in deny_data.get("regex", []))
 
-        # Override deny
-        override_deny = tuple(GlobPattern(p) for p in data.get("override_deny", []))
+        # Override deny — explicit allow-list that beats repo deny rules.
+        override_deny = tuple(GlobPattern(p) for p in (data.get("override_deny") or []))
 
         # Content scan
-        cs = data.get("content_scan", {})
+        cs = data.get("content_scan") or {}
         content_scan = ContentScanConfig(
             enabled=cs.get("enabled", True),
             on_match=cs.get("on_match", "redact"),
             patterns=tuple(
                 ContentPattern.create(p["name"], p["pattern"])
-                for p in cs.get("patterns", [])
+                for p in (cs.get("patterns") or [])
             ),
         )
 
         # RAG
-        rag = data.get("rag", {})
+        rag = data.get("rag") or {}
         rag_enabled = rag.get("enabled", tier < Tier.RESTRICTED)
-        rag_index = tuple(GlobPattern(p) for p in rag.get("index_paths", ["**"]))
-        rag_exclude = tuple(GlobPattern(p) for p in rag.get("exclude_paths", []))
+        rag_index = tuple(GlobPattern(p) for p in (rag.get("index_paths") or ["**"]))
+        rag_exclude = tuple(GlobPattern(p) for p in (rag.get("exclude_paths") or []))
         rag_only_committed = rag.get("index_only_committed", True)
 
         # Memory
-        mem = data.get("memory", {})
+        mem = data.get("memory") or {}
         memory_namespace = mem.get("namespace", f"proj-{repo_slug}")
         memory_isolated = mem.get("isolated", tier >= Tier.SENSITIVE)
-        memory_share_with = tuple(mem.get("share_with_agents", []))
+        memory_share_with = tuple(mem.get("share_with_agents") or [])
 
         # Agent permissions
-        agent_perms = data.get("agent_permissions", {})
+        agent_perms = data.get("agent_permissions") or {}
 
         return cls(
             version=data.get("version", 1),
@@ -128,7 +130,7 @@ class RepoPolicy:
     def to_compiled(self, global_policy: GlobalPolicy) -> CompiledPolicy:
         """Compile with global policy."""
         # Merge tier overrides from global
-        tier_overrides = global_policy.tiers.get(self.tier, {})
+        tier_overrides = global_policy.tiers.get(self.tier) or {}
         extra_deny_ext = tuple(ExtensionRule(e) for e in tier_overrides.get("extra_deny_extensions", []))
         extra_deny_paths = tuple(GlobPattern(p) for p in tier_overrides.get("extra_deny_paths", []))
         default_deny = tier_overrides.get("default_deny", False)
