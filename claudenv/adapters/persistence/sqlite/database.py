@@ -6,6 +6,7 @@ Merges the previously separate database.py and transaction.py modules
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from claudenv.ports import IDatabase, ITransaction
+
+logger = logging.getLogger(__name__)
 
 
 class SQLiteTransaction(ITransaction):
@@ -75,6 +78,7 @@ class SQLiteDatabase(IDatabase):
         self._conn.execute("PRAGMA busy_timeout=5000;")
         self._lock = threading.RLock()
         self._backend = "sqlite"
+        logger.debug("SQLite database opened: %s (WAL mode, FK enforced)", path)
 
     @property
     def backend(self) -> str:
@@ -121,14 +125,8 @@ class SQLiteDatabase(IDatabase):
             self._conn.close()
 
     def apply_schema(self, *schema_files: str) -> None:
-        """Apply SQL schema files in order.
-
-        Idempotent: SQLite has no ADD COLUMN IF NOT EXISTS, so a migration
-        that widens an existing table (see sql/004_audit_trace_metadata.sql)
-        will raise "duplicate column name" on a later bootstrap re-run once
-        the column already exists. That specific, well-understood error is
-        swallowed; every other error still aborts and raises.
-        """
+        """Apply SQL schema files in order. Idempotent: all CREATE statements
+        use IF NOT EXISTS, so re-running is safe."""
         with self._lock:
             cur = self._conn.cursor()
             for schema_file in schema_files:
@@ -136,9 +134,6 @@ class SQLiteDatabase(IDatabase):
                 if not path.exists():
                     raise FileNotFoundError(f"Schema file not found: {schema_file}")
                 sql = path.read_text()
-                try:
-                    cur.executescript(sql)
-                except sqlite3.OperationalError as e:
-                    if "duplicate column name" not in str(e):
-                        raise
+                cur.executescript(sql)
             self._conn.commit()
+            logger.debug("applied %d schema files", len(schema_files))

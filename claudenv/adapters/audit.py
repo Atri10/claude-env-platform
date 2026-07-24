@@ -4,6 +4,7 @@ claude-env :: Adapters - SQLite Audit Logger
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import threading
@@ -24,6 +25,8 @@ from claudenv.domain.value_objects import RepoSlug
 from claudenv.ports import IAuditLogger
 
 GENESIS = "GENESIS"
+
+logger = logging.getLogger(__name__)
 
 # Identifies this OS process across every event it writes, so a report or
 # replay can group "everything one running agent process did" without
@@ -109,6 +112,10 @@ class SqliteAuditLogger(IAuditLogger):
                 self._write_projection(tx, event_type, event_id_int, event.ts, payload)
 
                 self._prev_hash = event.event_hash
+                logger.debug(
+                    "audit event appended: type=%s id=%s actor=%s repo=%s",
+                    event_type.value, event_id, self._actor, self._repo,
+                )
                 return event_id
 
     def _write_projection(self, tx, event_type: EventType, event_id_int: int, ts: str, payload: dict) -> None:
@@ -260,4 +267,12 @@ class SqliteAuditLogger(IAuditLogger):
             for r in rows
         ]
 
-        return verify_ledger_chain(ledger)
+        result = verify_ledger_chain(ledger)
+        if not result.ok:
+            logger.error(
+                "audit chain verification FAILED: broken at %s (checked %d events)",
+                result.broken_at, result.total_events,
+            )
+        else:
+            logger.debug("audit chain verified: %d events, all valid", len(rows))
+        return result
