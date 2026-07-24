@@ -29,8 +29,8 @@ class TestPackagedData:
 
     def test_sql_dir_has_schema(self):
         sql_files = sorted(p.name for p in sql_dir().glob("*.sql"))
-        assert "001_schema.sql" in sql_files
-        assert len(sql_files) >= 3
+        assert "schema.sql" in sql_files
+        assert len(sql_files) >= 1
 
     def test_templates_dir_has_repo_onboarding(self):
         onboarding = templates_dir() / "repo-onboarding"

@@ -2,15 +2,15 @@
 
 > Relates to: [OVERVIEW.md §1 — the agent could read or touch something it shouldn't](../OVERVIEW.md#1-the-agent-could-read-or-touch-something-it-shouldnt)
 
-**Source:** [`hooks/policy_hook.py`](../../hooks/policy_hook.py),
-[`hooks/audit_hook.py`](../../hooks/audit_hook.py).
-**Installer:** [`hooks/install_hooks.py`](../../hooks/install_hooks.py).
+**Source:** [`claudenv/adapters/policy_hook.py`](../../claudenv/adapters/policy_hook.py),
+[`claudenv/adapters/audit_hook.py`](../../claudenv/adapters/audit_hook.py).
+**Installer:** [`claudenv/adapters/hooks/installer.py`](../../claudenv/adapters/hooks/installer.py).
 **Tests:** [`tests/test_policy_hook_bash.py`](../../tests/test_policy_hook_bash.py),
 [`tests/test_install_hooks.py`](../../tests/test_install_hooks.py).
 
 This doc covers the two Claude Code hooks and nothing else. The actual path
 allow/deny decision — globs, extensions, regex, tiers — is
-[`security/policy_engine.py`](../../security/policy_engine.py), fully documented in
+[`claudenv/domain/policy/policy_engine.py`](../../claudenv/domain/policy/policy_engine.py), fully documented in
 [`policy-engine.md`](policy-engine.md); this doc only explains how these hooks *call*
 that engine, how they extract a path out of a free-form Bash command string in the
 first place, and the hook-specific guards (control plane, MCP-first) and failure
@@ -39,11 +39,11 @@ instead. Two hooks close that gap:
   blocks anything — `PostToolUse` fires after the tool already ran.
 
 Both are wired into the **repo-local**, git-committed `<repo>/.claude/settings.json`
-by `hooks/install_hooks.py` — so governance is scoped to onboarded repos only, and an
+by `claudenv/adapters/hooks/installer.py` — so governance is scoped to onboarded repos only, and an
 un-onboarded repo on the same machine is left untouched. `claude-env onboard` installs
 them automatically; `claude-env hooks` (run inside a repo) re-installs or repairs them.
 They are invoked as
-`"$CLAUDE_ENV_HOME/venv/bin/python" "$CLAUDE_ENV_HOME/hooks/{policy_hook,audit_hook}.py"`
+`"$CLAUDE_ENV_HOME/venv/bin/python" "$CLAUDE_ENV_HOME/{policy_hook,audit_hook}.py"`
 with the tool call's JSON piped in on stdin. The command uses the literal
 `$CLAUDE_ENV_HOME` env var (shell-expanded per machine) rather than baked-in absolute
 paths, so the committed `settings.json` is portable across a team — any developer with
@@ -59,16 +59,16 @@ environment variables read at import/run time, plus the wiring the installer wri
 
 | Name | Type | Default | Effect |
 |---|---|---|---|
-| `CLAUDE_ENV_HOME` | path | `~/.claude-env` | Where hooks add both themselves and the repo checkout to `sys.path`, and where `INCIDENT_MARKER` (`state/INCIDENT`) is looked up (`hooks/policy_hook.py,61`; `hooks/audit_hook.py`). |
-| `CLAUDE_ENV_HOOK_FAIL_CLOSED` | bool-ish string | unset (`false`) | If `"true"` (case-insensitive), an internal error in `policy_hook.py`'s `main()` denies the call instead of allowing it (`hooks/policy_hook.py`, `546-550`). Recommended for tier-2+ machines per the module docstring. |
-| `CLAUDE_ENV_MCP_FIRST` | bool-ish string | unset (`true`) | If `"false"`, disables the MCP-first redirect entirely — `_mcp_first_hint()` returns `None` unconditionally (`hooks/policy_hook.py`). |
-| `CLAUDE_ENV_HOOK_AUDIT_ALL` | bool-ish string | unset (`false`) | If `"true"`, `audit_hook.py` writes a row for **every** intercepted tool, not just the mutating set (`hooks/audit_hook.py,36`). |
+| `CLAUDE_ENV_HOME` | path | `~/.claude-env` | Where hooks add both themselves and the repo checkout to `sys.path`, and where `INCIDENT_MARKER` (`state/INCIDENT`) is looked up (`policy_hook.py,61`; `claudenv/adapters/audit_hook.py`). |
+| `CLAUDE_ENV_HOOK_FAIL_CLOSED` | bool-ish string | unset (`false`) | If `"true"` (case-insensitive), an internal error in `policy_hook.py`'s `main()` denies the call instead of allowing it (`claudenv/adapters/policy_hook.py`, `546-550`). Recommended for tier-2+ machines per the module docstring. |
+| `CLAUDE_ENV_MCP_FIRST` | bool-ish string | unset (`true`) | If `"false"`, disables the MCP-first redirect entirely — `_mcp_first_hint()` returns `None` unconditionally (`claudenv/adapters/policy_hook.py`). |
+| `CLAUDE_ENV_HOOK_AUDIT_ALL` | bool-ish string | unset (`false`) | If `"true"`, `audit_hook.py` writes a row for **every** intercepted tool, not just the mutating set (`audit_hook.py,36`). |
 
 | Installer constant / flag | Value | Effect |
 |---|---|---|
-| `PRE_MATCHER` (`hooks/install_hooks.py`) | `"Read\|Write\|Edit\|NotebookEdit\|Glob\|Grep\|Bash\|WebFetch\|WebSearch"` | Which tools trigger `policy_hook.py` on `PreToolUse`. `WebFetch`/`WebSearch` were added (2026-07-09) so the network-egress rule covers the **native** web tools, not just Bash `curl`/`wget` — otherwise a model whose shell egress is denied could reach the network by switching to `WebFetch`. If you widen the tools the hook must govern, widen this matcher too, or Claude Code never routes the new tool to the hook. |
-| `POST_MATCHER` (`hooks/install_hooks.py`) | `"Write\|Edit\|NotebookEdit\|Bash"` | Which tools trigger `audit_hook.py` on `PostToolUse`. Note `Read`/`Glob`/`Grep` are **not** in this matcher at all — `audit_hook.py`'s own `_MUTATING` filter is a second, redundant layer of the same restriction. |
-| `PRE_CMD` / `POST_CMD` | `"$CLAUDE_ENV_HOME/venv/bin/python" "$CLAUDE_ENV_HOME/hooks/{policy,audit}_hook.py"` | The portable hook command written into `settings.json`. Uses the literal env var (shell-expanded per machine) so the committed file works on any bootstrapped teammate. |
+| `PRE_MATCHER` (`claudenv/adapters/hooks/installer.py`) | `"Read\|Write\|Edit\|NotebookEdit\|Glob\|Grep\|Bash\|WebFetch\|WebSearch"` | Which tools trigger `policy_hook.py` on `PreToolUse`. `WebFetch`/`WebSearch` were added (2026-07-09) so the network-egress rule covers the **native** web tools, not just Bash `curl`/`wget` — otherwise a model whose shell egress is denied could reach the network by switching to `WebFetch`. If you widen the tools the hook must govern, widen this matcher too, or Claude Code never routes the new tool to the hook. |
+| `POST_MATCHER` (`claudenv/adapters/hooks/installer.py`) | `"Write\|Edit\|NotebookEdit\|Bash"` | Which tools trigger `audit_hook.py` on `PostToolUse`. Note `Read`/`Glob`/`Grep` are **not** in this matcher at all — `audit_hook.py`'s own `_MUTATING` filter is a second, redundant layer of the same restriction. |
+| `PRE_CMD` / `POST_CMD` | `"$CLAUDE_ENV_HOME/venv/bin/python" "$CLAUDE_ENV_HOME/{policy,audit}_hook.py"` | The portable hook command written into `settings.json`. Uses the literal env var (shell-expanded per machine) so the committed file works on any bootstrapped teammate. |
 | `--repo <path>` (default: cwd) | resolves to `<path>/.claude/settings.json` | The default target — repo-local governance. |
 | `--global` | `~/.claude/settings.json` | Machine-wide install (legacy behavior; opt-in). |
 | `--settings <path>` | explicit file | Overrides `--repo`/`--global`. |
@@ -120,7 +120,7 @@ workflow.
 back to Bash's `command` string:
 
 ```python
-# hooks/policy_hook.py
+# claudenv/adapters/policy_hook.py
 path_str = next((tin[k] for k in _PATH_KEYS if tin.get(k)), None)
 if not path_str and tool == "Grep":
     path_str = tin.get("path")
@@ -130,7 +130,7 @@ if not path_str and not is_bash and tool not in ("Write", "Edit", "NotebookEdit"
     return 0  # pathless, non-Bash calls: no path policy to apply
 ```
 
-`_PATH_KEYS = ("file_path", "path", "notebook_path")` (`hooks/policy_hook.py`) covers
+`_PATH_KEYS = ("file_path", "path", "notebook_path")` (`claudenv/adapters/policy_hook.py`) covers
 `Read`/`Write`/`Edit` (`file_path`), `Glob` (`path`), and `NotebookEdit`
 (`notebook_path`). `Grep`'s `path` is fetched separately because `Grep`'s primary key is
 `pattern`, not a path key that would satisfy the first check. A `Write`/`Edit`/
@@ -143,11 +143,11 @@ policy-checked at all.
 
 Native `Bash` has no path key — the entire command is one string — so the hook has to
 parse it. The module docstring calls this the "Bash gap"
-(`hooks/policy_hook.py`). The first subtlety is that plain `shlex.split()` glues
+(`claudenv/adapters/policy_hook.py`). The first subtlety is that plain `shlex.split()` glues
 operators onto adjacent words:
 
 ```python
-# hooks/policy_hook.py
+# claudenv/adapters/policy_hook.py
 def _shell_tokens(command: str) -> list[str]:
     """Tokenize a shell command, respecting quotes AND surfacing operators
     (`;` `|` `&` `&&` `||` `<` `>` `>>`) as their own tokens.
@@ -175,14 +175,14 @@ would be treated as a shell comment and everything after it silently dropped fro
 tokenization.
 
 Tokens are then split into simple-command segments on `_CMD_SEP = {";", "|", "&",
-"&&", "||", "|&", "\n", "(", ")", "{", "}"}` (`hooks/policy_hook.py`) so each
+"&&", "||", "|&", "\n", "(", ")", "{", "}"}` (`claudenv/adapters/policy_hook.py`) so each
 segment's leading token can be checked as its own command — this is what lets `(rm -rf
 build)` be caught even though `rm` is hidden behind a `(`.
 
 ### `_bash_candidates()` — conservative path/network extraction
 
 ```python
-# hooks/policy_hook.py
+# claudenv/adapters/policy_hook.py
 def _bash_candidates(command: str, cwd: str) -> tuple[list[str], set[str]]:
     """Parse a Bash command into (candidate file paths, network-egress cmds).
 
@@ -213,7 +213,7 @@ A second, stricter extractor exists specifically so the control-plane guard does
 fire on reads:
 
 ```python
-# hooks/policy_hook.py
+# claudenv/adapters/policy_hook.py
 def _bash_write_targets(command: str, cwd: str) -> list[str]:
     """File paths a Bash command WRITES to: redirection destinations (`>`/`>>`,
     glued or spaced) plus the target args of file-writing commands. Read-only
@@ -222,10 +222,10 @@ def _bash_write_targets(command: str, cwd: str) -> list[str]:
 
 It reuses the same tokenizer and segmenter, but only collects redirection
 destinations plus the target arguments of `_WRITE_CMDS = {"cp", "mv", "tee", "dd",
-"install", "ln", "rsync"}` (`hooks/policy_hook.py`). For `cp`/`mv`/`install`/`ln`/
+"install", "ln", "rsync"}` (`claudenv/adapters/policy_hook.py`). For `cp`/`mv`/`install`/`ln`/
 `rsync` only the **last** non-flag argument counts (the destination); `tee` writes
 **all** of its file args; `dd` is handled separately by pulling `of=<file>` out of its
-`key=value` argument style (`hooks/policy_hook.py`). This is why `cat
+`key=value` argument style (`claudenv/adapters/policy_hook.py`). This is why `cat
 .claude/repo-policy.yaml` is allowed while `cp x .claude/repo-policy.yaml` is denied —
 `cat` isn't in `_WRITE_CMDS` and isn't a redirection, so it never appears in this
 extractor's output at all, confirmed by `test_control_plane_read_is_allowed`
@@ -234,7 +234,7 @@ extractor's output at all, confirmed by `test_control_plane_read_is_allowed`
 ### `_mutating_reason()` — the hard-deny list, independent of path
 
 ```python
-# hooks/policy_hook.py
+# claudenv/adapters/policy_hook.py
 def _mutating_reason(command: str) -> str | None:
     """Return a reason if the command is a destructive/state-mutating native shell
     command that must be hard-denied, else None."""
@@ -254,7 +254,7 @@ def _mutating_reason(command: str) -> str | None:
     return None
 ```
 
-`_MUTATING_CMDS` (`hooks/policy_hook.py`) is `rm rmdir unlink shred dd mkfs
+`_MUTATING_CMDS` (`claudenv/adapters/policy_hook.py`) is `rm rmdir unlink shred dd mkfs
 truncate chmod chown chgrp chflags kill pkill killall` — this check runs **first**, in
 every segment, independent of what path arguments follow. `_GIT_MUTATING =
 {"push", "reset", "rebase", "clean", "filter-branch", "gc", "prune"}` singles out git
@@ -262,7 +262,7 @@ subcommands that rewrite history or touch the remote; ordinary `git status`, `gi
 diff`, `git log`, `git commit` (without `--amend`) are deliberately left alone
 (`test_allow_readonly_and_additive_commands`, `tests/test_policy_hook_bash.py`).
 Additive commands (`mkdir`, `touch`, `cp`, `ln`) are intentionally excluded from
-`_MUTATING_CMDS` per the inline comment at `hooks/policy_hook.py` — "to avoid
+`_MUTATING_CMDS` per the inline comment at `claudenv/adapters/policy_hook.py` — "to avoid
 over-blocking."
 
 ### `_script_execution_reason()` — closing the script-indirection gap (added 2026-07-13)
@@ -277,7 +277,7 @@ unmediated bypass of the entire Bash gap (and of the Write/Edit-time secret scan
 since a path reference like `secrets/prod.env` isn't a secret-shaped string).
 
 ```python
-# hooks/policy_hook.py
+# claudenv/adapters/policy_hook.py
 _SCRIPT_INTERPRETERS = {
     "bash", "sh", "zsh", "dash", "ksh", "csh", "tcsh",
     "python", "python3", "python2", "node", "nodejs", "deno",
@@ -307,7 +307,7 @@ argument that doesn't actually exist on disk is not treated as a script
 ### `_inspect_bash()` — the seven-step precedence chain
 
 ```python
-# hooks/policy_hook.py
+# claudenv/adapters/policy_hook.py
 def _inspect_bash(command: str, engine, root: Path, cwd: str
                   ) -> tuple[str, str, str] | None:
     """Return (action, reason, denied_path_or_'') for a Bash command, or None.
@@ -320,7 +320,7 @@ def _inspect_bash(command: str, engine, root: Path, cwd: str
 
 The docstring's stated order actually has one more step than listed: the
 control-plane write check sits between the script-execution check and the
-denied-path check in the real code (`hooks/policy_hook.py`), even though the
+denied-path check in the real code (`claudenv/adapters/policy_hook.py`), even though the
 docstring's one-line summary omits it. In full:
 
 1. **`_mutating_reason()` match** → hard `deny`, no path involved at all.
@@ -349,7 +349,7 @@ allowed silently.
 ### The control-plane guard (`_is_control_plane`)
 
 ```python
-# hooks/policy_hook.py
+# claudenv/adapters/policy_hook.py
 _CONTROL_PLANE = [
     # per-repo control plane (relative form, e.g. ".claude/repo-policy.yaml")
     re.compile(r"(^|/)\.claude/repo-policy\.ya?ml$"),
@@ -377,13 +377,13 @@ def _is_control_plane(*path_forms: str) -> bool:
 This exists so an agent can't weaken its own guardrails by editing the files that
 *define* them — `.claude/repo-policy.yaml`, `.claude/settings.json` /
 `settings.local.json`, or anything under the deployed `$CLAUDE_ENV_HOME`'s
-`config/hooks/security/agents/sql/lib` directories. It is checked in two independent
+`claudenv/_data/config/` directories. It is checked in two independent
 call sites that both must agree: the Bash write-target loop
-(`hooks/policy_hook.py`) and the native `Write`/`Edit`/`NotebookEdit` path in
-`main()` (`hooks/policy_hook.py`). Both call sites pass **both** the
+(`claudenv/adapters/policy_hook.py`) and the native `Write`/`Edit`/`NotebookEdit` path in
+`main()` (`claudenv/adapters/policy_hook.py`). Both call sites pass **both** the
 repo-relative and the resolved-absolute form of the path — the docstring explains why:
 a purely repo-relative check would miss a write aimed at
-`~/.claude-env/hooks/policy_hook.py` from inside an unrelated repo. Both sites also
+`~/.claude-env/policy_hook.py` from inside an unrelated repo. Both sites also
 check `not engine._match_paths(rel, engine.repo.override_paths)` — reaching into the
 `PolicyEngine`'s private `_match_paths` method and its `override_paths` — so a repo
 can still explicitly opt a control-plane path back in in its own
@@ -401,7 +401,7 @@ Bash command string, only whatever path the hook decides to feed it.
 ### MCP-first redirect
 
 ```python
-# hooks/policy_hook.py
+# claudenv/adapters/policy_hook.py
 _MCP_FIRST = [
     (re.compile(r"(^|/)\.claude/.*/memory/"),
      "record or recall memory via the memory-graph MCP (memory.write / memory.recall) — "
@@ -414,7 +414,7 @@ with a hint pointing at the governed MCP tool instead — so an agent can't side
 memory-graph MCP's own logic (dedup, node-kind validation, hash-chained writes) by
 editing Claude Code's memory files directly. It only fires in onboarded repos (checked
 via `(root / ".claude" / "repo-policy.yaml").exists()` at the call site,
-`hooks/policy_hook.py`) and can be switched off wholesale with
+`claudenv/adapters/policy_hook.py`) and can be switched off wholesale with
 `CLAUDE_ENV_MCP_FIRST=false`. `tests/test_policy_hook_bash.py`
 (`test_mcp_first_memory_redirect`) confirms both
 `Users/x/.claude/projects/y/memory/MEMORY.md` and `.claude/projects/z/memory/note.md`
@@ -424,7 +424,7 @@ memory in its filename (`docs/memory-design.md`) do not — the regex requires a
 
 ### `main()` — the full PreToolUse sequence
 
-Putting it together, in the order the real code checks them (`hooks/policy_hook.py`):
+Putting it together, in the order the real code checks them (`claudenv/adapters/policy_hook.py`):
 
 1. Parse stdin JSON; malformed input returns `0` immediately (nothing to decide on).
 2. Incident marker check — hard deny everything if present.
@@ -444,7 +444,7 @@ Putting it together, in the order the real code checks them (`hooks/policy_hook.
    | `WebSearch` | allow | ask |
 4. Extract `path_str` / `bash_cmd`; bail early (allow) if neither applies.
 5. `PolicyEngine.load(root)` where `root` is found by walking up from `cwd` looking
-   for `.claude/repo-policy.yaml` or `.git` (`_repo_root`, `hooks/policy_hook.py`).
+   for `.claude/repo-policy.yaml` or `.git` (`_repo_root`, `claudenv/adapters/policy_hook.py`).
 6. **Read confinement (`_out_of_repo_read`)**: for a native path tool, and for each
    file candidate a Bash command touches, a path that resolves **outside the
    onboarded repo root** is hard-denied (+ `policy_violation` row) — with only the
@@ -464,7 +464,7 @@ Putting it together, in the order the real code checks them (`hooks/policy_hook.
 12. Otherwise: allow, silently — no stdout at all.
 
 Every `deny`/`ask` reason is prefixed with a stable operator-control **signature**
-(`SIGNATURE`, `hooks/policy_hook.py`) via `_deny`/`_ask` — so a model reading the
+(`SIGNATURE`, `claudenv/adapters/policy_hook.py`) via `_deny`/`_ask` — so a model reading the
 reason can tell it apart from prompt-injected text and stop rather than trying to
 route around a control it mistook for session content.
 
@@ -477,7 +477,7 @@ never-silently-allow handling described above.)
 ### `PostToolUse`: `audit_hook.py`
 
 ```python
-# hooks/audit_hook.py
+# claudenv/adapters/audit_hook.py
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -517,11 +517,11 @@ repo-local hook wiring means a governed session almost always has one).
 This hook never emits a `hookSpecificOutput` block and never denies — `PostToolUse`
 fires after the tool has already run, so there's nothing left to block. It writes one
 `tool_call` audit row (via `AuditLogger.tool_call`,
-`audit/audit_logger.py`) per call, with `tool` set to `f"native.{tool}"` (e.g.
+`claudenv/adapters/audit.py`) per call, with `tool` set to `f"native.{tool}"` (e.g.
 `native.Write`, `native.Bash`) so ledger queries can distinguish native tool traffic
 from MCP traffic (which is logged as its own tool names by the MCP servers
 themselves). `_MUTATING = {"Write", "Edit", "NotebookEdit", "Bash"}`
-(`hooks/audit_hook.py`) is the default filter; every arg value is truncated to
+(`claudenv/adapters/audit_hook.py`) is the default filter; every arg value is truncated to
 `_MAX_ARG = 400` characters before being stored, so a giant `content` write doesn't
 bloat the ledger — only the five keys in the loop (`file_path`, `path`,
 `notebook_path`, `command`, `pattern`) are captured, so a `Write`'s actual `content` is
@@ -562,15 +562,15 @@ bloat the ledger — only the five keys in the loop (`file_path`, `path`,
   to the policy-blocked-path check and the control-plane guard, just not the hard
   "state-mutating" deny.
 - **The audit row for a Bash denial happens *before* the deny is printed, and failure
-  to write it is swallowed.** `hooks/policy_hook.py` wraps the
+  to write it is swallowed.** `claudenv/adapters/policy_hook.py` wraps the
   `AuditLogger(...).policy_violation(...)` call in its own `try`/`except Exception:
   pass` — if the DB is unavailable, the deny still happens, it's just not logged. The
   same pattern repeats at every audit call site in this file
-  (`hooks/policy_hook.py`, `504-511`, `534-542`); the inline comment at
-  `hooks/policy_hook.py` states the intent directly: "auditing must never break the
+  (`claudenv/adapters/policy_hook.py`, `504-511`, `534-542`); the inline comment at
+  `claudenv/adapters/policy_hook.py` states the intent directly: "auditing must never break the
   decision itself."
 - **Fail-open is the default for the *entire* `main()` body, not just the engine
-  load.** The `try` at `hooks/policy_hook.py` wraps everything from
+  load.** The `try` at `claudenv/adapters/policy_hook.py` wraps everything from
   `PolicyEngine.load()` through the secret-content scan — any exception anywhere in
   that block (a corrupt policy YAML, a broken DB connection, a bug in `_inspect_bash`)
   falls through to `except Exception as exc:`, which allows silently unless
@@ -580,19 +580,19 @@ bloat the ledger — only the five keys in the loop (`file_path`, `path`,
 - **The `PostToolUse` matcher and the hook's own `_MUTATING` set are redundant by
   design, not accidentally duplicated.** `install_hooks.py`'s `POST_MATCHER` already
   restricts invocation to `Write|Edit|NotebookEdit|Bash`
-  (`hooks/install_hooks.py`), so `audit_hook.py`'s internal `_MUTATING` check
-  (`hooks/audit_hook.py,36`) only actually does work when `CLAUDE_ENV_HOOK_AUDIT_ALL`
+  (`claudenv/adapters/hooks/installer.py`), so `audit_hook.py`'s internal `_MUTATING` check
+  (`audit_hook.py,36`) only actually does work when `CLAUDE_ENV_HOOK_AUDIT_ALL`
   broadens the *installed* matcher too — otherwise Claude Code itself never invokes the
   hook for a `Read`/`Glob`/`Grep` call in the first place. Setting the env var alone,
   without changing `POST_MATCHER`, does nothing.
 - **`Write` content is never stored in the audit ledger, even truncated** — the
   `summary` loop only reads the five keys listed [above](#posttooluse-audit_hookpy);
   `content`/`new_string`/`new_source` (the keys `policy_hook.py`'s secret scan
-  inspects) are absent (`hooks/audit_hook.py`). The ledger records *that* a write
+  inspects) are absent (`claudenv/adapters/audit_hook.py`). The ledger records *that* a write
   happened and to *which* path, never the bytes written.
 - **`_repo_root()` prefers an existing repo policy file over a bare `.git`.** Because
   the loop checks `(cand / ".claude" / "repo-policy.yaml").exists() or (cand /
-  ".git").exists()` at each directory (`hooks/policy_hook.py`) walking
+  ".git").exists()` at each directory (`claudenv/adapters/policy_hook.py`) walking
   *upward*, the first ancestor satisfying *either* condition wins — a nested Bash
   subshell or `cd`-ed working directory below the true repo root will still resolve
   correctly as long as no intermediate directory happens to have its own `.git` or

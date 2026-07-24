@@ -10,8 +10,8 @@ and config schemas, see [`README.md`](../README.md) — this document links out 
 rather than repeating it.
 
 > **New here?** Every command below is real — copy any of them once you've run
-> `claude-env bootstrap` and `claude-env onboard <repo>` (see
-> [README §3](../README.md#3-step-1--bootstrap-the-platform) and
+> `claude-env init` and `claude-env onboard <repo>` (see
+> [README §3 (claude-env init)) and
 > [§5](../README.md#5-step-3--onboard-a-repository)). Run `claude-env` with no
 > arguments any time for the full, grouped command list.
 
@@ -94,12 +94,12 @@ blocked-by-different-rule: 1
 No file is touched and no agent session is affected — this is pure "what would change,"
 so a policy edit can be reviewed like any other diff before it's ever applied.
 
-*Implemented in [`security/policy_engine.py`](../security/policy_engine.py),
-[`hooks/policy_hook.py`](../hooks/policy_hook.py),
-[`hooks/audit_hook.py`](../hooks/audit_hook.py),
-[`security/detectors.py`](../security/detectors.py),
-[`security/incident.py`](../security/incident.py),
-[`security/policy_sim.py`](../security/policy_sim.py).*
+*Implemented in [`claudenv/domain/policy/policy_engine.py`](..guide/policy-engine.md),
+[`claudenv/adapters/hooks/policy_hook.py`](..guide/native-tool-hooks.md),
+[`claudenv/adapters/hooks/audit_hook.py`](..guide/native-tool-hooks.md),
+[`claudenv/domain/security/detectors.py`](..guide/secret-detection.md),
+[`claudenv/adapters/incident.py` / `claudenv/domain/incident.py`](..guide/incident-mode.md),
+[`claudenv/application/policy/policy_service.py`](..guide/policy-simulation.md).*
 
 ---
 
@@ -145,9 +145,9 @@ $ claude-env replay a1b2c3d4-...
 $ claude-env report --window 7d --format md --out weekly-compliance.md
 ```
 
-*Implemented in [`audit/audit_logger.py`](../audit/audit_logger.py),
-[`audit/session_replay.py`](../audit/session_replay.py),
-[`audit/compliance_report.py`](../audit/compliance_report.py).*
+*Implemented in [`claudenv/adapters/audit.py`](..guide/audit-ledger.md),
+[`claudenv/application/audit/audit_reporting.py`](..guide/audit-ledger.md),
+[`claudenv/application/audit/audit_reporting.py`](..guide/audit-ledger.md).*
 
 ---
 
@@ -196,9 +196,9 @@ appr-7f3a1c9e2b04 -> approved
 
 ![claude-env request lifecycle](assets/request-lifecycle.svg)
 
-*Implemented in [`mcp-servers/terminal/server.py`](../mcp-servers/terminal/server.py),
-[`agents/orchestration/approvals_ui.py`](../agents/orchestration/approvals_ui.py),
-[`agents/orchestration/approval_gate.py`](../agents/orchestration/approval_gate.py).*
+*Implemented in [`claudenv/adapters/mcp/terminal/server.py`](..guide/mcp-servers.md),
+[`claudenv/adapters/approvals_ui.py`](..guide/approvals-workflow.md),
+[`claudenv/application/approval.py`](..guide/approvals-workflow.md).*
 
 ---
 
@@ -243,12 +243,12 @@ $ claude-env memory-sync import --in team.jsonl --namespace proj-payments
 imported nodes=214 (skipped 0) edges=187 (skipped 0)
 ```
 
-*Implemented in [`memory/memory_manager.py`](../memory/memory_manager.py),
-[`memory/memory_retriever.py`](../memory/memory_retriever.py),
-[`memory/session_ingestor.py`](../memory/session_ingestor.py),
-[`memory/memory_consolidator.py`](../memory/memory_consolidator.py),
-[`memory/memory_pruner.py`](../memory/memory_pruner.py),
-[`memory/memory_sync.py`](../memory/memory_sync.py).*
+*Implemented in [`claudenv/domain/memory/service/`](..guide/memory-graph.md),
+[`claudenv/domain/memory/service/reader.py`](..guide/memory-graph.md),
+[`claudenv/application/memory/session_ingestor.py`](..guide/session-ingestion.md),
+[`claudenv/domain/memory/service/maintenance.py`](..guide/memory-consolidation.md),
+[`claudenv/domain/memory/service/maintenance.py`](..guide/memory-consolidation.md),
+[`claudenv/domain/memory/service/maintenance.py`](..guide/memory-sync.md).*
 
 ---
 
@@ -302,10 +302,10 @@ $ claude-env know "where do we validate incoming webhook signatures?" \
   src/webhooks/verify.py:41:def verify_signature(payload, sig, secret):
 ```
 
-*Implemented in [`rag/retrievers/lance_store.py`](../rag/retrievers/lance_store.py),
-[`rag/config.py`](../rag/config.py),
-[`rag/pipelines/retrieve.py`](../rag/pipelines/retrieve.py), and the six servers under
-[`mcp-servers/`](../mcp-servers/) (filesystem-policy, git, lancedb-rag, memory-graph,
+*Implemented in [`claudenv/adapters/vector/lancedb/vector_store.py`](..guide/rag-pipeline.md),
+[`claudenv/domain/rag/config.py`](..guide/rag-pipeline.md),
+[`claudenv/application/rag/service.py`](..guide/rag-pipeline.md), and the six servers under
+[`claudenv/adapters/mcp/`](..guide/mcp-servers.md) (filesystem-policy, git, lancedb-rag, memory-graph,
 terminal, documentation).*
 
 ---
@@ -343,8 +343,8 @@ when it's material — the security agent's finding is treated as the default ti
 > to the security agent's recommendation, explaining why.
 
 *Implemented in [`templates/repo-onboarding/.claude/agents/`](../templates/repo-onboarding/.claude/agents/)
-(the eleven agent prompts) and [`agents/orchestration/approval_gate.py`](../agents/orchestration/approval_gate.py)
-+ [`approvals_ui.py`](../agents/orchestration/approvals_ui.py) (the human approval flow,
+(the eleven agent prompts) and [`claudenv/application/approval.py`](..guide/approvals-workflow.md)
++ [`claudenv/adapters/approvals_ui.py`](..guide/approvals-workflow.md) (the human approval flow,
 independent of agent routing).*
 
 ---
@@ -403,12 +403,12 @@ installation OK
 Both `budget` and `dashboard` read `metrics_sessions` rows written automatically by the
 SessionStart/SessionEnd hooks — no cron job or manual ingestion step to configure.
 
-*Implemented in [`observability/budgets.py`](../observability/budgets.py),
+*Implemented in [`claudenv/application/observability/budget_service.py`](..guide/observability-budgets.md),
 [`config/budgets.yaml`](../config/budgets.yaml),
-[`observability/feedback.py`](../observability/feedback.py),
-[`observability/dashboard.py`](../observability/dashboard.py),
+[`claudenv/application/observability/feedback_service.py`](..guide/observability-budgets.md),
+[`claudenv/application/observability/dashboard_service.py`](..guide/observability-budgets.md),
 [`validation/`](../validation/),
-[`scripts/nightly_memory.sh`](../scripts/nightly_memory.sh),
+[`claude-env nightly`](../scripts/nightly_memory.sh),
 [`agents/analysts/nightly_analyst.py`](../agents/analysts/nightly_analyst.py).*
 
 ---
@@ -416,7 +416,7 @@ SessionStart/SessionEnd hooks — no cron job or manual ingestion step to config
 ## 8. How this actually gets turned on
 
 Bringing a repository under claude-env's governance is one command:
-`claude-env onboard` (see [`scripts/register_repo.py`](../scripts/register_repo.py)).
+`claude-env onboard` (see [`claude-env onboard`](..guide/onboarding.md)).
 It generates a starting policy for that repo, creates an isolated RAG index and memory
 namespace, and installs a separate `CLAUDE.md` + `.claude/` directory (skills and two
 read-only reviewer subagents) *into* the onboarded repo — a different deliverable from

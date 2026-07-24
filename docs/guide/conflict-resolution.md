@@ -87,7 +87,7 @@ to the audit ledger as a `medium`-severity security event.
 ### `resolve()` — trivial cases plus audit wiring
 
 ```python
-# agents/orchestration/conflict_resolver.py
+# (superseded)
 def resolve(self, proposals: list[Proposal]) -> Resolution:
     if not proposals:
         return Resolution(None, [], "no proposals", escalate=False)
@@ -121,7 +121,7 @@ weight is only used later, in steps 3 and 4, for ranking among proposals that di
 **not** trigger a block.
 
 ```python
-# agents/orchestration/conflict_resolver.py
+# (superseded)
 def _decide(self, proposals: list[Proposal]) -> Resolution:
     # 1. security veto: any security block kills conflicting feature proposals
     sec_blocks = [p for p in proposals if p.is_security_block]
@@ -146,7 +146,7 @@ Two consequences worth being precise about:
 The remaining steps, read top to bottom:
 
 ```python
-# agents/orchestration/conflict_resolver.py
+# (superseded)
 # 2. policy / approval block wins over any feature proposal
 pol_blocks = [p for p in proposals if p.is_policy_block]
 if pol_blocks:

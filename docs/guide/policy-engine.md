@@ -2,11 +2,11 @@
 
 > Relates to: [OVERVIEW.md §1 — the agent could read or touch something it shouldn't](../OVERVIEW.md#1-the-agent-could-read-or-touch-something-it-shouldnt)
 
-**Source:** [`security/policy_engine.py`](../../security/policy_engine.py) (270 lines).
-**Config:** [`config/global-policy.yaml`](../../config/global-policy.yaml),
-[`config/repo-policy.template.yaml`](../../config/repo-policy.template.yaml).
+**Source:** [`claudenv/domain/policy/policy_engine.py`](../../claudenv/domain/policy/policy_engine.py) (270 lines).
+**Config:** [`claudenv/_data/config/global-policy.yaml`](../../claudenv/_data/config/global-policy.yaml),
+[`claudenv/_data/config/repo-policy.template.yaml`](../../claudenv/_data/config/repo-policy.template.yaml).
 
-This doc covers `security/policy_engine.py` only. Bash command parsing, the
+This doc covers `claudenv/domain/policy/policy_engine.py` only. Bash command parsing, the
 control-plane self-protection guard, and how native Read/Write/Edit/Bash calls reach
 this module are covered in [`native-tool-hooks.md`](native-tool-hooks.md) — the hook
 is a caller of this engine, not part of it. Secret/injection detection is a separate
@@ -80,11 +80,11 @@ file shared by several subsystems, but `policy_engine.py` only ever reads `tier`
 
 ### `evaluate_path()` — the eight-step decision
 
-The module's own docstring states the intended order (`security/policy_engine.py`),
+The module's own docstring states the intended order (`claudenv/domain/policy/policy_engine.py`),
 and the implementation follows it exactly:
 
 ```python
-# security/policy_engine.py
+# claudenv/domain/policy/policy_engine.py
 def evaluate_path(self, path: str) -> Decision:
     # 0. incident mode: fail closed on everything until lifted
     if _incident_marker().exists():
@@ -147,7 +147,7 @@ The **`_check_deny` helper** implements the shared "paths → extensions → reg
 sub-order used identically for both global and repo policies:
 
 ```python
-# security/policy_engine.py
+# claudenv/domain/policy/policy_engine.py
 def _check_deny(self, path: str, pol: CompiledPolicy, scope: str) -> Decision | None:
     m = self._match_paths(path, pol.deny_paths)
     if m:
@@ -169,7 +169,7 @@ Tiers aren't checked as a separate step at evaluation time — they're folded in
 `CompiledPolicy` once, when the engine is built:
 
 ```python
-# security/policy_engine.py
+# claudenv/domain/policy/policy_engine.py
 trow = (tier_doc.get("tiers", {}) or {}).get(tier, {}) \
     or (tier_doc.get("tiers", {}) or {}).get(str(tier), {})
 deny_ext += list(trow.get("extra_deny_ext", []))
@@ -189,7 +189,7 @@ indistinguishable from anything written directly in `repo-policy.yaml`'s own
 ### Glob matching (`_glob_to_regex`)
 
 Globs are translated to anchored regex once, character by character
-(`security/policy_engine.py`), not matched with `fnmatch`:
+(`claudenv/domain/policy/policy_engine.py`), not matched with `fnmatch`:
 
 | Glob token | Regex equivalent | Meaning |
 |---|---|---|
@@ -213,7 +213,7 @@ def test_glob_double_star():
 ### Extension matching (`_match_ext`)
 
 ```python
-# security/policy_engine.py
+# claudenv/domain/policy/policy_engine.py
 @staticmethod
 def _match_ext(path: str, exts: list[str]) -> str | None:
     suffix = Path(path).suffix
@@ -237,7 +237,7 @@ filename starts with it followed by a dot (`.env.local` matches `.env`,
 `scan_content()` on the bytes before returning them:
 
 ```python
-# security/policy_engine.py
+# claudenv/domain/policy/policy_engine.py
 def scan_content(self, text: str) -> tuple[str, list[tuple[str, int]]]:
     if not (self.repo.content_scan_on or self.glob.content_scan_on):
         return text, []
@@ -302,21 +302,21 @@ the model from a deny-list to an allow-list.*
   editing its own guardrails, because the global deny list can't be overridden.
   Covered by `test_blocks_guardrail_config` (`tests/test_policy_engine.py`),
   which also checks an absolute-looking path
-  (`Users/me/.claude-env/hooks/policy_hook.py`) blocks the same way.
+  (`Users/me/.claude-env/ (via claudenv/adapters/hooks/policy_hook.py)`) blocks the same way.
 - **The engine is stateless and does zero caching.** `PolicyEngine.load()` reads and
   compiles both YAML files once, at construction; there's no re-read, no TTL, no
   memoization inside `evaluate_path()`. A policy change requires a fresh
   `PolicyEngine.load()` (a new process, or an explicit reload by the caller) to take
   effect.
 - **A repo with no policy file is not the same as tier 3.** `PolicyEngine.load()`
-  (`security/policy_engine.py`) falls back to `{"tier": <global tier>, "repo":
+  (`claudenv/domain/policy/policy_engine.py`) falls back to `{"tier": <global tier>, "repo":
   <dirname>}` if `.claude/repo-policy.yaml` is missing — i.e., **no repo-local allow
   or deny rules at all**, just the global tier's default (usually tier 1, default-allow).
   A missing policy file is a permissive fallback, not a restrictive one.
 - **`.sql` can be allowed and denied at the same time, on purpose.** The
   repo-policy template allow-lists `.sql` under `allow.extensions` with an inline
   comment noting tier ≥2's `extra_deny_ext` still blocks it
-  (`config/repo-policy.template.yaml`) — a live example of deny-wins in the config
+  (`claudenv/_data/config/repo-policy.template.yaml`) — a live example of deny-wins in the config
   itself, not just the code.
 - **Path normalization doesn't collapse `..`.** `evaluate_path()` strips leading `./`
   and `/` but never resolves `..` segments — `src/../secrets/x` is normalized only to

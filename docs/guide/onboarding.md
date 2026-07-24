@@ -2,13 +2,13 @@
 
 > Relates to: [OVERVIEW.md §8 — how this actually gets turned on](../OVERVIEW.md#8-how-this-actually-gets-turned-on)
 
-**Source:** [`scripts/register_repo.py`](../../scripts/register_repo.py) (558 lines).
-**Payload installed into the target repo:** [`templates/repo-onboarding/`](../../templates/repo-onboarding/).
-**Config templated from:** [`config/repo-policy.template.yaml`](../../config/repo-policy.template.yaml),
-[`config/mcp-servers.json`](../../config/mcp-servers.json).
+**Source:** [`claude-env onboard`](../../scripts/register_repo.py) (558 lines).
+**Payload installed into the target repo:** [`claudenv/_data/templates/repo-onboarding/`](../../claudenv/_data/templates/repo-onboarding/).
+**Config templated from:** [`claudenv/_data/config/repo-policy.template.yaml`](../../claudenv/_data/config/repo-policy.template.yaml),
+[`claudenv/_data/config/mcp-servers.json`](../../claudenv/_data/config/mcp-servers.json).
 
-This doc covers `scripts/register_repo.py` and the files it copies from
-`templates/repo-onboarding/`. It does not cover the policy engine's evaluation
+This doc covers `claude-env onboard` and the files it copies from
+`claudenv/_data/templates/repo-onboarding/`. It does not cover the policy engine's evaluation
 logic (see [`policy-engine.md`](policy-engine.md)) or the RAG indexer that
 `--dry-run`-safe step 5 can kick off (see the RAG pipeline doc once written).
 
@@ -32,11 +32,11 @@ full plan without writing anything.
 
 | Flag / arg | Type | Default | Effect |
 |---|---|---|---|
-| `repo_root` (positional) | path | required | Resolved to an absolute path (`Path(...).resolve()`); the script exits `1` if it's not a directory (`scripts/register_repo.py`). |
-| `--repo-name` | str | directory name | Passed through `_slugify()` — lowercased, `[^a-z0-9._-]+` collapsed to a single `-`, leading/trailing `-`/`.` stripped, empty result falls back to `"repo"` (`scripts/register_repo.py`). Used for the RAG table and `proj-<slug>` memory namespace. |
-| `--tier` | `{0,1,2,3}` | existing policy's tier, else `1` | If omitted, `_detect_tier()` regex-reads `tier:` from an existing `.claude/repo-policy.yaml` (`scripts/register_repo.py`); interactively it's then re-prompted with that value as the default. |
+| `repo_root` (positional) | path | required | Resolved to an absolute path (`Path(...).resolve()`); the script exits `1` if it's not a directory (`claude-env onboard`). |
+| `--repo-name` | str | directory name | Passed through `_slugify()` — lowercased, `[^a-z0-9._-]+` collapsed to a single `-`, leading/trailing `-`/`.` stripped, empty result falls back to `"repo"` (`claude-env onboard`). Used for the RAG table and `proj-<slug>` memory namespace. |
+| `--tier` | `{0,1,2,3}` | existing policy's tier, else `1` | If omitted, `_detect_tier()` regex-reads `tier:` from an existing `.claude/repo-policy.yaml` (`claude-env onboard`); interactively it's then re-prompted with that value as the default. |
 | `--description` | str | `""` | Free text; written into the generated policy's `description:` field (quotes replaced with `'` first). |
-| `--branch` | str | `git rev-parse --abbrev-ref HEAD`, else `"main"` | `_detect_branch()` shells out with a 10s timeout and swallows any exception (`scripts/register_repo.py`). |
+| `--branch` | str | `git rev-parse --abbrev-ref HEAD`, else `"main"` | `_detect_branch()` shells out with a 10s timeout and swallows any exception (`claude-env onboard`). |
 | `--yes` / `-y` | flag | off | Forces non-interactive mode even on a TTY (see `_interactive()` below). |
 | `--dry-run` | flag | off | Every write-capable helper takes a `dry_run` bool and skips the actual `write_text`/`copy2`/`mkdir` call, but still computes and prints the status string. |
 | `--no-template` | flag | off | Skips `_install_template()` entirely (no `CLAUDE.md`/`.claude/skills`/`.claude/agents` install) — namespaces, policy, and MCP env are still provisioned. |
@@ -47,7 +47,7 @@ full plan without writing anything.
 ### Interactivity
 
 ```python
-# scripts/register_repo.py
+# claude-env onboard
 def _interactive(no_prompt: bool) -> bool:
     return (not no_prompt) and sys.stdin.isatty() and sys.stdout.isatty()
 ```
@@ -55,7 +55,7 @@ def _interactive(no_prompt: bool) -> bool:
 Prompts only fire when **both** stdin and stdout are TTYs and `--yes` wasn't
 passed. In a script/CI context (piped stdin, or `--yes`), every value falls
 back silently to its detected default — `_prompt()` itself also treats an
-`EOFError` on `input()` as "use the default" (`scripts/register_repo.py`),
+`EOFError` on `input()` as "use the default" (`claude-env onboard`),
 so even a stray interactive call in a non-TTY pipe degrades gracefully instead
 of crashing.
 
@@ -96,7 +96,7 @@ regardless of whether the repo has ever been onboarded before:
 ### 1. `.claude/repo-policy.yaml` — the isolation boundary
 
 ```python
-# scripts/register_repo.py
+# claude-env onboard
 def _write_repo_policy(repo_root: str, slug: str, tier: str, description: str,
                        force: bool, dry_run: bool) -> str:
     dst = Path(repo_root) / ".claude" / "repo-policy.yaml"
@@ -118,7 +118,7 @@ def _write_repo_policy(repo_root: str, slug: str, tier: str, description: str,
         text = re.sub(r"(?m)^(\s*isolated:\s*)false", r"\g<1>true", text, count=1)
 ```
 
-This confirms it **does** template from `config/repo-policy.template.yaml`
+This confirms it **does** template from `claudenv/_data/config/repo-policy.template.yaml`
 (not generate YAML from scratch): it reads the template text and does four
 targeted string/regex substitutions — `EXAMPLE-REPO-SLUG` (which appears twice
 in the template: `repo: "EXAMPLE-REPO-SLUG"` and
@@ -132,7 +132,7 @@ verbatim. An existing policy is never regenerated without `--force-policy`.
 ### 2. Namespaces — RAG table + memory namespace
 
 ```python
-# scripts/register_repo.py, 350-357
+# claude-env onboard, 350-357
 def _table_name(slug: str, branch: str) -> str:
     """Mirror rag/retrievers/lance_store.table_name so we can report/pre-create."""
     safe = lambda s: s.replace("/", "-").replace(" ", "_")
@@ -146,16 +146,16 @@ def _provision_storage(slug: str, branch: str, dry_run: bool) -> str:
 ```
 
 The RAG table name is `<slug>__<branch>` (slashes/spaces sanitized), matching
-the naming `rag/retrievers/lance_store.py` uses independently — the comment
+the naming `claudenv/adapters/vector/lancedb/vector_store.py` uses independently — the comment
 flags this as a duplicated convention to keep in sync, not a shared function
 call. The memory namespace is just `f"proj-{slug}"`, computed inline in
-`main()` (`scripts/register_repo.py`) — there's no `_provision_storage`
+`main()` (`claude-env onboard`) — there's no `_provision_storage`
 equivalent for memory because the memory namespace is created lazily on first
 write by the memory subsystem, not by this script.
 
 ### 3. MCP env — patching `~/.claude.json`
 
-`_build_server_blocks()` reads `config/mcp-servers.json`, skips `jetbrains` and
+`_build_server_blocks()` reads `claudenv/_data/config/mcp-servers.json`, skips `jetbrains` and
 any server flagged `"optional": true`, and resolves `${VAR}` placeholders in
 each server's `command`/`args`/`env` (merged with `defaults.env`) against a
 fixed substitution set (`HOME`, `CLAUDE_ENV_HOME`, `workspaceFolder`,
@@ -175,7 +175,7 @@ add` has registered the servers at least once already.
 ### 4. Template install — `CLAUDE.md` + `.claude/`
 
 ```python
-# scripts/register_repo.py (abridged)
+# claude-env onboard (abridged)
 def _install_claude_md(repo_root, subs, dry_run) -> str:
     src = _TEMPLATE_DIR / "CLAUDE.md"
     managed = _fill(src.read_text(), subs)          # {{KEY}} substitution
@@ -195,7 +195,7 @@ def _install_claude_md(repo_root, subs, dry_run) -> str:
 
 `{{KEY}}` substitution (`_fill`, distinct from the `${VAR}` substitution used
 for MCP env) fills six placeholders built in `main()`
-(`scripts/register_repo.py`): `REPO_NAME`, `TIER`, `BRANCH`,
+(`claude-env onboard`): `REPO_NAME`, `TIER`, `BRANCH`,
 `RAG_TABLE`, `MEMORY_NS`, and `MEMORY_ISOLATED` (the human string `"disabled
 (isolated)"` or `"allowed"`, not a boolean). The managed-block markers
 (`_BLOCK_BEGIN`/`_BLOCK_END`) mean a repo's own hand-written
@@ -225,10 +225,10 @@ itself. See [`native-tool-hooks.md`](native-tool-hooks.md) for the full wiring.
 ### 5. Idempotent extras (not gated by `--no-template`)
 
 - **`.git/hooks/{post-commit,post-merge,post-checkout}`**
-  (`_install_git_hooks`) — copies `scripts/post-commit`, `scripts/post-merge`,
-  and `scripts/post-checkout` into the target repo's git hooks dir, each
+  (`_install_git_hooks`) — copies `claudenv/_data/scripts/post-commit`, `claudenv/_data/scripts/post-merge`,
+  and `claudenv/_data/scripts/post-checkout` into the target repo's git hooks dir, each
   `chmod 0o755`, so commits, merges/pulls, and branch switches all keep the
-  RAG index current via `rag/git_sync.py`. Skipped (for all three) if `.git`
+  RAG index current via `claudenv/application/rag/git_sync.py`. Skipped (for all three) if `.git`
   doesn't exist or is a file (worktree/submodule). Each hook is installed
   independently: if e.g. a `post-merge` hook already exists and does **not**
   contain the literal string `"claude-env"`, only that one is left alone
@@ -247,13 +247,13 @@ itself. See [`native-tool-hooks.md`](native-tool-hooks.md) for the full wiring.
 
 `_maybe_index()` only prompts when interactive and not `--dry-run`; otherwise
 it just prints the `claude-env index <repo>` hint. On "yes" it shells out to
-`rag/bootstrap_rag.py` with `CLAUDE_ENV_REPO_NAME`/`CLAUDE_ENV_BRANCH` set.
+`claude-env index` with `CLAUDE_ENV_REPO_NAME`/`CLAUDE_ENV_BRANCH` set.
 
 ![claude-env onboard flow](../assets/guide/onboarding/register-repo-flow.svg)
 
 ---
 
-## What actually ships in `templates/repo-onboarding/`
+## What actually ships in `claudenv/_data/templates/repo-onboarding/`
 
 Verified directly by listing the directory — three real, non-empty pieces
 plus a `README.md` describing itself:
@@ -276,7 +276,7 @@ templates/repo-onboarding/
 
 That's **2 subagents** (`code-reviewer`, `architecture-reviewer`) and **5
 skills** — matching the docstring's list exactly
-(`scripts/register_repo.py`). `CLAUDE.md` itself, once filled, is an
+(`claude-env onboard`). `CLAUDE.md` itself, once filled, is an
 MCP-first operating contract: §0 golden rules, §1 a mandatory tool-routing
 table (every filesystem/git/search/memory/command intent mapped to one MCP
 tool, native equivalents named as denied), §2 the approval workflow for
@@ -293,7 +293,7 @@ shell/write) — the same constraint this platform repo's own reviewers have.
 ## Test coverage
 
 `tests/test_onboard_helpers.py` covers the helpers that don't need a model or
-network, imported by loading `scripts/register_repo.py` via
+network, imported by loading `claude-env onboard` via
 `importlib.util.spec_from_file_location` (not a package import):
 
 | Test | What it proves |
@@ -327,7 +327,7 @@ No test in this file exercises `_write_repo_policy`, `_install_claude_md`, or
   Every other template key (allow/deny lists, `content_scan`, `rag.*`,
   `agent_permissions.*`) reaches the onboarded repo unedited — see the tier-2+
   `.sql` gotcha documented directly in the template
-  (`config/repo-policy.template.yaml`) and in
+  (`claudenv/_data/config/repo-policy.template.yaml`) and in
   [`policy-engine.md`](policy-engine.md#facts--invariants).
 - **`EXAMPLE-REPO-SLUG` is replaced everywhere in one pass** (see above), so the
   RAG table, memory namespace, and `repo-policy.yaml`'s `repo:` field are always the

@@ -3,22 +3,22 @@
 > Relates to: [OVERVIEW.md §5 — knowledge and search shouldn't leave the
 > building](../OVERVIEW.md#5-knowledge-and-search-shouldnt-leave-the-building)
 
-**Source:** [`rag/config.py`](../../rag/config.py),
-[`rag/chunkers/chunkers.py`](../../rag/chunkers/chunkers.py),
-[`rag/embeddings/base.py`](../../rag/embeddings/base.py),
-[`rag/embeddings/registry.py`](../../rag/embeddings/registry.py),
-[`rag/embeddings/llama_embedder.py`](../../rag/embeddings/llama_embedder.py),
-[`rag/rerankers/base.py`](../../rag/rerankers/base.py),
-[`rag/rerankers/registry.py`](../../rag/rerankers/registry.py),
-[`rag/rerankers/cross_encoder.py`](../../rag/rerankers/cross_encoder.py),
-[`rag/retrievers/lance_store.py`](../../rag/retrievers/lance_store.py).
-**Config:** [`config/rag.yaml`](../../config/rag.yaml).
+**Source:** [`claudenv/domain/rag/config.py`](../../claudenv/domain/rag/config.py),
+[`claudenv/domain/rag_chunker/chunkers.py`](../../rag/chunkers/chunkers.py),
+[`claudenv/adapters/embedding/embedders.py`](../../rag/embeddings/base.py),
+[`claudenv/adapters/embedding/factory.py`](../../rag/embeddings/registry.py),
+[`claudenv/adapters/embedding/embedders.py`](../../rag/embeddings/llama_embedder.py),
+[`claudenv/adapters/embedding/rerankers.py`](../../rag/rerankers/base.py),
+[`claudenv/adapters/embedding/factory.py`](../../rag/rerankers/registry.py),
+[`claudenv/adapters/embedding/rerankers.py`](../../rag/rerankers/cross_encoder.py),
+[`claudenv/adapters/vector/lancedb/vector_store.py`](../../claudenv/adapters/vector/lancedb/vector_store.py).
+**Config:** [`claudenv/_data/config/rag.yaml`](../../config/rag.yaml).
 
 This doc covers the modules that turn a repo's files into a searchable local index:
 model configuration, chunking, embedding, reranking, and the LanceDB store. It does
 **not** cover how a query is screened, fused, and returned end-to-end — that's
 [`retrieval-poison-screening.md`](retrieval-poison-screening.md), which owns
-`rag/pipelines/retrieve.py`. It also doesn't cover the six MCP servers (including
+`claudenv/application/rag/service.py`. It also doesn't cover the six MCP servers (including
 `lancedb-rag`) that expose these modules to agents — that's `mcp-servers.md`.
 
 ---
@@ -32,45 +32,45 @@ default) turns each chunk's text into a normalized vector; `LanceStore` upserts 
 vectors + metadata into a per-`(repo, branch)` LanceDB table on local disk; at query
 time the same store runs a hybrid vector+FTS search and the configured
 `RerankerBackend` (`CrossEncoderReranker` by default) re-orders the top candidates.
-Every model **and backend** is configured — never hardcoded — in `config/rag.yaml`
-or an env var, resolved by `rag/config.py`. Nothing leaves the machine.
+Every model **and backend** is configured — never hardcoded — in `claudenv/_data/config/rag.yaml`
+or an env var, resolved by `claudenv/domain/rag/config.py`. Nothing leaves the machine.
 
 Both the embedder and reranker sit behind a small interface + registry
-(`rag/embeddings/base.py`+`registry.py`, `rag/rerankers/base.py`+`registry.py`) so a
+(`claudenv/adapters/embedding/embedders.py`+`registry.py`, `claudenv/adapters/embedding/rerankers.py`+`registry.py`) so a
 new backend — a different runtime, not just a different model file — can be added
 by implementing the interface and registering it, with zero changes to
-`rag/config.py`'s factories or any caller. See
+`claudenv/domain/rag/config.py`'s factories or any caller. See
 ["Swapping backends, not just models"](#swapping-backends-not-just-models) below.
 
 ---
 
-## Configuration reference (`config/rag.yaml`)
+## Configuration reference (`claudenv/_data/config/rag.yaml`)
 
 Resolution order for every field (highest priority first): **1. environment
-variable → 2. `config/rag.yaml` → 3. built-in numeric fallback.** Model *paths*
+variable → 2. `claudenv/_data/config/rag.yaml` → 3. built-in numeric fallback.** Model *paths*
 have no fallback — they default to `""` and the code fails loud rather than
-guessing (`rag/config.py`).
+guessing (`claudenv/domain/rag/config.py`).
 
 | Key | Env override | Type | Built-in fallback | Effect |
 |---|---|---|---|---|
-| `embedding.backend` | `EMBED_BACKEND` | str | `"llama_cpp"` | Registry key (`rag/embeddings/registry.py`) selecting which `EmbedderBackend` implementation to construct. Unknown key raises `ValueError` listing valid keys. |
+| `embedding.backend` | `EMBED_BACKEND` | str | `"llama_cpp"` | Registry key (`claudenv/adapters/embedding/factory.py`) selecting which `EmbedderBackend` implementation to construct. Unknown key raises `ValueError` listing valid keys. |
 | `embedding.model_path` | `EMBED_MODEL_PATH` | str | `""` (none) | Path to a local GGUF embedding model. Empty means unconfigured; `get_embedder()` raises `RuntimeError` rather than picking a default. |
-| `embedding.model_name` | `EMBED_MODEL_NAME` | str | derived | Label stored in `rag_index_state.embed_model`. If unset, derived as `Path(model_path).stem` (`rag/config.py`); empty path → empty name. |
+| `embedding.model_name` | `EMBED_MODEL_NAME` | str | derived | Label stored in `rag_index_state.embed_model`. If unset, derived as `Path(model_path).stem` (`claudenv/domain/rag/config.py`); empty path → empty name. |
 | `embedding.document_prefix` | `EMBED_DOC_PREFIX` | str | `""` | Prepended verbatim to text before embedding a document (some models need a task prefix, e.g. nomic-embed-text's `"search_document: "`). |
 | `embedding.query_prefix` | `EMBED_QUERY_PREFIX` | str | `""` | Prepended verbatim to text before embedding a query. |
 | `embedding.pooling_type` | `EMBED_POOLING_TYPE` | str | `"mean"` | One of `mean\|cls\|last\|none`, passed to llama.cpp's `pooling_type`. Wrong for the model → `embed_documents()`/`embed_query()` returns one vector *per token* instead of one pooled vector per input; `_embed()` detects this shape and raises `TypeError` rather than silently normalizing the wrong thing. |
 | `embedding.n_ctx` | `EMBED_CTX` | int | `2048` | llama.cpp context window in tokens. |
 | `embedding.n_gpu_layers` | `EMBED_GPU_LAYERS` | int | `-1` | `-1` offloads all layers to Metal on Apple Silicon; `0` forces CPU only. |
 | `embedding.embedding_dim` | `EMBED_DIM` | int | `768` | Output vector dimension; must match the configured model. Changing it requires a full re-index (it's baked into the LanceDB table schema). |
-| `reranker.backend` | `RERANKER_BACKEND` | str | `"onnx_cross_encoder"` | Registry key (`rag/rerankers/registry.py`) selecting which `RerankerBackend` implementation to construct. |
+| `reranker.backend` | `RERANKER_BACKEND` | str | `"onnx_cross_encoder"` | Registry key (`claudenv/adapters/embedding/factory.py`) selecting which `RerankerBackend` implementation to construct. |
 | `reranker.model_dir` | `RERANKER_DIR` | str | `""` (disabled) | Directory containing an ONNX cross-encoder (`model.onnx` + tokenizer files). Empty disables reranking; the pipeline falls back to fusion order. |
 | `RAG_CONFIG_YAML` | (this **is** the env var) | path | — | Explicit override for where `rag.yaml` itself is read from; see resolution order below. |
-| `LANCEDB_PATH` | (this **is** the env var) | path | `~/.claude-env/knowledge/lancedb` | Where LanceDB tables live on disk (`rag/retrievers/lance_store.py`). |
+| `LANCEDB_PATH` | (this **is** the env var) | path | `~/.claude-env/knowledge/lancedb` | Where LanceDB tables live on disk (`claudenv/adapters/vector/lancedb/vector_store.py`). |
 
-Where `config/rag.yaml` itself is found (`_resolve_yaml_path`, `rag/config.py`):
+Where `claudenv/_data/config/rag.yaml` itself is found (`_resolve_yaml_path`, `claudenv/domain/rag/config.py`):
 
 1. `RAG_CONFIG_YAML` env var, if set (`~` and env vars expanded).
-2. `<repo_root>/config/rag.yaml` — one level up from `rag/config.py`, i.e. this
+2. `<repo_root>/config/rag.yaml` — one level up from `claudenv/domain/rag/config.py`, i.e. this
    works identically whether running from the platform repo or the mirrored
    `$CLAUDE_ENV_HOME` tree.
 3. `$CLAUDE_ENV_HOME/config/rag.yaml` (defaults to `~/.claude-env/config/rag.yaml`).
@@ -113,15 +113,15 @@ paying the cost of loading the embedding model.
 
 ## Automatic re-indexing (git hooks)
 
-**Source:** [`rag/git_sync.py`](../../rag/git_sync.py),
-[`scripts/post-commit`](../../scripts/post-commit),
-[`scripts/post-merge`](../../scripts/post-merge),
-[`scripts/post-checkout`](../../scripts/post-checkout).
+**Source:** [`claudenv/application/rag/git_sync.py`](../../rag/git_sync.py),
+[`claudenv/_data/scripts/post-commit`](../../scripts/post-commit),
+[`claudenv/_data/scripts/post-merge`](../../scripts/post-merge),
+[`claudenv/_data/scripts/post-checkout`](../../scripts/post-checkout).
 
 Running `reindex` by hand is one way to keep the index current; the other is to not
 have to. `claude-env onboard`/`register` installs three git hooks per repo (see
 [`onboarding.md`](onboarding.md) for the install mechanics and the `--no-post-commit`
-flag that skips all three) that dispatch through `rag/git_sync.py` to the same
+flag that skips all three) that dispatch through `claudenv/application/rag/git_sync.py` to the same
 `Indexer.incremental()`/`Indexer.full_index()` this doc's `reindex`/`index` commands
 call — no separate indexing logic, only new triggers:
 
@@ -140,10 +140,10 @@ up redundant work.
 
 ---
 
-## `rag/config.py` — the one place models get chosen
+## `claudenv/domain/rag/config.py` — the one place models get chosen
 
 ```python
-# rag/config.py
+# claudenv/domain/rag/config.py
 def get_embedder(cfg: RagConfig | None = None):
     global _EMBEDDER, _EMBEDDER_KEY
     from rag.embeddings.registry import get_backend_class
@@ -163,7 +163,7 @@ def get_embedder(cfg: RagConfig | None = None):
     return _EMBEDDER
 ```
 
-`get_embedder()` and `get_reranker()` (`rag/config.py`) are the **only**
+`get_embedder()` and `get_reranker()` (`claudenv/domain/rag/config.py`) are the **only**
 sanctioned way to construct these classes — every caller (indexer, retriever,
 memory writes) goes through them, so a model **or backend** swap is a one-line
 yaml/env change, never a code change. Both instances are cached at module level,
@@ -172,7 +172,7 @@ keyed by `(backend, model_path)` for the embedder (`_EMBEDDER`/`_EMBEDDER_KEY`) 
 `backend` in the key (not just the path) means switching backends while the path
 happens to stay the same still rebuilds rather than silently reusing a stale
 instance of the wrong class. `RagConfig.load()` itself is memoized too (`_CONFIG`
-singleton, `get_config()`, `rag/config.py`) and only re-reads yaml when called with
+singleton, `get_config()`, `claudenv/domain/rag/config.py`) and only re-reads yaml when called with
 `reload=True`.
 
 Every successful load (or reload) is recorded via `_audit_model_load()` →
@@ -186,23 +186,23 @@ must never block RAG from working).
 Historically "swap the model" meant "point `model_path` at a different GGUF" —
 still true, and still the common case (see §4 in the README). But swapping the
 **backend** — e.g. adding a non-llama.cpp embedder, or a reranker that isn't the
-ONNX cross-encoder — used to mean editing `rag/config.py`'s factory functions
+ONNX cross-encoder — used to mean editing `claudenv/domain/rag/config.py`'s factory functions
 directly. It no longer does:
 
-- `rag/embeddings/base.py` defines `EmbedderBackend` (`embed_documents`,
+- `claudenv/adapters/embedding/embedders.py` defines `EmbedderBackend` (`embed_documents`,
   `embed_query`, `dim`, `model_name`, `backend_name`, `info()`); `LlamaEmbedder`
   is the one built-in implementation.
-- `rag/rerankers/base.py` defines `RerankerBackend` (`rerank`, `ok`, `model_name`,
+- `claudenv/adapters/embedding/rerankers.py` defines `RerankerBackend` (`rerank`, `ok`, `model_name`,
   `backend_name`, `status()`); `CrossEncoderReranker` is the one built-in
   implementation.
-- `rag/embeddings/registry.py` / `rag/rerankers/registry.py` each hold a
+- `claudenv/adapters/embedding/factory.py` / `claudenv/adapters/embedding/factory.py` each hold a
   `dict[str, type[...Backend]]` (`BACKENDS`) mapping the config string
   (`embedding.backend` / `reranker.backend`) to the class. `get_backend_class()`
   raises a clear `ValueError` listing the valid keys if the configured one isn't
   registered.
 
 To add a backend: implement the interface, add one line to the registry dict. No
-changes to `rag/config.py`'s factories, and no changes to any caller (indexer,
+changes to `claudenv/domain/rag/config.py`'s factories, and no changes to any caller (indexer,
 retriever, memory) — they only ever call `get_embedder()`/`get_reranker()` and use
 the interface's methods. See the `rag-model-setup` skill
 (`.claude/skills/rag-model-setup/SKILL.md`) for the checklist to follow when
@@ -212,7 +212,7 @@ dimension and required `pooling_type` before touching `rag.yaml`.
 ### Hot-reload without a process restart
 
 ```python
-# rag/config.py
+# claudenv/domain/rag/config.py
 def reload_embedder() -> None:
     global _EMBEDDER, _EMBEDDER_KEY
     _EMBEDDER = None
@@ -228,10 +228,10 @@ server, not a one-shot `scan`/`index`/`reindex` CLI script) can pick up a
 
 ---
 
-## Chunking — `rag/chunkers/chunkers.py`
+## Chunking — `claudenv/domain/rag_chunker/chunkers.py`
 
 One file, one function per file-type strategy, dispatched by extension in
-`chunk_file()` (`rag/chunkers/chunkers.py`):
+`chunk_file()` (`claudenv/domain/rag_chunker/chunkers.py`):
 
 | Extension | Strategy | Function |
 |---|---|---|
@@ -239,7 +239,7 @@ One file, one function per file-type strategy, dispatched by extension in
 | `.py .js .ts .tsx .go .java .kt .cs .rs .c .h .cpp .hpp` | AST-aware (tree-sitter), falls back to window if parsing fails or no unit nodes found | `_chunk_code` |
 | anything else | Sliding window | `_split_window` (called directly with `TARGETS["fallback"]`) |
 
-Target/overlap token budgets (`TARGETS`, `rag/chunkers/chunkers.py`), in
+Target/overlap token budgets (`TARGETS`, `claudenv/domain/rag_chunker/chunkers.py`), in
 `(target_tokens, overlap_tokens)`:
 
 | Strategy key | Target | Overlap |
@@ -250,12 +250,12 @@ Target/overlap token budgets (`TARGETS`, `rag/chunkers/chunkers.py`), in
 | `fallback` | 400 | 50 |
 
 Tokens are approximated as `len(text) // 4` (`approx_tokens`,
-`rag/chunkers/chunkers.py`) — there is no real tokenizer wired in.
+`claudenv/domain/rag_chunker/chunkers.py`) — there is no real tokenizer wired in.
 
 ### AST-aware code chunking
 
 ```python
-# rag/chunkers/chunkers.py
+# claudenv/domain/rag_chunker/chunkers.py
 def get_parser(lang: str):
     if _TSParser is None or _get_language is None:
         return None
@@ -269,33 +269,33 @@ def get_parser(lang: str):
 
 The module deliberately builds the parser from the stable core `tree_sitter.Parser`
 plus a grammar from `tree_sitter_language_pack`, rather than that pack's own
-`get_parser()` — the comment at `rag/chunkers/chunkers.py` explains the
+`get_parser()` — the comment at `claudenv/domain/rag_chunker/chunkers.py` explains the
 pack's own parser has a divergent API (`parse()` rejects bytes, `root_node` is a
 method not a property) that would break the byte-offset walk below. Unsupported or
 failing languages cache as `None` and every later call for that language falls
 straight to window chunking — the cache means that failure is paid once per
 language, not once per file.
 
-`_chunk_code` (`rag/chunkers/chunkers.py`) walks the tree looking for
+`_chunk_code` (`claudenv/domain/rag_chunker/chunkers.py`) walks the tree looking for
 per-language "unit" node types (`UNIT_NODES`, e.g. `{"function_definition",
 "class_definition"}` for Python) and does **not** descend into a node once it's
 captured as a unit — nested functions/methods become part of their parent's chunk
 text, not separate chunks. Two edge cases baked into `walk()`:
 
 - A unit larger than `1.5x` the code target (768 tokens) gets sub-windowed with
-  `_split_window` instead of kept whole (`rag/chunkers/chunkers.py`).
+  `_split_window` instead of kept whole (`claudenv/domain/rag_chunker/chunkers.py`).
 - If the walk finds zero unit nodes at all (e.g. a config-ish file that happens to
   have a supported extension), the whole file falls back to window chunking
-  (`rag/chunkers/chunkers.py`) — same as if tree-sitter were unavailable.
+  (`claudenv/domain/rag_chunker/chunkers.py`) — same as if tree-sitter were unavailable.
 
 `symbol_name` is extracted by scanning direct children for an
-`identifier`/`name`/`type_identifier` node (`name_of`, `rag/chunkers/chunkers.py`);
+`identifier`/`name`/`type_identifier` node (`name_of`, `claudenv/domain/rag_chunker/chunkers.py`);
 if none is found the node's own type string is used as the name.
 
 ### Markdown sectioning
 
 ```python
-# rag/chunkers/chunkers.py
+# claudenv/domain/rag_chunker/chunkers.py
 def _chunk_markdown(text: str) -> list[tuple[str, str, int, int, str]]:
     lines = text.splitlines()
     out, buf, header, start = [], [], "preamble", 0
@@ -332,7 +332,7 @@ multiple chunks — there's no overlap applied between these token-triggered spl
 ### Chunk identity and metadata
 
 ```python
-# rag/chunkers/chunkers.py
+# claudenv/domain/rag_chunker/chunkers.py
 def _cid(repo: str, path: str, start: int, end: int) -> str:
     return hashlib.sha1(f"{repo}:{path}:{start}:{end}".encode()).hexdigest()
 
@@ -351,11 +351,11 @@ delete-then-add idempotent. `content_hash` (SHA-256 of the chunk text) is separa
 metadata, presumably for an indexer to skip re-embedding unchanged chunks — but
 `chunkers.py` itself never reads it back; that comparison, if it happens, lives in
 the indexer, not here. Empty/whitespace-only parts are dropped before becoming
-`Chunk`s (`if t.strip():`, `rag/chunkers/chunkers.py`).
+`Chunk`s (`if t.strip():`, `claudenv/domain/rag_chunker/chunkers.py`).
 
 ---
 
-## Embedding — `rag/embeddings/base.py`, `llama_embedder.py`
+## Embedding — `claudenv/adapters/embedding/embedders.py`, `llama_embedder.py`
 
 ```python
 from rag.config import get_embedder
@@ -364,13 +364,13 @@ vecs = emb.embed_documents(["def f(): ..."])
 qv   = emb.embed_query("how is jwt validated")
 ```
 
-`EmbedderBackend` (`rag/embeddings/base.py`) is the ABC every embedder backend
+`EmbedderBackend` (`claudenv/adapters/embedding/embedders.py`) is the ABC every embedder backend
 implements: `embed_documents`, `embed_query` (abstract), plus `dim`, `model_name`,
 `backend_name` attributes and an `info()` method returning
 `{backend, model_name, dim}` for audit logging. `LlamaEmbedder` is the one
 built-in implementation (`backend_name = "llama_cpp"`).
 
-Constructor signature (`rag/embeddings/llama_embedder.py`):
+Constructor signature (`claudenv/adapters/embedding/embedders.py`):
 
 ```python
 def __init__(self, model_path: str, model_name: str, embedding_dim: int,
@@ -392,7 +392,7 @@ failure, not a silent no-op embedder. `n_threads` defaults to `os.cpu_count() or
 when not given.
 
 ```python
-# rag/embeddings/llama_embedder.py
+# claudenv/adapters/embedding/llama_embedder.py
 def _embed(self, text: str) -> list[float]:
     out = self.llm.create_embedding(text)
     vec = out["data"][0]["embedding"]
@@ -425,14 +425,14 @@ downstream. `embed_documents` and `embed_query` differ only in which configured
 prefix (`self._doc_prefix`/`self._query_prefix`) gets prepended — the model itself
 is not inspected to decide whether a prefix (or a pooling type) is needed; that's
 a config decision, per the module's own docstring
-(`rag/embeddings/llama_embedder.py`). Two static helpers, `to_blob`/`from_blob`
-(`rag/embeddings/llama_embedder.py`), pack/unpack a vector as little-endian
+(`claudenv/adapters/embedding/embedders.py`). Two static helpers, `to_blob`/`from_blob`
+(`claudenv/adapters/embedding/embedders.py`), pack/unpack a vector as little-endian
 float32 — for storing raw vectors in a SQLite BLOB column if a caller needs that
 instead of LanceDB.
 
 ---
 
-## Reranking — `rag/rerankers/base.py`, `cross_encoder.py`
+## Reranking — `claudenv/adapters/embedding/rerankers.py`, `cross_encoder.py`
 
 ```python
 from rag.config import get_reranker
@@ -441,7 +441,7 @@ if not rr.ok:
     print(rr.status())   # explains why reranking is inactive
 ```
 
-`RerankerBackend` (`rag/rerankers/base.py`) is the ABC every reranker backend
+`RerankerBackend` (`claudenv/adapters/embedding/rerankers.py`) is the ABC every reranker backend
 implements: `rerank` (abstract), plus `ok`, `model_name`, `backend_name`
 attributes and a `status()` method returning `{ok, backend, model_name, error}`.
 `CrossEncoderReranker` is the one built-in implementation
@@ -453,7 +453,7 @@ sets `self.ok = False` with `self._load_error` on any failure (missing
 tokenizer files):
 
 ```python
-# rag/rerankers/cross_encoder.py
+# claudenv/adapters/embedding/cross_encoder.py
 if not model_dir:
     self._load_error = "reranker disabled (no model_dir configured)"
     return
@@ -471,7 +471,7 @@ except Exception as exc:
 ```
 
 `rerank(query, candidates, top_n=8, text_key="text")`
-(`rag/rerankers/cross_encoder.py`) is the one entry point:
+(`claudenv/adapters/embedding/rerankers.py`) is the one entry point:
 
 - Empty candidates → `[]` immediately.
 - `not self.ok` → identity fallback: `candidates[:top_n]`, unchanged order — this
@@ -483,7 +483,7 @@ except Exception as exc:
   descending logit with `np.argsort(-logits)`, and returns the top `top_n`
   candidates each with an added `rerank_score` float field.
 
-`status()` (`rag/rerankers/cross_encoder.py`) returns `{ok, model_dir,
+`status()` (`claudenv/adapters/embedding/rerankers.py`) returns `{ok, model_dir,
 model_name, error}` — `error` is `None` whenever `ok` is `True`, otherwise the
 caught exception's string. Per the module docstring, reranking improves top-3
 precision roughly 15-25% over fusion alone (a stated claim from the source
@@ -491,12 +491,12 @@ comments — not independently re-verified in this doc).
 
 ---
 
-## Storage & hybrid search — `rag/retrievers/lance_store.py`
+## Storage & hybrid search — `claudenv/adapters/vector/lancedb/vector_store.py`
 
 ### Schema
 
 ```python
-# rag/retrievers/lance_store.py
+# claudenv/adapters/vector/lancedb/vector_store.py
 def _schema(self) -> "pa.Schema":
     return pa.schema([
         pa.field("chunk_id", pa.string()),
@@ -524,7 +524,7 @@ out that a dimension change needs a full re-index.
 ### One table per (repo, branch)
 
 ```python
-# rag/retrievers/lance_store.py
+# claudenv/adapters/vector/lancedb/vector_store.py
 def table_name(repo: str, branch: str) -> str:
     safe = lambda s: s.replace("/", "-").replace(" ", "_")
     return f"{safe(repo)}__{safe(branch)}"
@@ -532,7 +532,7 @@ def table_name(repo: str, branch: str) -> str:
 
 On disk this is `~/.claude-env/knowledge/lancedb/<repo-slug>__<branch>.lance/`
 (default `LANCE_PATH`, overridable via `LANCEDB_PATH`). `open()`
-(`rag/retrievers/lance_store.py`) creates the table with the schema above if
+(`claudenv/adapters/vector/lancedb/vector_store.py`) creates the table with the schema above if
 it doesn't exist yet and immediately tries `tbl.create_fts_index("text",
 replace=True)`, swallowing any exception — so a LanceDB build without FTS support
 still works, just without hybrid search (see below).
@@ -540,7 +540,7 @@ still works, just without hybrid search (see below).
 ### Upsert, delete, count
 
 ```python
-# rag/retrievers/lance_store.py
+# claudenv/adapters/vector/lancedb/vector_store.py
 def upsert(self, repo: str, branch: str, rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -559,16 +559,16 @@ def upsert(self, repo: str, branch: str, rows: list[dict]) -> int:
 LanceDB has no native upsert, so this is delete-by-id-list then add — idempotent
 because `chunk_id` is a deterministic hash of `(repo, path, start_line,
 end_line)` (see chunking section above). `delete_file()`
-(`rag/retrievers/lance_store.py`) removes all rows for a `file_path`,
+(`claudenv/adapters/vector/lancedb/vector_store.py`) removes all rows for a `file_path`,
 escaping embedded single quotes (`replace("'", "''")`) so a real path like
 `docs/what's-new.md` doesn't break the generated SQL filter mid-run. `count()`
-(`rag/retrievers/lance_store.py`) returns `0` on any failure rather than
+(`claudenv/adapters/vector/lancedb/vector_store.py`) returns `0` on any failure rather than
 raising.
 
 ### Hybrid search
 
 ```python
-# rag/retrievers/lance_store.py
+# claudenv/adapters/vector/lancedb/vector_store.py
 def search(self, repo: str, branch: str, query_vector: list[float],
            query_text: str, top_k: int = 40) -> list[dict]:
     tbl = self.open(repo, branch)
@@ -585,12 +585,12 @@ def search(self, repo: str, branch: str, query_vector: list[float],
 
 The primary path asks LanceDB itself for `query_type="hybrid"` — dense cosine
 vector search fused with BM25-style full-text search via reciprocal-rank fusion,
-per the module docstring (`rag/retrievers/lance_store.py`). If that raises
+per the module docstring (`claudenv/adapters/vector/lancedb/vector_store.py`). If that raises
 for any reason (most commonly: no FTS index exists because `create_fts_index`
 failed silently in `open()`), the `except` falls back to plain vector-only search
 with the same `top_k`. Either way, the raw `vector` field is stripped from every
 result row before returning — callers get metadata + score fields, never the
-1536-plus raw floats back. Downstream, `rag/pipelines/retrieve.py` is what
+1536-plus raw floats back. Downstream, `claudenv/application/rag/service.py` is what
 interprets whichever score fields a given path produced (`rerank_score`,
 `_relevance_score` from the hybrid path, or `_distance` from the vector-only
 path) — see [`retrieval-poison-screening.md`](retrieval-poison-screening.md) and
@@ -621,7 +621,7 @@ fallback, except the model path itself, which has no fallback and fails loud via
 
 ## Facts, invariants & edge cases
 
-- **No model name or path is ever hardcoded** (see `rag/config.py` above) — every
+- **No model name or path is ever hardcoded** (see `claudenv/domain/rag/config.py` above) — every
   constructor only accepts paths/dirs from config, and grepping the
   embedder/reranker source for a literal model filename turns up none.
 - **An unconfigured embedding model fails loud, not silently** — `get_embedder()`
@@ -632,17 +632,17 @@ fallback, except the model path itself, which has no fallback and fails loud via
   identity-order passthrough in `rerank()` is the designed fallback (see above),
   since reranking is explicitly optional.
 - **Both the embedder and reranker instances are cached** at module level in
-  `rag/config.py`, keyed by `(backend, model_path)` / `(backend, model_dir)` (see
+  `claudenv/domain/rag/config.py`, keyed by `(backend, model_path)` / `(backend, model_dir)` (see
   above) — a `rag.yaml` edit alone doesn't take effect on an already-running
   process; call `reload_embedder()`/`reload_reranker()` or restart it.
-- **Adding a new embedder/reranker backend never touches `rag/config.py`'s
+- **Adding a new embedder/reranker backend never touches `claudenv/domain/rag/config.py`'s
   factories** — implement `EmbedderBackend`/`RerankerBackend` (`base.py`) and
   register the class in the matching `registry.py`'s `BACKENDS` dict (see
   ["Swapping backends, not just models"](#swapping-backends-not-just-models)
   above). An unregistered `backend` string in `rag.yaml` raises `ValueError`
   listing the valid keys, rather than silently falling back to something else.
 - **A wrong `embedding.pooling_type` produces a dimension/type mismatch, not a
-  clean pooling error** — `_embed()` (`rag/embeddings/llama_embedder.py`) detects
+  clean pooling error** — `_embed()` (`claudenv/adapters/embedding/embedders.py`) detects
   unpooled per-token output and raises `TypeError` naming `pooling_type`
   specifically, rather than letting the wrong shape propagate into the LanceDB
   upsert as an unrelated-looking error (see above). `LlamaEmbedder.__init__` also
@@ -655,7 +655,7 @@ fallback, except the model path itself, which has no fallback and fails loud via
   that vector; LanceDB's Arrow layer rejects a NaN vector with an opaque error
   naming no file or chunk, and (before this was fixed) aborted the entire
   upsert batch for that file. `Indexer._index_one()`
-  (`rag/indexers/indexer.py`) now filters non-finite (NaN/Inf) vectors per-chunk
+  (`claudenv/application/rag/indexer.py`) now filters non-finite (NaN/Inf) vectors per-chunk
   before building rows, audit-logs which file was affected via
   `security_event("indexing", ...)`, and keeps indexing the rest of the file/repo
   — a chunk with a non-finite vector is simply not indexed, not a crash.
@@ -671,7 +671,7 @@ fallback, except the model path itself, which has no fallback and fails loud via
   `full_index()`/`incremental()`), and a genuine dimension conflict now
   propagates and halts indexing.
 - **Vectors are always L2-normalized before storage or query**, so LanceDB's
-  cosine metric and a raw dot product agree (`rag/embeddings/llama_embedder.py`,
+  cosine metric and a raw dot product agree (`claudenv/adapters/embedding/embedders.py`,
   see above).
 - **Changing `embedding_dim` requires a full re-index** — the dimension is fixed
   into the LanceDB `vector` field type at table-creation time (see above); an
@@ -725,7 +725,7 @@ fallback, except the model path itself, which has no fallback and fails loud via
 ## Related docs
 
 - [`retrieval-poison-screening.md`](retrieval-poison-screening.md) — how a query
-  actually flows through `rag/pipelines/retrieve.py`: fusion/rerank orchestration,
+  actually flows through `claudenv/application/rag/service.py`: fusion/rerank orchestration,
   and how retrieved text is screened as untrusted data before reaching an agent.
 - [OVERVIEW.md §5](../OVERVIEW.md#5-knowledge-and-search-shouldnt-leave-the-building) —
   the product-level framing: local-only knowledge and search.

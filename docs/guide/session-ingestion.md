@@ -2,11 +2,11 @@
 
 > Relates to: [OVERVIEW.md §4 — the agent forgets everything, every session](../OVERVIEW.md#4-the-agent-forgets-everything-every-session)
 
-**Source:** [`memory/session_ingestor.py`](../../memory/session_ingestor.py) (212 lines).
-**Schema:** [`sql/003_extensions.sql`](../../sql/003_extensions.sql) (`session_ingest_state`).
-**Scheduling:** [`scripts/nightly_memory.sh`](../../scripts/nightly_memory.sh).
+**Source:** [`claudenv/application/memory/session_ingestor.py`](../../memory/session_ingestor.py) (212 lines).
+**Schema:** [`claudenv/_data/sql/schema.sql`](../../claudenv/_data/sql/schema.sql) (`session_ingest_state`).
+**Scheduling:** [`claude-env nightly` / `claudenv/application/memory/nightly.py`](../../scripts/nightly_memory.sh).
 
-This doc covers `memory/session_ingestor.py` only. The node schema it writes into
+This doc covers `claudenv/application/memory/session_ingestor.py` only. The node schema it writes into
 (`memory_nodes`, `add_node`, half-life, taxonomy validation) is covered in
 [`memory-graph.md`](memory-graph.md) — this doc treats `MemoryManager.add_node()` as a black
 box. Secret redaction is a separate module, covered in
@@ -43,7 +43,7 @@ constants and CLI flags.
 | `--transcripts <dir>` | CLI flag | `DEFAULT_TRANSCRIPTS` | Override the scanned root, e.g. for tests or a non-standard Claude Code home. |
 | `--dry-run` | CLI flag | off | Parses and reports what *would* be ingested (counts files/tools) without writing memory nodes, usage signals, or `session_ingest_state` rows for successfully-parsed sessions — though skipped/unparseable sessions still get a dedupe row written (see [Facts](#facts-invariants--edge-cases)). |
 
-### `session_ingest_state` columns (`sql/003_extensions.sql`)
+### `session_ingest_state` columns (`claudenv/_data/sql/schema.sql`)
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -62,7 +62,7 @@ once regardless of how many times the nightly job runs.
 
 ## How to use it
 
-The ingestor normally runs unattended as the first step of `scripts/nightly_memory.sh` (see
+The ingestor normally runs unattended as the first step of `claude-env nightly` / `claudenv/application/memory/nightly.py` (see
 [Scheduling](#scheduling) below) — the CLI below is for manual/ad-hoc invocation, e.g. catching
 up outside the nightly window or checking what a run would do before it does it.
 
@@ -94,7 +94,7 @@ touching the real memory graph at all.
 `ingest()` globs one level of session directories deep and skips anything already recorded:
 
 ```python
-# memory/session_ingestor.py
+# claudenv/application/memory/session_ingestor.py
 for tpath in sorted(transcripts_dir.glob("*/*.jsonl")):
     sid = tpath.stem
     stats["scanned"] += 1
@@ -109,7 +109,7 @@ for tpath in sorted(transcripts_dir.glob("*/*.jsonl")):
 document — a single malformed line is silently dropped, not fatal to the transcript:
 
 ```python
-# memory/session_ingestor.py
+# claudenv/application/memory/session_ingestor.py
 cwd = rec.get("cwd") or cwd
 ts = rec.get("timestamp") or ""
 ...
@@ -160,7 +160,7 @@ JSONL records parsed successfully — this filters out near-empty or aborted ses
 ### Secret redaction — delegates to `SecretDetector`
 
 ```python
-# memory/session_ingestor.py, 140
+# claudenv/application/memory/session_ingestor.py, 140
 from security.detectors import SecretDetector      # noqa: E402
 ...
 redact = SecretDetector(session_id="ingest").redact
@@ -171,7 +171,7 @@ The ingestor does not implement its own scrubbing; it constructs one `SecretDete
 before it reaches storage:
 
 ```python
-# memory/session_ingestor.py, 180
+# claudenv/application/memory/session_ingestor.py, 180
 body = {
     "task": redact(summary["task"]),
     "outcome": redact(summary["outcome"]),
@@ -192,7 +192,7 @@ patterns `SecretDetector.redact()` actually matches and replaces.
 One node per successfully-parsed, non-trivial session, written into a per-repo namespace:
 
 ```python
-# memory/session_ingestor.py
+# claudenv/application/memory/session_ingestor.py
 mgr = MemoryManager(namespace=f"proj-{repo}", session_id="ingest",
                     actor="session-ingestor")
 body = {
@@ -222,7 +222,7 @@ After the node is written, `ingest()` calls `_record_usage_signals()` to correla
 session's edited files against recent RAG retrievals:
 
 ```python
-# memory/session_ingestor.py
+# claudenv/application/memory/session_ingestor.py
 def _record_usage_signals(db, repo: str, edited: list[str], session_id: str) -> int:
     n = 0
     for fp in edited:
@@ -284,11 +284,11 @@ is wrapped in `|| true` so a failure here doesn't abort the rest of the nightly 
 - **Skipped/unparseable sessions still get a dedupe row — but only outside `--dry-run`.**
   If `_parse_transcript` returns `None` or the transcript has no `cwd` (so no `repo`), the code
   still inserts a `session_ingest_state` row with `node_id=NULL` when not in dry-run mode
-  (`memory/session_ingestor.py`), so a permanently-unparseable transcript is not retried
+  (`claudenv/application/memory/session_ingestor.py`), so a permanently-unparseable transcript is not retried
   forever. Under `--dry-run`, this insert is skipped entirely — only the counter increments — so
   a dry run of a broken transcript will report it as skipped on every future dry run too.
 - **`--dry-run` never calls `MemoryManager` or `SecretDetector.redact` on the write path.** The
-  dry-run branch (`memory/session_ingestor.py`) prints file/tool counts straight from the
+  dry-run branch (`claudenv/application/memory/session_ingestor.py`) prints file/tool counts straight from the
   parsed summary and returns before constructing a `MemoryManager` — no node is created, no
   usage signals are recorded, and nothing is written to `session_ingest_state` for
   successfully-parsed sessions.

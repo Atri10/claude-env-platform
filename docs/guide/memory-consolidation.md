@@ -2,8 +2,8 @@
 
 > Relates to: [OVERVIEW.md §4 — the agent forgets everything, every session](../OVERVIEW.md#4-the-agent-forgets-everything-every-session)
 
-**Source:** [`memory/memory_consolidator.py`](../../memory/memory_consolidator.py) (81 lines),
-[`memory/memory_pruner.py`](../../memory/memory_pruner.py) (62 lines).
+**Source:** [`claudenv/domain/memory/service/maintenance.py`](../../memory/memory_consolidator.py) (81 lines),
+[`claudenv/domain/memory/service/maintenance.py`](../../memory/memory_pruner.py) (62 lines).
 
 This doc covers only the maintenance jobs: how low-confidence memories get merged into
 summary nodes, and how stale/decayed memories get archived and deleted. The node/edge
@@ -64,7 +64,7 @@ the platform's `$CLAUDE_ENV_HOME` deploy rule).
 
 ## How to use it
 
-Both scripts are wired into `bin/claude-env` as `consolidate` and `prune`. Normally the
+Both scripts are wired into `claude-env` as `consolidate` and `prune`. Normally the
 nightly memory-maintenance job runs them, but either is safe to run by hand at any time:
 
 ```bash
@@ -95,7 +95,7 @@ exactly how many nodes would be affected before you commit to deleting anything.
 ### Consolidator: `_clusters()` — eligibility, adjacency, components, grouping
 
 ```python
-# memory/memory_consolidator.py
+# claudenv/domain/memory/service/maintenance.py
 def _clusters(db, ns):
     """Find weakly-connected RELATES_TO clusters of eligible nodes."""
     nodes = db.query("SELECT node_id,memory_type,confidence,half_life_days,updated_at,name,body_json "
@@ -156,7 +156,7 @@ Read top to bottom:
 ### Consolidator: `consolidate_ns()` — building the summary node
 
 ```python
-# memory/memory_consolidator.py
+# claudenv/domain/memory/service/maintenance.py
 def consolidate_ns(ns: str) -> dict:
     db = get_db(); mm = MemoryManager(ns, session_id="consolidator", actor="system")
     made = 0
@@ -201,7 +201,7 @@ def consolidate_ns(ns: str) -> dict:
 ### Pruner: `prune_ns()` — selection, archive-then-delete, protection
 
 ```python
-# memory/memory_pruner.py
+# claudenv/domain/memory/service/maintenance.py
 def prune_ns(ns: str, apply: bool) -> dict:
     db = get_db(); audit = AuditLogger("pruner", actor="system")
     ARCHIVE.mkdir(parents=True, exist_ok=True)

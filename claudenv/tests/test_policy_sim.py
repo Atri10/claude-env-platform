@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from claudenv.adapters.config import get_config
-from claudenv.domain.policy import PolicyService
+from claudenv.application.policy import PolicyService
 
 
 def _write_tree(repo: Path, files: dict[str, str]) -> None:

@@ -2,10 +2,10 @@
 
 > Relates to: [OVERVIEW.md §2 — no one knows what the agent actually did](../OVERVIEW.md#2-no-one-knows-what-the-agent-actually-did)
 
-**Source:** [`audit/audit_logger.py`](../../audit/audit_logger.py) (215 lines),
-[`audit/session_replay.py`](../../audit/session_replay.py) (112 lines),
-[`audit/compliance_report.py`](../../audit/compliance_report.py) (163 lines).
-**Schema:** [`sql/001_schema.sql`](../../sql/001_schema.sql) (`audit_events` + typed
+**Source:** [`claudenv/adapters/audit.py`](../../claudenv/adapters/audit.py) (215 lines),
+[`claudenv/application/audit/audit_reporting.py`](../../claudenv/application/audit/audit_reporting.py) (112 lines),
+[`claudenv/application/audit/audit_reporting.py`](../../claudenv/application/audit/audit_reporting.py) (163 lines).
+**Schema:** [`claudenv/_data/sql/schema.sql`](../../claudenv/_data/sql/schema.sql) (`audit_events` + typed
 projection tables).
 
 This doc covers the three audit modules together because they form one pipeline:
@@ -13,7 +13,7 @@ This doc covers the three audit modules together because they form one pipeline:
 forensic reconstruction of one session from it, and `compliance_report.py` is a
 read-only aggregate export across sessions/repos that also re-verifies the chain on
 every run. None of the three imports `sqlite3` directly — all persistence goes through
-`lib/db.py::get_db()`, per the platform's persistence-abstraction invariant.
+`claudenv/adapters/persistence/sqlite/database.py::SQLiteDatabase()`, per the platform's persistence-abstraction invariant.
 
 ---
 
@@ -24,7 +24,7 @@ violation, and human approval in claude-env is written as one row in `audit_even
 hash-chained to the row before it — each row's `event_hash` is a function of its own
 payload *and* the previous row's hash, so altering or deleting any past row breaks
 every hash after it. The database itself refuses `UPDATE`/`DELETE` on the table
-(`sql/001_schema.sql`) as defense in depth; the logger never issues them either.
+(`claudenv/_data/sql/schema.sql`) as defense in depth; the logger never issues them either.
 `AuditLogger` is the single writer (typed helper methods per event kind);
 `session_replay.py` reconstructs one session's timeline for debugging "why did the
 agent do that?"; `compliance_report.py` aggregates across a time window/repo and
@@ -35,7 +35,7 @@ been tampered with.
 
 ## Configuration / interface reference
 
-### `audit_events` table (`sql/001_schema.sql`)
+### `audit_events` table (`claudenv/_data/sql/schema.sql`)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -51,9 +51,9 @@ been tampered with.
 | `event_hash` | `TEXT NOT NULL UNIQUE` | `sha256(prev_hash \|\| canonical_payload)`. |
 
 Indexes: `ix_audit_ts`, `ix_audit_type`, `ix_audit_session`, `ix_audit_repo`,
-`ix_audit_actor` — all on `audit_events` (`sql/001_schema.sql`).
+`ix_audit_actor` — all on `audit_events` (`claudenv/_data/sql/schema.sql`).
 
-Append-only guard, DB-level (`sql/001_schema.sql`):
+Append-only guard, DB-level (`claudenv/_data/sql/schema.sql`):
 
 ```sql
 CREATE TRIGGER IF NOT EXISTS audit_events_no_update
@@ -65,7 +65,7 @@ BEFORE DELETE ON audit_events
 BEGIN SELECT RAISE(ABORT, 'audit_events is append-only'); END;
 ```
 
-### `AuditLogger` (`audit/audit_logger.py`)
+### `AuditLogger` (`claudenv/adapters/audit.py`)
 
 | Method | Signature | Event type | Projection table |
 |---|---|---|---|
@@ -148,7 +148,7 @@ reconstruct it.
 ### Hash-chain construction — `_append()`
 
 ```python
-# audit/audit_logger.py
+# claudenv/adapters/audit.py
 def _append(self, event_type: str, payload: dict,
             projection: tuple[str, dict] | None = None) -> int:
     """Append one chained event + optional typed projection, atomically."""
@@ -194,7 +194,7 @@ What actually gets hashed is **not** the caller's raw `payload` argument — it'
 deterministic:
 
 ```python
-# audit/audit_logger.py
+# claudenv/adapters/audit.py
 def _canon(payload: dict) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -210,15 +210,15 @@ recompute (not just re-check) hashes.
 
 ### Why `_append` reads-then-inserts inside `BEGIN IMMEDIATE`
 
-`_WRITE_LOCK` (`audit/audit_logger.py`) is a plain `threading.Lock` — it only
+`_WRITE_LOCK` (`claudenv/adapters/audit.py`) is a plain `threading.Lock` — it only
 serializes callers *within one process*. Across separate OS processes (e.g. two MCP
 servers each holding their own `AuditLogger`), that lock does nothing. The
 read-current-tip-then-insert sequence is therefore wrapped in `self.db.tx(immediate=True)`,
 which issues `BEGIN IMMEDIATE` instead of a lazy `BEGIN` on SQLite
-(`lib/db.py`):
+(`claudenv/adapters/persistence/sqlite/database.py`):
 
 ```python
-# lib/db.py (docstring)
+# claudenv/adapters/persistence/sqlite/database.py (docstring)
 immediate=True acquires the SQLite write lock up front (BEGIN IMMEDIATE)
 instead of lazily on first write (plain BEGIN). Use this whenever a
 transaction reads state that must not change before it writes based on
@@ -236,7 +236,7 @@ vice versa).
 ### `verify_chain()` — recompute, don't just compare
 
 ```python
-# audit/audit_logger.py
+# claudenv/adapters/audit.py
 def verify_chain(self) -> tuple[bool, int | None]:
     """Recompute the full chain. Returns (ok, first_broken_event_id|None)."""
     rows = self.db.query(
@@ -269,7 +269,7 @@ match, but only the earliest `event_id` is reported.
 focuses purely on reconstructing a human-readable timeline:
 
 ```python
-# audit/session_replay.py
+# claudenv/application/audit/audit_reporting.py
 def replay(session_id: str) -> list[dict]:
     rows = get_db().query(
         "SELECT event_id, ts, event_type, actor, repo, payload_json "
@@ -294,7 +294,7 @@ A malformed `payload_json` row degrades to an empty `body` rather than raising, 
 corrupt row doesn't kill the whole replay.
 
 `_summarize()` is a pure dispatch table keyed on `event_type`
-(`audit/session_replay.py`) — e.g. for `tool_call` it prefers
+(`claudenv/application/audit/audit_reporting.py`) — e.g. for `tool_call` it prefers
 `args["file_path"]`, then `args["path"]`, then `args["command"]`, then falls back to
 the first 60 characters of the JSON-dumped `args` dict; for anything it doesn't
 recognize it falls back to `json.dumps(body)[:100]`.
@@ -302,7 +302,7 @@ recognize it falls back to `json.dumps(body)[:100]`.
 ### `compliance_report.py` — proof of integrity is a live re-check, not a cached flag
 
 ```python
-# audit/compliance_report.py
+# claudenv/application/audit/audit_reporting.py
 chain_ok, broken_at = AuditLogger("report", actor="reporter").verify_chain()
 
 return {
@@ -327,7 +327,7 @@ flattening the `gather()` dict, making it the one format suitable for someone wh
 wants to independently re-verify the chain outside this codebase:
 
 ```python
-# audit/compliance_report.py
+# claudenv/application/audit/audit_reporting.py
 def render_csv(d: dict) -> str:
     """Flat CSV of the raw in-window ledger rows (evidence-grade export)."""
     db = get_db()
@@ -348,10 +348,10 @@ def render_csv(d: dict) -> str:
   timestamps or by different actors still produce different `event_hash` values.
 - **`GENESIS` is a real, literal string, not a sentinel object.** The very first row's
   `prev_hash` column contains the seven ASCII characters `GENESIS`
-  (`audit/audit_logger.py`); `verify_chain()` seeds its local `prev_hash` variable
+  (`claudenv/adapters/audit.py`); `verify_chain()` seeds its local `prev_hash` variable
   with the same literal so the first row's check is not special-cased.
 - **`event_hash` has a `UNIQUE` constraint at the schema level**
-  (`sql/001_schema.sql`) — a second row that happened to hash identically (would
+  (`claudenv/_data/sql/schema.sql`) — a second row that happened to hash identically (would
   require either a SHA-256 collision or byte-identical envelopes chained from the same
   prior hash, which canonicalization with a timestamp field makes practically
   impossible) would fail the `INSERT` outright, inside the same transaction as the
@@ -359,7 +359,7 @@ def render_csv(d: dict) -> str:
 - **`human_approval_resolve` does not use the `_append(..., projection=...)` path for
   its projection.** It logs the event with no projection tuple, then issues a
   standalone `UPDATE human_approvals SET decision=...,decided_by=...,decided_at=... WHERE
-  request_id=?` (`audit/audit_logger.py`) — **outside** the `BEGIN IMMEDIATE`
+  request_id=?` (`claudenv/adapters/audit.py`) — **outside** the `BEGIN IMMEDIATE`
   block that wrote the ledger row. This is the one write path in the module not
   covered by the same-transaction guarantee the module docstring advertises
   ("Typed projection tables ... are written in the SAME transaction so they cannot
@@ -367,13 +367,13 @@ def render_csv(d: dict) -> str:
   ledger row and a still-`pending` `human_approvals` row.
 - **`human_approvals` projection rows don't get a `ts` column.** `_append()` special-cases
   the table name: `if table != "human_approvals": cols["ts"] = ts`
-  (`audit/audit_logger.py`) — that table tracks `requested_at`/`decided_at`
+  (`claudenv/adapters/audit.py`) — that table tracks `requested_at`/`decided_at`
   instead, set explicitly by `human_approval_request`/`human_approval_resolve`.
 - **`verify_chain()` takes no arguments and ignores instance state** — see
   `compliance_report.py`'s use of a throwaway `AuditLogger` above; it verifies the
   *entire* `audit_events` table regardless of that instance's `session_id`/`actor`/`repo`.
 - **Dropping the table is the only way to erase history, and it's still detectable.**
-  Per the module docstring (`audit/audit_logger.py`): because `UPDATE`/`DELETE`
+  Per the module docstring (`claudenv/adapters/audit.py`): because `UPDATE`/`DELETE`
   are trigger-blocked, the only way to alter history is to drop `audit_events`
   entirely — which resets the chain to start from `GENESIS` again with
   `total_events=0`, a discontinuity visible in every future `compliance_report.py`
@@ -381,7 +381,7 @@ def render_csv(d: dict) -> str:
 - **`top_tools` and `security_events` in `compliance_report.py` are never repo-filtered**,
   even when `--repo` is passed, since `tool_calls`/`security_events` have no `repo`
   column (see the `gather()` key table above). The `[: None if not repo else None]`
-  slice on `top_tools` (`audit/compliance_report.py`) is a no-op either way — both
+  slice on `top_tools` (`claudenv/application/audit/audit_reporting.py`) is a no-op either way — both
   branches of that ternary are `None`, so it never actually truncates anything.
 - **`chain.total_events` is not window-scoped** — see the `gather()` key table above;
   a `--window 24h` report's chain-integrity total still reflects the entire ledger.
@@ -389,7 +389,7 @@ def render_csv(d: dict) -> str:
   `ts` column note above; Python's `%f` always renders six digits (microseconds).
 - **No test file exists for this module as of this writing.** There is no
   `tests/test_audit_logger.py` (or similarly named file) in `tests/` — the smoke test
-  at the bottom of `audit/audit_logger.py` (`if __name__ == "__main__":`, lines
+  at the bottom of `claudenv/adapters/audit.py` (`if __name__ == "__main__":`, lines
   208-215) is the only executable check in the repo, and it only exercises the happy
   path (`tool_call` + `policy_violation` + `verify_chain` all succeeding), not a
   tamper scenario.

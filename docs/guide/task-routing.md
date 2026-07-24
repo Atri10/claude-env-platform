@@ -2,7 +2,7 @@
 
 > ⚠ **SUPERSEDED (2026-07-09).** `task_router.py`, `agent_handoff.py`, and `agent_registry.yaml`
 > have been retired. Specialist agents now ship as native Claude Code `.claude/agents/*.md` files
-> in `templates/repo-onboarding/`. Routing is handled by Claude Code's native agent system —
+> in `claudenv/_data/templates/repo-onboarding/`. Routing is handled by Claude Code's native agent system —
 > the orchestrator agent routes multi-step tasks; single-area tasks go direct to specialists.
 > The handoff XML packet format (described below) survives in agent prompts.
 > This document is preserved for historical reference only.
@@ -46,7 +46,7 @@ paths the receiving agent needs into a `HandoffPacket`, records the transfer as 
 accumulates a float score from three independent signals:
 
 ```python
-# agents/orchestration/task_router.py
+# (superseded — native Claude Code routing)
 for pat, w in _INTENT.get(agent, []):
     if re.search(pat, task_l):
         score += w
@@ -95,7 +95,7 @@ final filter before an agent enters the ranked list only excludes agents that sc
 `0` on everything:
 
 ```python
-# agents/orchestration/task_router.py
+# (superseded — native Claude Code routing)
 if score > 0:
     out.append(RoutingDecision(agent, round(score, 2),
                                "; ".join(why) or "weak match"))
@@ -110,7 +110,7 @@ agent, purely from the `target`-path bonus — see the fact below.
 ### `route()` and `needs_clarification()`
 
 ```python
-# agents/orchestration/task_router.py
+# (superseded — native Claude Code routing)
 def route(self, task: str, target: str | None = None) -> RoutingDecision:
     ranked = self.rank(task, target)
     if not ranked:
@@ -170,7 +170,7 @@ just seeing the single winner and guessing. `--target` and `--registry` default 
 ### `HandoffPacket` — the scoped context container
 
 ```python
-# agents/orchestration/agent_handoff.py
+# (superseded)
 @dataclass
 class HandoffPacket:
     src: str
@@ -192,7 +192,7 @@ sender's own permissions.
 ### Context rendering wraps everything as DATA
 
 ```python
-# agents/orchestration/agent_handoff.py
+# (superseded)
 @property
 def context(self) -> str:
     """Prompt-injectable, clearly delimited DATA block for the receiver."""
@@ -217,7 +217,7 @@ might contain adversarial text."
 ### `_validate()` — scope checking is advisory, not blocking
 
 ```python
-# agents/orchestration/agent_handoff.py
+# (superseded)
 def _validate(self, src: str, dst: str, paths: list[str]) -> None:
     if src not in self.agents:
         raise ValueError(f"unknown source agent: {src}")
@@ -252,7 +252,7 @@ loop is skipped — no scope signal is emitted for agents that don't declare wri
 ### `handoff()` — build, validate, record, return
 
 ```python
-# agents/orchestration/agent_handoff.py
+# (superseded)
 def handoff(self, src: str, dst: str, objective: str,
             artifacts: dict[str, str] | None = None,
             paths: list[str] | None = None, notes: str = "") -> HandoffPacket:

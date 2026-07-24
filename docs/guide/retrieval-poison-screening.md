@@ -3,14 +3,14 @@
 > Relates to: [OVERVIEW.md §5 — knowledge and search shouldn't leave the
 > building](../OVERVIEW.md#5-knowledge-and-search-shouldnt-leave-the-building)
 
-**Source:** [`rag/pipelines/retrieve.py`](../../rag/pipelines/retrieve.py) (112 lines).
+**Source:** [`claudenv/application/rag/service.py`](../../rag/pipelines/retrieve.py) (112 lines).
 
-This doc covers `rag/pipelines/retrieve.py` only. Embedding, chunking, and reranker
+This doc covers `claudenv/application/rag/service.py` only. Embedding, chunking, and reranker
 model selection are covered by `rag.config` (`get_embedder()` / `get_reranker()`) —
 see `rag-pipeline.md` (not yet written). The LanceDB storage/search layer is
-`rag/retrievers/lance_store.py` — also `rag-pipeline.md`. The feedback-boost
+`claudenv/adapters/vector/lancedb/vector_store.py` — also `rag-pipeline.md`. The feedback-boost
 *scoring* mechanism (the `BOOST_UNIT * ln(1 + used_count)` formula and the
-`rag_chunk_feedback` table) is owned by `observability/feedback.py`, covered in
+`rag_chunk_feedback` table) is owned by `claudenv/application/observability/feedback_service.py`, covered in
 `observability-budgets.md` (not yet written) — this doc only covers how `retrieve.py`
 *calls* it. The `SecretDetector` / `PromptInjectionDetector` / `RagPoisonDetector`
 classes are covered in `secret-detection.md` (not yet written) — see the
@@ -53,7 +53,7 @@ indirectly through `observability.feedback.boost_enabled()`.
 ### Imports — what this file actually depends on
 
 ```python
-# rag/pipelines/retrieve.py
+# claudenv/application/rag/service.py
 from rag.config import get_embedder, get_reranker           # noqa: E402
 from rag.retrievers.lance_store import LanceStore            # noqa: E402
 from audit.audit_logger import AuditLogger                   # noqa: E402
@@ -62,7 +62,7 @@ from observability.feedback import (record_retrieved, usage_boosts,  # noqa: E40
                                     boost_enabled)
 ```
 
-There is **no import of `security/detectors.py`** anywhere in this file — no
+There is **no import of `claudenv/domain/security/detectors.py`** anywhere in this file — no
 `RagPoisonDetector`, `PromptInjectionDetector`, or `SecretDetector`. See
 [Facts, invariants & edge cases](#facts-invariants--edge-cases) below; the file's own
 module docstring is easy to misread as claiming otherwise.
@@ -70,7 +70,7 @@ module docstring is easy to misread as claiming otherwise.
 ### `Retriever.query()` — the full pipeline
 
 ```python
-# rag/pipelines/retrieve.py
+# claudenv/application/rag/service.py
 def query(self, text: str, top_k: int = 40, top_n: int = 8) -> list[dict]:
     t0 = time.perf_counter()
     qv = self.embedder.embed_query(text)
@@ -113,14 +113,14 @@ Read top to bottom:
    survive reranking.
 5. **Record** — `record_retrieved()` writes one `rag_chunk_feedback` row per chunk with
    `signal='retrieved'` (best-effort, swallows its own exceptions — see
-   `observability/feedback.py`).
+   `claudenv/application/observability/feedback_service.py`).
 6. **Audit + quality metrics** (below).
 7. **Wrap** every chunk for injection safety (below) and return.
 
 ### Scoring order — `_relevance()`
 
 ```python
-# rag/pipelines/retrieve.py
+# claudenv/application/rag/service.py
 def _relevance(c: dict) -> float:
     if c.get("rerank_score") is not None:
         return float(c["rerank_score"])
@@ -142,7 +142,7 @@ Priority order is reranked score first, then hybrid RRF score, then raw distance
 ### Audit event and quality metrics
 
 ```python
-# rag/pipelines/retrieve.py
+# claudenv/application/rag/service.py
 scores = [_relevance(c) for c in ranked]
 self.audit.retrieval(
     repo=self.repo, branch=self.branch, query=text, top_k=top_k,
@@ -166,13 +166,13 @@ ternary — an empty `ranked` never raises here.
 ### Wrapping for injection safety
 
 ```python
-# rag/pipelines/retrieve.py
+# claudenv/application/rag/service.py
 CHUNK_OPEN = "<retrieved_context source=\"{path}\" lines=\"{a}-{b}\">"
 CHUNK_CLOSE = "</retrieved_context>"
 ```
 
 ```python
-# rag/pipelines/retrieve.py
+# claudenv/application/rag/service.py
 for c in ranked:
     c["wrapped"] = (CHUNK_OPEN.format(path=c.get("file_path", "?"),
                                       a=c.get("start_line", 0),
@@ -215,11 +215,11 @@ before and after wrapping.
 
 - **This file does not screen for poisoned content.** Despite the module docstring's
   framing ("Wraps each returned chunk in injection-safe delimiters"), `retrieve.py`
-  has no import of and no call to `security/detectors.py`'s `RagPoisonDetector`,
+  has no import of and no call to `claudenv/domain/security/detectors.py`'s `RagPoisonDetector`,
   `PromptInjectionDetector`, or `SecretDetector` (verified by reading the full import
   list, `retrieve.py`). The only two other callers of `RagPoisonDetector` in the
-  repo are `mcp-servers/lancedb-rag/server.py` and
-  `mcp-servers/documentation/server.py` — poison scanning, where it exists, happens at
+  repo are `claudenv/adapters/mcp/lancedb_rag/server.py` and
+  `claudenv/adapters/mcp/documentation/server.py` — poison scanning, where it exists, happens at
   indexing/fetch time in those servers, not at query time here. If you came looking
   for "where does retrieval screen out a poisoned chunk," it isn't in this file; see
   `secret-detection.md` (not yet written) for where `RagPoisonDetector` actually runs.
@@ -246,7 +246,7 @@ before and after wrapping.
 - **`sys.path` is mutated at import time.** `retrieve.py` inserts the repo root
   (`Path(__file__).resolve().parents[2]`) into `sys.path` before the `rag.*`/`audit.*`/
   `observability.*` imports, guarded with `# noqa: E402` — this file is written to be
-  runnable both as `python rag/pipelines/retrieve.py <repo> <query>` and as an imported
+  runnable both as `claudenv/application/rag/service.py --search <repo> <query>` and as an imported
   module.
 - **The CLI's printed score bypasses `_relevance()`** (see interface reference
   above) — it prints raw `rerank_score` defaulting to `0`, so CLI output for a
@@ -303,14 +303,14 @@ step (`retrieve.py`), just with the `Retriever` object removed from the picture.
 ## Related docs
 
 - `secret-detection.md` (not yet written) — the `SecretDetector` /
-  `PromptInjectionDetector` / `RagPoisonDetector` classes in `security/detectors.py`,
-  and where `RagPoisonDetector` is actually invoked (`mcp-servers/lancedb-rag/server.py`,
-  `mcp-servers/documentation/server.py`) — not this file.
-- `observability-budgets.md` (not yet written) — `observability/feedback.py`'s boost
+  `PromptInjectionDetector` / `RagPoisonDetector` classes in `claudenv/domain/security/detectors.py`,
+  and where `RagPoisonDetector` is actually invoked (`claudenv/adapters/mcp/lancedb_rag/server.py`,
+  `claudenv/adapters/mcp/documentation/server.py`) — not this file.
+- `observability-budgets.md` (not yet written) — `claudenv/application/observability/feedback_service.py`'s boost
   formula, the `rag_chunk_feedback` table, and `observability/collectors.py`'s
   `record_latency` / `record_retrieval_quality`.
-- `rag-pipeline.md` (not yet written) — `rag/config.py` (`get_embedder()`/
-  `get_reranker()`), the chunkers, and `rag/retrievers/lance_store.py`'s hybrid search.
+- `rag-pipeline.md` (not yet written) — `claudenv/domain/rag/config.py` (`get_embedder()`/
+  `get_reranker()`), the chunkers, and `claudenv/adapters/vector/lancedb/vector_store.py`'s hybrid search.
 - [`policy-engine.md`](policy-engine.md) — how `rag.index_paths` is constrained to a
   subset of policy-allowed files at index time (not at query time, which this doc
   covers).

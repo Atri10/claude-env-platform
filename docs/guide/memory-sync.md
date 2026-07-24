@@ -2,10 +2,10 @@
 
 > Relates to: [OVERVIEW.md §4 — the agent forgets everything, every session](../OVERVIEW.md#4-the-agent-forgets-everything-every-session)
 
-**Source:** [`memory/memory_sync.py`](../../memory/memory_sync.py) (180 lines).
+**Source:** [`claudenv/domain/memory/service/maintenance.py`](../../claudenv/domain/memory/service/maintenance.py) (180 lines).
 
-This doc covers `memory/memory_sync.py` only. It reuses `SecretDetector.redact()`
-from `security/detectors.py` for export-time redaction rather than implementing its
+This doc covers `claudenv/domain/memory/service/maintenance.py` only. It reuses `SecretDetector.redact()`
+from `claudenv/domain/security/detectors.py` for export-time redaction rather than implementing its
 own scanning — see [`secret-detection.md`](secret-detection.md) for how that class
 works (once written). The memory graph's own read/write paths (`memory_manager.py`,
 `memory_retriever.py`) are a separate doc; this one is strictly the CLI that moves a
@@ -25,7 +25,7 @@ body along the way; `import` reads that file back in, additively, into a (possib
 different) namespace. It's how a senior engineer's accumulated decisions and
 conventions become a file that's reviewable, diffable, and shareable (repo, drive,
 chat) — and how a new teammate's first Claude Code session starts already knowing
-them, per the module docstring (`memory/memory_sync.py`).
+them, per the module docstring (`claudenv/domain/memory/service/maintenance.py`).
 
 ---
 
@@ -45,7 +45,7 @@ claude-env memory-sync import --in team.jsonl
 claude-env memory-sync import --in team.jsonl --namespace proj-other
 ```
 
-(`memory/memory_sync.py`)
+(`claudenv/domain/memory/service/maintenance.py`)
 
 ---
 
@@ -79,7 +79,7 @@ exported from. Re-running the same `import` command twice is safe — it's idemp
 One JSON object per line, three `kind`s, always meta first:
 
 ```python
-# memory/memory_sync.py (module docstring)
+# claudenv/domain/memory/service/maintenance.py (module docstring)
 {"kind":"meta", "namespace":..., "exported_at":..., "nodes":N, "edges":M}
 {"kind":"node", ...row...}
 {"kind":"edge", ...row...}
@@ -96,7 +96,7 @@ One JSON object per line, three `kind`s, always meta first:
 
 `default=str` is passed to every `json.dumps` call for node/edge rows
 (`memory_sync.py,87`), so any non-JSON-native column value (e.g. a driver-specific
-type from `lib/db.py`) is coerced to its string form rather than raising.
+type from `claudenv/adapters/persistence/sqlite/database.py`) is coerced to its string form rather than raising.
 
 ---
 
@@ -109,7 +109,7 @@ does this belong to."
 **Export** takes one namespace as a required argument and queries only that scope:
 
 ```python
-# memory/memory_sync.py
+# claudenv/domain/memory/service/maintenance.py
 def export_ns(namespace: str, out_path: Path,
               include_superseded: bool = False) -> dict:
     db = get_db()
@@ -147,7 +147,7 @@ single `namespace` field would look inconsistent).
 ## Secret redaction on export
 
 Redaction is not reimplemented here — it delegates entirely to
-`SecretDetector.redact()` (`security/detectors.py`), constructed once per
+`SecretDetector.redact()` (`claudenv/domain/security/detectors.py`), constructed once per
 export run:
 
 ```python
@@ -241,7 +241,7 @@ if kind == "node":
   included in the export, or belongs to a different namespace), the reference is
   dropped to `None` rather than inserted as a dangling foreign key — required because
   `memory_nodes.superseded_by` has a `REFERENCES memory_nodes(node_id)` constraint
-  (`sql/001_schema.sql`).
+  (`claudenv/_data/sql/schema.sql`).
 - **Edges require both endpoints to already resolve** at insert time — either
   pre-existing in the DB or already inserted earlier in the same import pass (node
   lines are expected to precede the edges that reference them in the file, since
@@ -273,7 +273,7 @@ if not (db.query_one("SELECT 1 FROM memory_nodes WHERE node_id=?",
 ## Audit trail
 
 Both directions log through `AuditLogger.memory_write(namespace, memory_type,
-node_id, operation)` (`audit/audit_logger.py`), which appends to the
+node_id, operation)` (`claudenv/adapters/audit.py`), which appends to the
 hash-chained `audit_events` ledger and a `memory_writes` projection in the same
 transaction:
 

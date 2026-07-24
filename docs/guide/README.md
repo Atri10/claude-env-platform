@@ -20,46 +20,46 @@ Status legend: ✅ written · 🔜 planned (not yet written)
 
 | Doc | Source | Status |
 |---|---|---|
-| [policy-engine.md](policy-engine.md) | `security/policy_engine.py` | ✅ |
-| [native-tool-hooks.md](native-tool-hooks.md) | `hooks/policy_hook.py`, `hooks/audit_hook.py` | ✅ |
-| [secret-detection.md](secret-detection.md) | `security/detectors.py` | ✅ |
-| [incident-mode.md](incident-mode.md) | `security/incident.py` | ✅ |
-| [policy-simulation.md](policy-simulation.md) | `security/policy_sim.py` | ✅ |
+| [policy-engine.md](policy-engine.md) | `claudenv/domain/policy/policy_engine.py` | ✅ |
+| [native-tool-hooks.md](native-tool-hooks.md) | `claudenv/adapters/hooks/policy_hook.py`, `claudenv/adapters/hooks/audit_hook.py` | ✅ |
+| [secret-detection.md](secret-detection.md) | `claudenv/domain/security/detectors.py` | ✅ |
+| [incident-mode.md](incident-mode.md) | `claudenv/adapters/incident.py` / `claudenv/domain/incident.py` | ✅ |
+| [policy-simulation.md](policy-simulation.md) | `claudenv/application/policy/policy_service.py` | ✅ |
 
 ## 2. Audit trail — [OVERVIEW.md §2](../OVERVIEW.md#2-no-one-knows-what-the-agent-actually-did)
 
 | Doc | Source | Status |
 |---|---|---|
-| [audit-ledger.md](audit-ledger.md) | `audit/audit_logger.py`, `audit/session_replay.py`, `audit/compliance_report.py` | ✅ |
+| [audit-ledger.md](audit-ledger.md) | `claudenv/adapters/audit.py`, `claudenv/application/audit/audit_reporting.py`, `claudenv/application/audit/audit_reporting.py` | ✅ |
 
 ## 3. Approvals — [OVERVIEW.md §3](../OVERVIEW.md#3-risky-actions-run-without-anyone-checking)
 
 | Doc | Source | Status |
 |---|---|---|
-| [approvals-workflow.md](approvals-workflow.md) | `agents/orchestration/approvals_ui.py`, `agents/orchestration/approval_gate.py`, `mcp-servers/terminal/server.py` | ✅ |
+| [approvals-workflow.md](approvals-workflow.md) | `claudenv/adapters/approvals_ui.py`, `claudenv/application/approval.py`, `claudenv/adapters/mcp/terminal/server.py` | ✅ |
 
 ## 4. Memory — [OVERVIEW.md §4](../OVERVIEW.md#4-the-agent-forgets-everything-every-session)
 
 | Doc | Source | Status |
 |---|---|---|
-| [memory-graph.md](memory-graph.md) | `memory/memory_manager.py`, `memory/memory_retriever.py` | ✅ |
-| [session-ingestion.md](session-ingestion.md) | `memory/session_ingestor.py` | ✅ |
-| [memory-consolidation.md](memory-consolidation.md) | `memory/memory_consolidator.py`, `memory/memory_pruner.py` | ✅ |
-| [memory-sync.md](memory-sync.md) | `memory/memory_sync.py` | ✅ |
+| [memory-graph.md](memory-graph.md) | `claudenv/domain/memory/service/writer.py`, `claudenv/domain/memory/service/reader.py` | ✅ |
+| [session-ingestion.md](session-ingestion.md) | `claudenv/application/memory/session_ingestor.py` | ✅ |
+| [memory-consolidation.md](memory-consolidation.md) | `claudenv/domain/memory/service/maintenance.py`, `claudenv/domain/memory/service/maintenance.py` | ✅ |
+| [memory-sync.md](memory-sync.md) | `claudenv/domain/memory/service/maintenance.py` | ✅ |
 
 ## 5. Knowledge (RAG) — [OVERVIEW.md §5](../OVERVIEW.md#5-knowledge-and-search-shouldnt-leave-the-building)
 
 | Doc | Source | Status |
 |---|---|---|
-| [rag-pipeline.md](rag-pipeline.md) | `rag/config.py`, `rag/chunkers/`, `rag/embeddings/`, `rag/rerankers/`, `rag/retrievers/lance_store.py`, `rag/git_sync.py` | ✅ |
-| [retrieval-poison-screening.md](retrieval-poison-screening.md) | `rag/pipelines/retrieve.py` | ✅ |
-| [mcp-servers.md](mcp-servers.md) | `mcp-servers/*/server.py` (all six) | ✅ |
+| [rag-pipeline.md](rag-pipeline.md) | `claudenv/domain/rag/config.py`, `claudenv/domain/rag_chunker/`, `claudenv/adapters/embedding/`, `claudenv/adapters/vector/lancedb/vector_store.py`, `claudenv/application/rag/git_sync.py` | ✅ |
+| [retrieval-poison-screening.md](retrieval-poison-screening.md) | `claudenv/application/rag/service.py` | ✅ |
+| [mcp-servers.md](mcp-servers.md) | `claudenv/adapters/mcp/*/server.py` (all six) | ✅ |
 
 ## 6. Agents & orchestration — [OVERVIEW.md §6](../OVERVIEW.md#6-one-generalist-agent-doing-everything-badly)
 
 | Doc | Source | Status |
 |---|---|---|
-| [specialist-agents.md](specialist-agents.md) | `templates/repo-onboarding/.claude/agents/` (11 native agents) | ✅ (supersedes `agent_registry.yaml`) |
+| [specialist-agents.md](specialist-agents.md) | `claudenv/_data/templates/repo-onboarding/.claude/agents/` (11 native agents) | ✅ (supersedes `agent_registry.yaml`) |
 | [task-routing.md](task-routing.md) | orchestrator agent prompt — model routes natively | ✅ (supersedes `task_router.py`, `agent_handoff.py`) |
 | [conflict-resolution.md](conflict-resolution.md) | orchestrator agent prompt — synthesizes conflicts | ✅ (supersedes `conflict_resolver.py`) |
 
@@ -67,14 +67,14 @@ Status legend: ✅ written · 🔜 planned (not yet written)
 
 | Doc | Source | Status |
 |---|---|---|
-| [observability-budgets.md](observability-budgets.md) | `observability/budgets.py`, `observability/feedback.py`, `observability/dashboard.py` | ✅ |
-| [validation-suite.md](validation-suite.md) | `validation/*.py` | ✅ |
+| [observability-budgets.md](observability-budgets.md) | `claudenv/application/observability/budget_service.py`, `claudenv/application/observability/feedback_service.py`, `claudenv/application/observability/dashboard_service.py` | ✅ |
+| [validation-suite.md](validation-suite.md) | `claudenv/cli/validate.py` | ✅ |
 
 ## 8. Onboarding — [OVERVIEW.md §8](../OVERVIEW.md#8-how-this-actually-gets-turned-on)
 
 | Doc | Source | Status |
 |---|---|---|
-| [onboarding.md](onboarding.md) | `scripts/register_repo.py`, `templates/repo-onboarding/` | ✅ |
+| [onboarding.md](onboarding.md) | `claude-env onboard`, `claudenv/_data/templates/repo-onboarding/` | ✅ |
 
 ---
 

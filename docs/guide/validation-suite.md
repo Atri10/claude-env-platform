@@ -3,24 +3,24 @@
 > Relates to: [OVERVIEW.md §7 — you can't tell if it's working well or costing too
 > much](../OVERVIEW.md#7-you-cant-tell-if-its-working-well-or-costing-too-much)
 
-**Source:** [`validation/validate_installation.py`](../../validation/validate_installation.py) (174 lines),
-[`validation/validate_security.py`](../../validation/validate_security.py) (123 lines),
-[`validation/validate_memory.py`](../../validation/validate_memory.py) (107 lines),
-[`validation/validate_mcp.py`](../../validation/validate_mcp.py) (132 lines),
-[`validation/validate_features.py`](../../validation/validate_features.py) (324 lines).
-**Invoked by:** [`bin/claude-env`](../../bin/claude-env) (`validate` command).
+**Source:** [`claudenv/cli/validate.py`](../../claudenv/cli/validate.py) (174 lines),
+[`claudenv/cli/validate.py`](../../claudenv/cli/validate.py) (123 lines),
+[`claudenv/cli/validate.py`](../../claudenv/cli/validate.py) (107 lines),
+[`claudenv/cli/validate.py`](../../claudenv/cli/validate.py) (132 lines),
+[`claudenv/cli/validate.py`](../../claudenv/cli/validate.py) (324 lines).
+**Invoked by:** [`claude-env`](../../bin/claude-env) (`validate` command).
 
-This doc covers everything under `validation/` only. A sixth validator target,
-`rag` → [`rag/validate_rag.py`](../../rag/validate_rag.py), is dispatched the same way
-by the CLI but lives outside `validation/` and isn't covered here.
+This doc covers everything under `claudenv/cli/` only. A sixth validator target,
+`rag` → [`claude-env validate`](../../rag/validate_rag.py), is dispatched the same way
+by the CLI but lives outside `claudenv/cli/` and isn't covered here.
 
 > **Removed (2026-07-09):** `validate_agents.py` validated `agents/agent_registry.yaml`,
-> `agents/orchestration/task_router.py`, and `agents/orchestration/conflict_resolver.py`
+> `claude-env` (native orchestrator), and `claude-env` (native orchestrator)
 > — all deleted when the agent-registry design was retired in favor of native
 > `.claude/agents/*.md` files (installed per-repo by onboarding; Claude Code routes to
 > them natively, no registry or router). The validator crashed on its first line
 > (`FileNotFoundError` reading the deleted registry) and was removed along with the
-> `agents` entry in `bin/claude-env`'s `VALIDATORS` list. There is no replacement
+> `agents` entry in `claude-env`'s `VALIDATORS` list. There is no replacement
 > validator — the agent `.md` files are covered by
 > `tests/test_onboard_agents.py`/`test_subagent_tools.py` instead.
 
@@ -32,7 +32,7 @@ by the CLI but lives outside `validation/` and isn't covered here.
 of which exercises a slice of the platform end-to-end and prints `PASS`/`WARN`/`FAIL`
 per check, then exits `0` (all checks passed, warnings are non-fatal) or `1` (at
 least one hard failure). There is no shared runner class or test framework — each
-script is `if __name__ == "__main__": raise SystemExit(main())`, and `bin/claude-env`
+script is `if __name__ == "__main__": raise SystemExit(main())`, and `claude-env`
 just spawns them as subprocesses and ORs the exit codes together for `validate all`.
 This is smoke-testing/health-checking, not `pytest`: it targets a real (or, for
 `validate_features`, a hermetically isolated) `$CLAUDE_ENV_HOME` and database rather
@@ -43,12 +43,12 @@ than mocks.
 ## Invocation
 
 ```python
-# bin/claude-env:50
+# claude-env:50
 VALIDATORS = ["installation", "security", "rag", "memory", "mcp", "features"]
 ```
 
 ```python
-# bin/claude-env:136-145
+# claude-env:136-145
 if cmd == "validate":
     which = rest[0] if rest else "all"
     targets = VALIDATORS if which == "all" else [which]
@@ -68,7 +68,7 @@ claude-env validate memory          # or any other single validator by name
 ```
 
 Each script can also be run directly with the deployed venv's Python
-(`~/.claude-env/venv/bin/python validation/validate_installation.py`), which is how
+(`~/.claude-env/venv/bin/python claude-env validate installation`), which is how
 their own docstrings document usage — the CLI wrapper adds nothing but subprocess
 dispatch and exit-code aggregation.
 
@@ -77,7 +77,7 @@ dispatch and exit-code aggregation.
 ## How to use it
 
 ```bash
-# Full sweep — run all 6 validators after a platform upgrade or bootstrap.py re-mirror
+# Full sweep — run all 6 validators after a platform upgrade or claude-env init
 claude-env validate all
 
 # Run just one validator, e.g. after a policy change to config/global-policy
@@ -110,8 +110,8 @@ report nonzero.
 | `validate_installation.py` | `main()` only (no helper functions besides `check()`): Python ≥3.13; `$CLAUDE_ENV_HOME/venv/` exists and its `python`/`pip` run; required dirs (`state`, `knowledge/lancedb`, `models`, `config`, `archive`, `logs`); DB reachable via `lib.db.get_db()` and all 15 expected tables present; `import yaml` (hard-required); soft-checks `lancedb`, `onnxruntime`, `mcp`, `llama_cpp`; RAG embedding-model file presence and reranker load via `rag.config.get_config()`; `AuditLogger(...).verify_chain()`. | Printed `PASS/WARN/FAIL` per line to stdout; exit `1` if `_failures > 0`, else `0` (warnings alone don't fail it — see [Facts](#facts-invariants--edge-cases)). |
 | `validate_security.py` | `main()` only: `PolicyEngine.evaluate_path()` must `block` a known-bad set (`.env`, `secrets/key.pem`, `deploy/id_rsa`, `backups/dump.sql`, etc.) and `allow` a known-good set (`src/app.py`, `docs/adr/0001.md`, ...); `scan_content()` flags + redacts/blocks a planted AWS key; `PromptInjectionDetector.scan()` flags a classic injection and leaves a benign prompt unblocked; `SecretDetector.scan()` flags a planted credential; `RagPoisonDetector.scan_chunk()` flags an instruction-laden chunk; direct `UPDATE`/`DELETE` on `audit_events` must raise (DB trigger). | Same PASS/FAIL-per-line + exit `1`/`0` pattern; no soft warnings in this script — every check is hard. |
 | `validate_memory.py` | `main()` only, all against a throwaway `test:<uuid>` namespace: `add_node`/`get_node` round-trip; `add_edge` + `MemoryRetriever.expand()` reaches the linked node; `keyword_recall()` finds a node by name; `supersede()` creates a new node and marks the old one's `superseded_by`; an `isolated=True` retriever's `keyword_recall(..., extra_ns=[other_ns])` returns nothing from a different namespace; `effective_confidence()` decays a 1.0-confidence, 26-year-old node below 1.0; `memory_validator.validate_ns(ns, repair=False)` reports zero dangling edges. | Exit `1`/`0`; a `memory_validator` import/run exception is itself turned into a `FAIL` line rather than crashing the script. |
-| `validate_mcp.py` | `main()` only: `config/mcp-servers.json` parses and declares all 7 expected servers; `startup_order` values are unique and `filesystem-policy` has the minimum; every non-optional server's `server.py` file exists (`jetbrains` is IDE-provided, skipped); `filesystem-policy.security.{enforces_policy_engine,content_scan}`; `lancedb-rag.security.{read_only,wraps_results_as_data}`; `terminal.security.allowlist_only` and `"terminal.exec_unrestricted"` present in its `denies` list; `memory-graph.security.namespace_isolation`; `documentation.security.external_fetch_tiers == [0, 1]`; each server module can be `importlib`-loaded and exposes a `server` attribute (soft-checked — skipped/WARN if the `mcp` package isn't installed). | Exit `1`/`0`; the import-and-expose-`server` checks are the only soft (`WARN`, non-fatal) checks in this script. |
-| `validate_features.py` | One `main()` plus a `_make_fixture()` helper that builds a tiny real git repo (`src/engine.py`, matching test, a doc referencing both a real and a missing file) so repo-quality tools have something realistic to scan. Runs entirely inside a freshly created temp `$CLAUDE_ENV_HOME` + SQLite DB (set via env vars **before** any platform import, since `get_db()` is a singleton) so it never touches the real ledger/memory/settings. Exercises, as subprocess or in-process calls: `hooks/policy_hook.py` (deny/allow/ask-on-secret decisions), `hooks/install_hooks.py --dry-run`; `security/incident.py on/off` + `PolicyEngine` block/restore; `memory/session_ingestor.ingest()` (session-node creation, retrieval→edit "used" signal via `observability.feedback`, re-run dedup); `audit/compliance_report.py` and `audit/session_replay.py --list`; `memory/memory_sync.py export/import` (secret redaction, same-DB idempotent skip, cross-namespace remap on import); `security/policy_sim.py simulate` against a candidate policy; `observability/budgets.py` (exceeded-budget exit code 1); `rag/test_impact.py`, `rag/doc_drift.py`, `rag/context_pack.py`, `agents/analysts/nightly_analyst.py` against the fixture repo; `agents/orchestration/approvals_ui._pending_html()`; `rag/pipelines/know.py`; `claude-plugin/` manifest JSON validity (skipped with a printed `SKIP` line if the plugin dir is absent, e.g. in a deployed mirror); and a static string-scan of `bin/claude-env`'s source confirming 15 named CLI subcommands are present. | Exit `1`/`0`; the plugin-manifest check degrades to a printed `SKIP` (not `WARN`/`FAIL`) rather than failing when `claude-plugin/` doesn't exist in the current tree. |
+| `validate_mcp.py` | `main()` only: `claudenv/_data/config/mcp-servers.json` parses and declares all 7 expected servers; `startup_order` values are unique and `filesystem-policy` has the minimum; every non-optional server's `server.py` file exists (`jetbrains` is IDE-provided, skipped); `filesystem-policy.security.{enforces_policy_engine,content_scan}`; `lancedb-rag.security.{read_only,wraps_results_as_data}`; `terminal.security.allowlist_only` and `"terminal.exec_unrestricted"` present in its `denies` list; `memory-graph.security.namespace_isolation`; `documentation.security.external_fetch_tiers == [0, 1]`; each server module can be `importlib`-loaded and exposes a `server` attribute (soft-checked — skipped/WARN if the `mcp` package isn't installed). | Exit `1`/`0`; the import-and-expose-`server` checks are the only soft (`WARN`, non-fatal) checks in this script. |
+| `validate_features.py` | One `main()` plus a `_make_fixture()` helper that builds a tiny real git repo (`src/engine.py`, matching test, a doc referencing both a real and a missing file) so repo-quality tools have something realistic to scan. Runs entirely inside a freshly created temp `$CLAUDE_ENV_HOME` + SQLite DB (set via env vars **before** any platform import, since `get_db()` is a singleton) so it never touches the real ledger/memory/settings. Exercises, as subprocess or in-process calls: `claudenv/adapters/hooks/policy_hook.py` (deny/allow/ask-on-secret decisions), `hooks/install_hooks.py --dry-run`; `security/incident.py on/off` + `PolicyEngine` block/restore; `memory/session_ingestor.ingest()` (session-node creation, retrieval→edit "used" signal via `observability.feedback`, re-run dedup); `claudenv/application/audit/audit_reporting.py` and `audit/session_replay.py --list`; `memory/memory_sync.py export/import` (secret redaction, same-DB idempotent skip, cross-namespace remap on import); `security/policy_sim.py simulate` against a candidate policy; `claudenv/application/observability/budget_service.py` (exceeded-budget exit code 1); `rag/test_impact.py`, `claudenv/application/rag/doc_drift.py`, `claudenv/application/rag/context_pack.py`, `agents/analysts/nightly_analyst.py` against the fixture repo; `agents/orchestration/approvals_ui._pending_html()`; `claudenv/application/rag/know.py`; `claude-plugin/` manifest JSON validity (skipped with a printed `SKIP` line if the plugin dir is absent, e.g. in a deployed mirror); and a static string-scan of `claude-env`'s source confirming 15 named CLI subcommands are present. | Exit `1`/`0`; the plugin-manifest check degrades to a printed `SKIP` (not `WARN`/`FAIL`) rather than failing when `claude-plugin/` doesn't exist in the current tree. |
 
 No dedicated `tests/test_validate_*.py` files exist for the validation suite itself —
 these scripts *are* the tests (for the rest of the platform), not a target of the
@@ -129,7 +129,7 @@ five times (six, counting `validate_features.py`'s slightly different two-argume
 `check(label, cond, detail="")`):
 
 ```python
-# validation/validate_installation.py
+# claudenv/cli/validate.py
 def check(label: str, cond: bool, soft: bool = False) -> None:
     global _failures, _warnings
     if cond:
@@ -156,7 +156,7 @@ any `from lib.db import ...` or other platform import runs, then applies the sch
 files directly:
 
 ```python
-# validation/validate_features.py, 77-82
+# claudenv/cli/validate.py, 77-82
 _TMP = tempfile.mkdtemp(prefix="claude-env-features-")
 os.environ["CLAUDE_ENV_HOME"] = _TMP
 os.environ["CLAUDE_ENV_DSN"] = f"sqlite:///{_TMP}/state/test.db"
@@ -184,7 +184,7 @@ A comment explains why: the *deployed* copy at `$CLAUDE_ENV_HOME` is a mirror wi
 to have anything meaningful to analyze:
 
 ```python
-# validation/validate_features.py
+# claudenv/cli/validate.py
 def _make_fixture() -> Path:
     """A tiny committed git repo so the repo-quality tools (policy-sim, test-impact,
     doc-drift, nightly analyst) run hermetically — independent of where this
@@ -202,7 +202,7 @@ check has real drift to find, not just a clean bill of health.
 ## Flow diagram
 
 ![Six validators feeding one pass/fail report](../assets/guide/validation-suite/validators-to-report.svg)
-*`bin/claude-env` spawns each validator as its own subprocess and ORs their exit
+*`claude-env` spawns each validator as its own subprocess and ORs their exit
 codes; each validator is independently PASS/WARN/FAIL-per-check and independently
 exits 0 or 1 — there is no shared runner, only the CLI's loop.*
 
@@ -212,8 +212,8 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
 
 - **Warnings never fail a script — except when they silently don't exist.**
   `validate_installation.py` and `validate_mcp.py` explicitly separate `_warnings`
-  from `_failures` and only `return 1` on `_failures` (`validation/validate_installation.py`,
-  `validation/validate_mcp.py`). `validate_security.py` and `validate_memory.py`
+  from `_failures` and only `return 1` on `_failures` (`claudenv/cli/validate.py`,
+  `claudenv/cli/validate.py`). `validate_security.py` and `validate_memory.py`
   have no `soft` concept at all — every failed check in those two is fatal.
 - **`validate_features.py` is the only validator that never touches the real
   `$CLAUDE_ENV_HOME`** — see [`validate_features.py` isolates itself before
@@ -223,9 +223,9 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
   isolation strategies for the same underlying concern.
 - **`validate_mcp.py` resolves server paths against the *repo*, not the deployed
   mirror, even though the config uses `${CLAUDE_ENV_HOME}`.** `_server_path()`
-  strips everything up to `mcp-servers/` from the configured arg and re-joins it
+  strips everything up to `claudenv/adapters/mcp/` from the configured arg and re-joins it
   under `REPO`, specifically so this validator works from a source checkout
-  (`validation/validate_mcp.py`).
+  (`claudenv/cli/validate.py`).
 - **The `mcp` package is optional for `validate_mcp.py`'s import checks but not for
   its config-shape checks** — see the [reference table row](#reference-table--one-row-per-validator)
   above; the JSON-shape and security-posture assertions remain hard failures either way.
@@ -236,14 +236,14 @@ exits 0 or 1 — there is no shared runner, only the CLI's loop.*
 - **`validate_memory.py`'s decay check uses a fixed ancient timestamp, not "now minus
   N days."** It calls `effective_confidence(1.0, half_life=30,
   updated_at="2000-01-01T00:00:00Z")` and only asserts the result is `< 1.0`
-  (`validation/validate_memory.py`) — it doesn't assert a specific decayed
+  (`claudenv/cli/validate.py`) — it doesn't assert a specific decayed
   value, so it would still pass even if the half-life math changed, as long as *some*
   decay occurs over a 26-year gap.
 - **`rag` is a sixth `VALIDATORS` entry that structurally doesn't belong to this
-  directory** — its script lives at `rag/validate_rag.py`, not
-  `validation/validate_rag.py` (`bin/claude-env:141-142` special-cases the path); see
+  directory** — its script lives at `claude-env validate`, not
+  `claudenv/cli/validate.py` (`claudenv/cli/__init__.py` special-cases the path); see
   the note at the top of this doc.
-- **None of the five `validation/` scripts import each other or share a base module** beyond
+- **None of the five `claudenv/cli/` scripts import each other or share a base module** beyond
   standard library and the platform modules they're testing — each is a fully
   standalone `if __name__ == "__main__"` entry point, confirmed by re-reading every
   file's imports; the duplicated `check()`/color-constant boilerplate is a real,

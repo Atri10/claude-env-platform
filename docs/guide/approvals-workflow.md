@@ -2,9 +2,9 @@
 
 > Relates to: [OVERVIEW.md §3 — risky actions run without anyone checking](../OVERVIEW.md#3-risky-actions-run-without-anyone-checking)
 
-**Source:** [`agents/orchestration/approval_gate.py`](../../agents/orchestration/approval_gate.py),
-[`agents/orchestration/approvals_ui.py`](../../agents/orchestration/approvals_ui.py),
-[`mcp-servers/terminal/server.py`](../../mcp-servers/terminal/server.py).
+**Source:** [`claudenv/application/approval.py`](../../agents/orchestration/approval_gate.py),
+[`claudenv/adapters/approvals_ui.py`](../../claudenv/adapters/approvals_ui.py),
+[`claudenv/adapters/mcp/terminal/server.py`](../../mcp-servers/terminal/server.py).
 
 This doc covers the three modules that make "risky actions block for a human" true
 end to end: the gate that decides *whether* to block, the local web UI a human
@@ -18,7 +18,7 @@ through (`AuditLogger`, hash-chained `human_approvals` rows) is covered in
 ## What it does (30-second version)
 
 > **Correction (2026-07-09):** the walkthrough below describes `ApprovalGate.evaluate()`
-> as the entry point, but **no live caller invokes it**. `mcp-servers/terminal/server.py`
+> as the entry point, but **no live caller invokes it**. `claudenv/adapters/mcp/terminal/server.py`
 > calls `AuditLogger.human_approval_request()` directly — it never imports
 > `ApprovalGate` at all. `evaluate()` and its registry-driven checks (`requires_approval`,
 > `write_paths`, `denied_tools`, `global_approval_gates`) are a holdover from the retired
@@ -31,7 +31,7 @@ through (`AuditLogger`, hash-chained `human_approvals` rows) is covered in
 > with no registry. The `evaluate()` walkthrough further down is retained as documentation
 > of dead code still present in the module, not as the active flow.
 
-`mcp-servers/terminal/server.py` opens a `pending` row in `human_approvals` directly
+`claudenv/adapters/mcp/terminal/server.py` opens a `pending` row in `human_approvals` directly
 (via `AuditLogger.human_approval_request()`, hash-chained like everything else) for
 any state-mutating command routed through `terminal.run`, plays a short notification
 sound (`_notify_pending_approval()`; see below — a system beep, not a browser/OS
@@ -55,7 +55,7 @@ covers how `terminal.run` reaches it.
 
 ## Configuration reference
 
-### `ApprovalGate` construction and inputs (`agents/orchestration/approval_gate.py`)
+### `ApprovalGate` construction and inputs (`claudenv/application/approval.py`)
 
 | Input | Type | Source | Effect |
 |---|---|---|---|
@@ -77,7 +77,7 @@ covers how `terminal.run` reaches it.
 | `TOKEN` | `secrets.token_urlsafe(24)`, generated once per process at import time | Per-process CSRF token embedded as a hidden form field in every card; not persisted, not configurable. |
 | page auto-refresh | `<meta http-equiv="refresh" content="5">` | The page polls itself every 5s; there's no websocket/SSE push. |
 
-### `mcp-servers/terminal/server.py` runtime knobs
+### `claudenv/adapters/mcp/terminal/server.py` runtime knobs
 
 | Env var | Default | Effect |
 |---|---|---|
@@ -87,7 +87,7 @@ covers how `terminal.run` reaches it.
 | `CLAUDE_ENV_APPROVAL_WAIT_S` | `120` (seconds) | How long `terminal.run` blocks polling for a decision before giving up and reporting "still pending." |
 | `CLAUDE_ENV_APPROVAL_PORT` | unset | Optional *preferred*-port hint passed to a freshly spawned `approvals_ui.py`; the actual port actually used is discovered from the service registry, not assumed. |
 | `CLAUDE_ENV_APPROVAL_AUTO_UI` | `"true"` | Whether to open a browser tab when the approvals server is *first started*. The tab is opened at most once (never per request — see `_ensure_approvals_ui()`); set to anything else to start the server without opening any tab. The approval is still created and still blocks either way. |
-| `<repo>/.claude/commands.json` keys `run_tests`/`run_benchmarks`/`run_audit` | none (must be set explicitly) | The *only* way a command is "configured"; an unset key returns a `NOT CONFIGURED` directive and runs nothing — see `_run_configured` (`mcp-servers/terminal/server.py`). |
+| `<repo>/.claude/commands.json` keys `run_tests`/`run_benchmarks`/`run_audit` | none (must be set explicitly) | The *only* way a command is "configured"; an unset key returns a `NOT CONFIGURED` directive and runs nothing — see `_run_configured` (`claudenv/adapters/mcp/terminal/server.py`). |
 | `_ENV_ALLOW` (hardcoded, not env-configurable) | `{"PATH","HOME","LANG","LC_ALL","TMPDIR","VIRTUAL_ENV","PWD"}` | The complete environment allow-list passed to every subprocess; everything else (secrets, tokens) is stripped. |
 
 ---
@@ -127,7 +127,7 @@ Every condition is additive: `evaluate()` never short-circuits, it appends a rea
 string for each condition that matches, and gates iff `reasons` is non-empty.
 
 ```python
-# agents/orchestration/approval_gate.py
+# claudenv/application/approval.py
 def evaluate(self, agent: str, action: str,
              target: str | None = None) -> GateVerdict:
     reasons: list[str] = []
@@ -203,7 +203,7 @@ tool doesn't hard-fail, it becomes a human-approval request like everything else
 ### Lifecycle: `open()` → block → `resolve()`
 
 ```python
-# agents/orchestration/approval_gate.py
+# claudenv/application/approval.py
 def open(self, verdict: GateVerdict) -> str:
     """Persist a pending approval, return its request_id."""
     action_desc = f"{verdict.action} :: {'; '.join(verdict.reasons)}"
@@ -239,7 +239,7 @@ waiting caller. Its job is: render pending rows as cards, accept a POST, call
 `ApprovalGate.resolve()`, redirect back.
 
 ```python
-# agents/orchestration/approvals_ui.py
+# claudenv/adapters/approvals_ui.py
 def do_POST(self):  # noqa: N802
     if self.path != "/resolve":
         self._send(404, "not found")
@@ -266,9 +266,9 @@ Key mechanics, all verified directly:
 - **Server class:** `http.server.ThreadingHTTPServer` (stdlib only — the module
   docstring is explicit: *"no new dependencies"*, `approvals_ui.py`).
 - **Bind address:** `lib.services.bind_http` is called with `args.port` (default
-  `8002`); `bind_http` (`lib/services.py`) tries the preferred port and falls
+  `8002`); `bind_http` (`claudenv/adapters/services.py`) tries the preferred port and falls
   back to an OS-assigned free port (`ThreadingHTTPServer((host, 0), ...)`) on
-  `OSError`. `_HOST` in `lib/services.py` is the localhost bind — the module
+  `OSError`. `_HOST` in `claudenv/adapters/services.py` is the localhost bind — the module
   docstring states the posture explicitly: *"binds 127.0.0.1 only — never an external
   interface"* (`approvals_ui.py`).
 - **CSRF token:** `TOKEN = secrets.token_urlsafe(24)` generated once at module import
@@ -292,12 +292,12 @@ Key mechanics, all verified directly:
   reads via `lib.services.get("approvals")` to find a *running* UI instead of spawning
   a duplicate.
 
-### `mcp-servers/terminal/server.py` — the only caller that actually blocks
+### `claudenv/adapters/mcp/terminal/server.py` — the only caller that actually blocks
 
 Four tools, two execution philosophies:
 
 ```python
-# mcp-servers/terminal/server.py
+# claudenv/adapters/mcp/terminal/server.py
 def _run_configured(cmds: dict, configured: set, kind: str) -> str:
     """Run a command only if the repo explicitly configured it; otherwise return
     a clear directive (never blindly run the toolchain-specific default)."""
@@ -319,7 +319,7 @@ repo) can never execute silently.
 `terminal.run` is the only tool that opens a real approval and blocks:
 
 ```python
-# mcp-servers/terminal/server.py
+# claudenv/adapters/mcp/terminal/server.py
 if name == "terminal.run":
     command = str(arguments.get("command", "")).strip()
     if not command:
@@ -351,7 +351,7 @@ what the command actually is.
 The blocking poll loop:
 
 ```python
-# mcp-servers/terminal/server.py
+# claudenv/adapters/mcp/terminal/server.py
 async def _await_decision(req_id: str) -> tuple[str, str | None]:
     """Block until the operator approves/denies this request (or we time out).
     Polls the human_approvals row the approvals UI updates in another process."""
@@ -383,7 +383,7 @@ Execution sandbox, shared by both the configured-command path and the
 `terminal.run`-approved path:
 
 ```python
-# mcp-servers/terminal/server.py, 170-188
+# claudenv/adapters/mcp/terminal/server.py, 170-188
 def _scrubbed_env() -> dict:
     return {k: v for k, v in os.environ.items() if k in _ENV_ALLOW}
 
@@ -437,7 +437,7 @@ def _run(template: str, kind: str) -> str:
 ### `_ensure_approvals_ui()` — start once, open one tab, never again
 
 ```python
-# mcp-servers/terminal/server.py
+# claudenv/adapters/mcp/terminal/server.py
 def _ensure_approvals_ui() -> None:
     import time
     try:
@@ -481,11 +481,11 @@ long-lived single tab: new requests appear in its always-current queue (it
 auto-refreshes every 5s), so there is no need to re-open it. `CLAUDE_ENV_APPROVAL_AUTO_UI=false`
 still starts the server without opening any tab at all.
 
-It checks the shared service registry (`lib/services.py`, the same file backing
+It checks the shared service registry (`claudenv/adapters/services.py`, the same file backing
 `bind_http`/`register`/`unregister` in `approvals_ui.py`) before spawning anything.
 The spawned process runs from `$CLAUDE_ENV_HOME` (`_HOME`), not the source repo — a
 concrete instance of the "deploy to `$CLAUDE_ENV_HOME`" rule: editing
-`agents/orchestration/approvals_ui.py` in this repo has no effect on what
+`claudenv/adapters/approvals_ui.py` in this repo has no effect on what
 `terminal.run` actually launches until it's mirrored there. The whole function is
 wrapped in a bare `except Exception: pass` — if the UI can't be opened, `terminal.run`
 still proceeds to block on `_await_decision`; the human can still resolve the request
@@ -521,7 +521,7 @@ the UI manually.
   rejection.
 - **The approvals UI never blocks; the caller does** — see above; the only channel
   between the two processes is the SQLite-backed `human_approvals` table via
-  `lib/db.py::get_db()`, with no IPC, socket, or shared memory.
+  `claudenv/adapters/persistence/sqlite/database.py::SQLiteDatabase()`, with no IPC, socket, or shared memory.
 - **CSRF token is per-process, not per-request or per-session** — see above;
   reloading the page does not rotate it.
 - **`decided_by` cannot be spoofed by page content** — see above; the form body's
@@ -534,7 +534,7 @@ the UI manually.
   both still work, and nothing cleans up stale pending rows automatically.
 - **`_repo_tier()` is a best-effort regex read, not a shared parser.** It scans
   `<repo>/.claude/repo-policy.yaml` line-by-line with `re.match(r"\s*tier\s*:\s*([0-3])\b", line)`
-  rather than using a YAML loader or the `security/policy_engine.py` config loading
+  rather than using a YAML loader or the `claudenv/domain/policy/policy_engine.py` config loading
   path (`server.py`) — it only needs the tier number for the approval record,
   and swallows any read error to `None`.
 - **Tests confirm the pure helpers plus the open/resolve lifecycle, not the HTTP

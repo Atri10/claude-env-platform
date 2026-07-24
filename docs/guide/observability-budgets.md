@@ -3,13 +3,13 @@
 > Relates to: [OVERVIEW.md §7 — you can't tell if it's working well or costing too
 > much](../OVERVIEW.md#7-you-cant-tell-if-its-working-well-or-costing-too-much)
 
-**Source:** [`observability/budgets.py`](../../observability/budgets.py) (140 lines),
-[`observability/feedback.py`](../../observability/feedback.py) (92 lines),
-[`observability/dashboard.py`](../../observability/dashboard.py) (161 lines).
-**Config:** [`config/budgets.yaml`](../../config/budgets.yaml).
-**Schema:** [`sql/001_schema.sql`](../../sql/001_schema.sql) (`metrics_sessions`,
+**Source:** [`claudenv/application/observability/budget_service.py`](../../observability/budgets.py) (140 lines),
+[`claudenv/application/observability/feedback_service.py`](../../observability/feedback.py) (92 lines),
+[`claudenv/application/observability/dashboard_service.py`](../../observability/dashboard.py) (161 lines).
+**Config:** [`claudenv/_data/config/budgets.yaml`](../../config/budgets.yaml).
+**Schema:** [`claudenv/_data/sql/schema.sql`](../../claudenv/_data/sql/schema.sql) (`metrics_sessions`,
 `metrics_latency`, `metrics_retrieval_quality`),
-[`sql/003_extensions.sql`](../../sql/003_extensions.sql) (`rag_chunk_feedback`).
+[`claudenv/_data/sql/schema.sql`](../../claudenv/_data/sql/schema.sql) (`rag_chunk_feedback`).
 
 This doc covers three independent, local-only modules that answer "is this working,
 and what is it costing?": a monthly USD budget check, a retrieval-quality feedback
@@ -26,10 +26,10 @@ None of them talk to the network; all three read from the SQLite DB via
   (`ok` / `warning` / `EXCEEDED` / `unlimited`). It is advisory: exceeding a budget
   never blocks an agent from running, it only exits non-zero, so a CI job or shell
   prompt can act on it. Cost data populates itself with zero configuration —
-  `hooks/session_metrics_hook.py` records it automatically on every session start
+  `claudenv/adapters/hooks/session_metrics_hook.py` records it automatically on every session start
   and end (see "How cost data gets populated" below).
 - **`feedback.py`** — records which RAG chunks were `retrieved` and, separately (via
-  `memory/session_ingestor.py`), which of the underlying files were actually `used`
+  `claudenv/application/memory/session_ingestor.py`), which of the underlying files were actually `used`
   (edited soon after retrieval). It turns the `used` counts into a small logarithmic
   boost the retrieve pipeline adds after reranking, so chunks with a track record of
   being genuinely useful drift upward over time.
@@ -41,16 +41,16 @@ None of them talk to the network; all three read from the SQLite DB via
 
 ---
 
-## Configuration reference — `config/budgets.yaml`
+## Configuration reference — `claudenv/_data/config/budgets.yaml`
 
 | Key | Type | Default in repo | Effect |
 |---|---|---|---|
-| `warn_at` | float | `0.8` | Fraction of budget at which status becomes `"warning"` instead of `"ok"`. Read by `load_config()` (`observability/budgets.py`). |
+| `warn_at` | float | `0.8` | Fraction of budget at which status becomes `"warning"` instead of `"ok"`. Read by `load_config()` (`claudenv/application/observability/budget_service.py`). |
 | `monthly_usd.default` | float | `0` | Budget (USD) applied to any repo with no entry in `monthly_usd.repos`. `0` (or absent) means unlimited. |
 | `monthly_usd.repos` | map[str, float] | `{}` | Per-repo override, e.g. `payments: 150`. Commented-out examples are shipped in the template file but not active. |
 
 That's the entire schema — three keys, no nesting beyond one level. `load_config()`
-(`observability/budgets.py`) coerces everything to `float` defensively and
+(`claudenv/application/observability/budget_service.py`) coerces everything to `float` defensively and
 treats a missing/empty file the same as an all-defaults document:
 
 ```python
@@ -65,7 +65,7 @@ def load_config() -> dict:
             "repos": {k: float(v) for k, v in (monthly.get("repos") or {}).items()}}
 ```
 
-`_config_path()` (`observability/budgets.py`) prefers the **deployed** copy at
+`_config_path()` (`claudenv/application/observability/budget_service.py`) prefers the **deployed** copy at
 `$CLAUDE_ENV_HOME/config/budgets.yaml` over the repo copy, falling back to the repo
 copy only if the deployed one doesn't exist — consistent with the platform-wide rule
 that config is read from `$CLAUDE_ENV_HOME`, not the source tree (see
@@ -97,7 +97,7 @@ the returned object, or the process exit code, for `EXCEEDED`).
 ### How cost data gets populated
 
 `budgets.py` never computes cost itself — it only *reads* `est_cost_usd`.
-That column is written by `hooks/session_metrics_hook.py`, a native
+That column is written by `claudenv/adapters/hooks/session_metrics_hook.py`, a native
 `SessionStart`/`SessionEnd` hook installed by the same `claude-env hooks`
 step that installs `policy_hook.py`/`audit_hook.py` — no separate
 scheduling, no cron job, no config:
@@ -118,7 +118,7 @@ elif event == "SessionEnd":
 that session's own transcript JSONL and **overwrites** (not increments)
 the row's totals via `observability.collectors.set_usage_totals()` — safe
 if the hook ever fires more than once for the same session. This is
-unrelated to `memory/session_ingestor.py`'s nightly job, which populates
+unrelated to `claudenv/application/memory/session_ingestor.py`'s nightly job, which populates
 the memory graph and retrieval-feedback signals, not cost.
 
 `budgets.py` is a pure aggregation + comparison step over that existing column:
@@ -142,8 +142,8 @@ def month_to_date_spend() -> list[dict]:
 
 ### Budget enforcement is a soft cap, not a hard block
 
-Verified directly from `evaluate()` (`observability/budgets.py`) and `main()`
-(`observability/budgets.py`): **hitting a budget never prevents an agent from
+Verified directly from `evaluate()` (`claudenv/application/observability/budget_service.py`) and `main()`
+(`claudenv/application/observability/budget_service.py`): **hitting a budget never prevents an agent from
 running.** There is no caller anywhere in the codebase that invokes `budgets.py`
 before allowing a session to proceed — it is a standalone CLI, not a hook. What
 actually happens when a cap is hit:
@@ -173,7 +173,7 @@ for r in rows:
   computed, so a repo with no configured budget can never warn or exceed.
   Note this means a *negative* budget in YAML is silently treated as unlimited too.
 - Only the **process exit code** changes: `main()` returns `1` only
-  `if result["overall"] == "EXCEEDED"` (`observability/budgets.py`) — `"warning"`
+  `if result["overall"] == "EXCEEDED"` (`claudenv/application/observability/budget_service.py`) — `"warning"`
   alone still exits `0`. This is what makes it CI-gateable *if* a caller chooses to
   check the exit code; nothing in this repo currently wires that check into a hook or
   pipeline.
@@ -198,16 +198,16 @@ output_tokens, spent_usd, budget_usd, pct, status`.
 
 ### The two signals and how they correlate
 
-`rag_chunk_feedback` (`sql/003_extensions.sql`) stores one row per event, not
+`rag_chunk_feedback` (`claudenv/_data/sql/schema.sql`) stores one row per event, not
 per chunk — the same `chunk_id` accumulates many rows over time:
 
 | Signal | Written by | Meaning |
 |---|---|---|
 | `retrieved` | `record_retrieved()`, called by the retrieve pipeline for every chunk returned for a query | A chunk was shown to the agent. |
-| `used` | `memory/session_ingestor.py` (not this file) | The file behind a previously retrieved chunk was edited/cited in a Claude Code session shortly after retrieval — a heuristic correlation, not a guarantee the chunk itself was read. |
+| `used` | `claudenv/application/memory/session_ingestor.py` (not this file) | The file behind a previously retrieved chunk was edited/cited in a Claude Code session shortly after retrieval — a heuristic correlation, not a guarantee the chunk itself was read. |
 
 `feedback.py` itself only ever **writes** `retrieved` rows; `used` rows are written
-elsewhere (`memory/session_ingestor.py`) and `feedback.py` only reads them back in
+elsewhere (`claudenv/application/memory/session_ingestor.py`) and `feedback.py` only reads them back in
 `usage_boosts()` and `stats()`. The correlation logic (matching an edited file to a
 prior retrieval within some time window) lives in the ingestor, outside this file's
 scope — this doc doesn't cover that half.
@@ -236,14 +236,14 @@ list comprehension), and the whole function is wrapped in a bare
 `try/except Exception: pass` — feedback recording can never break or slow down a
 retrieval request, it can only silently fail to log one.
 
-`query_hash()` (`observability/feedback.py`) is `sha256(query)[:16]` — a
+`query_hash()` (`claudenv/application/observability/feedback_service.py`) is `sha256(query)[:16]` — a
 truncated hash used only to group repeated identical queries in `rag_chunk_feedback`,
 not a security control.
 
 ### The reranking boost formula — verified exact
 
 The module docstring states the formula
-(`observability/feedback.py`), and the implementation matches it exactly, with
+(`claudenv/application/observability/feedback_service.py`), and the implementation matches it exactly, with
 no additional scaling, smoothing, or normalization:
 
 ```python
@@ -283,9 +283,9 @@ larger than the jump from 19→20.
 `usage_boosts()` is described by the module docstring as being called "after
 reranking" by the retrieve pipeline — this file only computes the boost map, it does
 not itself call into the reranker or retriever; how the boost is added to a
-reranked score is outside this file (see `rag/retrievers/` if you need that wiring).
+reranked score is outside this file (see `claudenv/adapters/vector/lancedb/` if you need that wiring).
 
-`boost_enabled()` (`observability/feedback.py`) gates this via
+`boost_enabled()` (`claudenv/application/observability/feedback_service.py`) gates this via
 `CLAUDE_ENV_FEEDBACK_BOOST` — any value other than the case-insensitive string
 `"false"` (including unset, which defaults to `"true"`) leaves boosting on.
 
@@ -325,21 +325,21 @@ retrieval hot path.
 Both modes confirmed directly from the source — it is **terminal summary and
 Datasette, not a custom web UI**:
 
-- **`summary(window)`** (default subcommand, `observability/dashboard.py`)
+- **`summary(window)`** (default subcommand, `claudenv/application/observability/dashboard_service.py`)
   prints six sections to stdout in this order: top-10 session costs, p50/p95/max
   latency by `metrics_latency.component`, mean top-1 retrieval quality by repo from
   `metrics_retrieval_quality`, the 10 most recent `policy_violations`, a
   severity/category breakdown of `security_events`, and any `human_approvals` rows
   with `decision='pending'` or `NULL`. It does not touch `rag_chunk_feedback` — the
   feedback stats above are not currently surfaced in this summary view.
-- **`serve(port)`** (`observability/dashboard.py`) shells out to
+- **`serve(port)`** (`claudenv/application/observability/dashboard_service.py`) shells out to
   `python -m datasette <db> --port <port> --setting sql_time_limit_ms 5000 -o`,
   registering the port via `lib.services` so `claude-env services` can list it, and
   prints `dashboard (datasette) -> http://127.0.0.1:<port>`. If `datasette` isn't
   installed, `subprocess.run` raises `FileNotFoundError`, which is caught to print
   `"datasette not installed: pip install datasette"` and return exit code `1`. It
   requires the DB file to already exist (`_db_path()` check at
-  `observability/dashboard.py`) — it refuses to launch against a missing
+  `claudenv/application/observability/dashboard_service.py`) — it refuses to launch against a missing
   database rather than creating one.
 
 The percentile helper is a simple nearest-rank calculation over an in-memory sorted
@@ -355,7 +355,7 @@ def _pct(values: list[float], p: float) -> float:
     return s[k]
 ```
 
-The `--window` filter (`observability/dashboard.py`) is deliberately
+The `--window` filter (`claudenv/application/observability/dashboard_service.py`) is deliberately
 described in its own comment as "crude": it extracts digits from strings like `7d` or
 `24h` with `"".join(c for c in window if c.isdigit())`, defaulting to `30` if none are
 found, and picks `days` unless the string ends in `h` — `"7w"` would silently parse as

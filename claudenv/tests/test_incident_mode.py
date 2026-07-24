@@ -16,12 +16,12 @@ from click.testing import CliRunner
 
 import claudenv.di as di
 from claudenv._data import sql_dir as _sql_dir
+from claudenv.adapters.incident import is_incident_active
 from claudenv.adapters.mcp.filesystem.server import FilesystemPolicyServer, PolicyBlocked
 from claudenv.cli import cli
 from claudenv.domain.incident import (
     IncidentState,
     clear_incident,
-    is_incident_active,
     write_incident,
 )
 from claudenv.domain.policy import PolicyEngine
@@ -46,7 +46,7 @@ class FakeAudit:
         pass
 
 
-def _engine(tier: int = 1, deny: list[str] | None = None) -> PolicyEngine:
+def _engine(tier: int = 1, deny: list[str] | None = None, incident_active: bool | None = None) -> PolicyEngine:
     repo_data = {
         "version": 1, "tier": tier, "repo": "smoke-repo",
         "deny": {"paths": deny or []},
@@ -55,7 +55,9 @@ def _engine(tier: int = 1, deny: list[str] | None = None) -> PolicyEngine:
         "version": 1, "tier": 1, "deny": {"paths": []},
         "tiers": {tier: {"default_deny": False}},
     }
-    return PolicyEngine.from_yaml(global_data, repo_data)
+    if incident_active is None:
+        incident_active = is_incident_active()
+    return PolicyEngine.from_yaml(global_data, repo_data, incident_active=incident_active)
 
 
 @pytest.fixture()

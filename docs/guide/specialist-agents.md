@@ -29,7 +29,7 @@ reads only the fields relevant to their job: `task_router.py` reads `write_paths
 path-based routing signal, `approval_gate.py` reads `requires_approval`, `write_paths`,
 and `denied_tools` to decide whether an action needs a human, and `agent_handoff.py`
 loads it to pass agent context between handoffs. There is no shared loader class or
-schema validator at runtime — [`validation/validate_agents.py`](../../validation/validate_agents.py)
+schema validator at runtime — [`claudenv/cli/validate.py`](../../validation/validate_agents.py)
 is the only place that checks the file's internal consistency, and it's a standalone
 script, not a test enforced by `pytest`.
 
@@ -87,7 +87,7 @@ practice, but it is not enforced by the YAML mechanism itself.
 #### Tool ids are documentary glue, not an enforced allow-list
 
 `allowed_tools` values like `"lancedb.search"` or `"git.*"` are dotted `server.tool`
-identifiers matching entries in [`config/mcp-servers.json`](../../config/mcp-servers.json)
+identifiers matching entries in [`claudenv/_data/config/mcp-servers.json`](../../claudenv/_data/config/mcp-servers.json)
 (per the file header comment, `agent_registry.yaml`). Neither `task_router.py` nor
 `approval_gate.py` reads `allowed_tools` at all — only `write_paths`, `denied_tools`, and
 `requires_approval` are consumed at runtime by the two orchestration modules read for
@@ -154,14 +154,14 @@ There is no dedicated `AgentRegistry` class — three modules each open and pars
 independently with the standard library pattern:
 
 ```python
-# agents/orchestration/task_router.py
+# (superseded — native Claude Code routing)
 def __init__(self, registry_path: str | Path):
     reg = yaml.safe_load(Path(registry_path).read_text())
     self.agents: dict = reg.get("agents", {})
 ```
 
 ```python
-# agents/orchestration/approval_gate.py
+# claudenv/application/approval.py
 self.registry_path = Path(registry_path)
 reg = yaml.safe_load(self.registry_path.read_text())
 self.agents: dict = reg.get("agents", {})

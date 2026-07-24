@@ -2,9 +2,9 @@
 
 > Relates to: [OVERVIEW.md §1 — the agent could read or touch something it shouldn't](../OVERVIEW.md#1-the-agent-could-read-or-touch-something-it-shouldnt)
 
-**Source:** [`security/policy_sim.py`](../../security/policy_sim.py) (184 lines).
+**Source:** [`claudenv/application/policy/policy_service.py`](../../claudenv/application/policy/policy_service.py) (184 lines).
 
-This doc covers `security/policy_sim.py` only. It is a CLI script that answers
+This doc covers `claudenv/application/policy/policy_service.py` only. It is a CLI script that answers
 "what would change if we rolled out this policy?" *before* anyone actually replaces
 `.claude/repo-policy.yaml`. It reuses `PolicyEngine` from
 [`policy-engine.md`](policy-engine.md) verbatim — `evaluate_path()`'s eight-step
@@ -12,7 +12,7 @@ decision logic is not re-explained here.
 
 No test file exists for this module. There is no `tests/test_policy_sim.py` in the
 repo at the time of writing — every example below is taken from reading
-`security/policy_sim.py` directly, not from test fixtures.
+`claudenv/application/policy/policy_service.py` directly, not from test fixtures.
 
 ---
 
@@ -40,7 +40,7 @@ hardcoded constant.
 
 | Name | Type | Value | Effect |
 |---|---|---|---|
-| `GLOBAL_POLICY` | module constant (`security/policy_sim.py`) | `"~/.claude-env/config/global-policy.yaml"` | The global policy every `simulate` run merges against — same file `PolicyEngine.load()` defaults to. Not overridable from the CLI; if you need to simulate against a different global policy, edit this constant or call `simulate()` directly from Python. |
+| `GLOBAL_POLICY` | module constant (`claudenv/application/policy/policy_service.py`) | `"~/.claude-env/config/global-policy.yaml"` | The global policy every `simulate` run merges against — same file `PolicyEngine.load()` defaults to. Not overridable from the CLI; if you need to simulate against a different global policy, edit this constant or call `simulate()` directly from Python. |
 
 ### CLI reference
 
@@ -89,7 +89,7 @@ non-zero exit code on drift also makes it usable as a CI gate.
 ### `_repo_files()` — git-first, capped rglob fallback
 
 ```python
-# security/policy_sim.py
+# claudenv/application/policy/policy_service.py
 def _repo_files(root: Path) -> list[str]:
     """Committed files when it's a git repo, else a bounded rglob."""
     r = subprocess.run(["git", "-C", str(root), "ls-files"],
@@ -127,7 +127,7 @@ worth being precise about:
 ### `_engine_for_doc()` — building a `PolicyEngine` without a file on disk
 
 ```python
-# security/policy_sim.py
+# claudenv/application/policy/policy_service.py
 def _engine_for_doc(repo_root: Path, repo_doc: dict) -> PolicyEngine:
     """Build an engine from an in-memory candidate doc (same path load() takes)."""
     gdoc = PolicyEngine._read_yaml(GLOBAL_POLICY)
@@ -153,7 +153,7 @@ change, only a repo-policy change; the global side is always today's on-disk
 ### `simulate()` — the diff loop
 
 ```python
-# security/policy_sim.py
+# claudenv/application/policy/policy_service.py
 def simulate(repo_root: Path, candidate_path: Path) -> dict:
     current = PolicyEngine.load(repo_root, GLOBAL_POLICY)
     cdoc = yaml.safe_load(candidate_path.read_text()) or {}
@@ -214,7 +214,7 @@ all), so the display always has *something* non-empty to show.
 
 ### The `simulate` output schema
 
-Verified directly against `security/policy_sim.py` — every key that exists,
+Verified directly against `claudenv/application/policy/policy_service.py` — every key that exists,
 nothing invented:
 
 | Key | Type | Description |
@@ -231,7 +231,7 @@ nothing invented:
 ### `diff_policies()` — structural drift, no file tree involved
 
 ```python
-# security/policy_sim.py
+# claudenv/application/policy/policy_service.py
 def diff_policies(a_path: Path, b_path: Path) -> dict:
     """Structural drift between two policy files (e.g. repo vs team baseline)."""
     a = yaml.safe_load(a_path.read_text()) or {}
@@ -259,7 +259,7 @@ including a dict, a scalar, or a missing key — it silently returns an empty
 that field rather than erroring.
 
 The six compared sections and the two scalar fields, exactly as coded
-(`security/policy_sim.py`):
+(`claudenv/application/policy/policy_service.py`):
 
 | Compared field | Keys walked | Comparison |
 |---|---|---|
@@ -320,7 +320,7 @@ function only looks at the eight fields listed above, nothing more.
   usable directly as a CI drift-check gate
   (`policy_sim.py diff current.yaml baseline.yaml || fail-the-build`).
 - **No test coverage exists for this module**, as noted in the intro — everything
-  here was verified by reading `security/policy_sim.py` directly.
+  here was verified by reading `claudenv/application/policy/policy_service.py` directly.
 
 ---
 

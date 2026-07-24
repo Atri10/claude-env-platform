@@ -15,7 +15,7 @@ from claudenv.adapters.observability.repositories import SQLiteMetricsRepository
 from claudenv.adapters.persistence.sqlite.database import SQLiteDatabase
 from claudenv.domain.observability.session_metrics import compute_cost
 
-_SQL = Path(__file__).resolve().parents[1] / "_data" / "sql" / "001_schema.sql"
+_SQL = Path(__file__).resolve().parents[1] / "_data" / "sql" / "schema.sql"
 
 
 def _fresh_repo() -> SQLiteMetricsRepository:
