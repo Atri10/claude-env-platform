@@ -10,9 +10,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 try:
-    import pyarrow as pa
-
     import lancedb
+    import pyarrow as pa
 except ImportError:
     logger.warning("lancedb/pyarrow not installed; vector features disabled", exc_info=True)
     lancedb = None
