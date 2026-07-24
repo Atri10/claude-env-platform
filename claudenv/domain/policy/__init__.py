@@ -6,7 +6,6 @@ from __future__ import annotations
 from claudenv.domain.policy.compiled_policy import CompiledPolicy
 from claudenv.domain.policy.global_policy import GlobalPolicy
 from claudenv.domain.policy.policy_engine import PolicyEngine
-from claudenv.domain.policy.policy_service import PolicyService
 from claudenv.domain.policy.repo_policy import RepoPolicy
 from claudenv.domain.policy.results import ContentScanResult, PolicyDecision
 
@@ -42,5 +41,4 @@ __all__ = [
     "RepoPolicy",
     "GlobalPolicy",
     "PolicyEngine",
-    "PolicyService",
 ]

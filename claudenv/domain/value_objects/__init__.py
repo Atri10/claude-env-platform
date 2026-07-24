@@ -9,7 +9,7 @@ claudenv.domain.value_objects import X` keeps working identically.
 from __future__ import annotations
 
 from claudenv.domain.value_objects._time import iso_now, utc_now
-from claudenv.domain.value_objects.enums import Action, ApprovalDecision, EventType, Tier
+from claudenv.domain.value_objects.enums import Action, ApprovalDecision, Tier
 from claudenv.domain.value_objects.identifiers import (
     BranchName,
     ChunkId,
@@ -38,7 +38,6 @@ __all__ = [
     "Tier",
     "Action",
     "ApprovalDecision",
-    "EventType",
     "GlobPattern",
     "RegexRule",
     "ExtensionRule",

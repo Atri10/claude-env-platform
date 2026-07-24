@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -17,7 +18,7 @@ except ImportError:
     lancedb = None
     pa = None
 
-from claudenv.domain.rag import (
+from claudenv.domain.rag import (  # noqa: E402
     BranchName,
     Chunk,
     RepoSlug,
@@ -91,7 +92,7 @@ class LanceDbVectorStore:
 
     def open(self, repo: RepoSlug, branch: BranchName):
         name = self._table_name(repo, branch)
-        if name in self.db.table_names():
+        if name in self.db.list_tables():
             return self.db.open_table(name)
         tbl = self.db.create_table(name, schema=self._schema())
         try:

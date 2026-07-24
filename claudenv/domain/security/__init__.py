@@ -22,6 +22,18 @@ in CLAUDE.md for the documentation and lancedb_rag MCP servers.
 from __future__ import annotations
 
 from claudenv.domain.security._patterns import INJECTION_PATTERNS, SECRET_PATTERNS
+from claudenv.domain.security.command_inspector import (
+    FILE_CMDS,
+    NET_CMDS,
+    REDIR,
+    WRITE_CMDS,
+    CommandVerdict,
+    bash_candidates,
+    bash_write_targets,
+    inspect_command,
+    looks_like_path,
+    shell_tokens,
+)
 from claudenv.domain.security.detectors import (
     PromptInjectionDetector,
     RagPoisonDetector,
@@ -36,4 +48,14 @@ __all__ = [
     "PromptInjectionDetector",
     "SecretDetector",
     "RagPoisonDetector",
+    "FILE_CMDS",
+    "NET_CMDS",
+    "REDIR",
+    "WRITE_CMDS",
+    "CommandVerdict",
+    "bash_candidates",
+    "bash_write_targets",
+    "inspect_command",
+    "looks_like_path",
+    "shell_tokens",
 ]

@@ -5,9 +5,9 @@ Tree-sitter AST-aware chunking for source code.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
-import logging
 
 from claudenv.domain.rag import BranchName, Chunk, ChunkId, ChunkType, ContentHash, RepoSlug, Tier
 from claudenv.domain.rag_chunker.chunkers import (
@@ -16,6 +16,7 @@ from claudenv.domain.rag_chunker.chunkers import (
     WindowConfig,
     sliding_window_chunks,
 )
+
 logger = logging.getLogger(__name__)
 
 
