@@ -9,11 +9,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import ssl
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import certifi
 import yaml
 
 from claudenv._data import config_dir
@@ -127,9 +129,16 @@ class ModelManager:
                     total_size += size
                 except Exception as exc:
                     logger.exception("failed to download %s from %s", fname, url)
+                    msg = str(exc)
+                    if "CERTIFICATE_VERIFY_FAILED" in msg:
+                        msg = (
+                            "SSL certificate verification failed. "
+                            "Run: pip install --upgrade certifi"
+                        )
+                    elif "Connection refused" in msg or "getaddrinfo" in msg:
+                        msg = "Network connection failed — check your internet connection."
                     return DownloadResult(
-                        success=False,
-                        message=f"Download failed for {fname}: {exc}",
+                        success=False, message=f"Download failed for {fname}: {msg}",
                     )
             else:
                 logger.debug("model file %s already exists, skipping", fname)
@@ -151,8 +160,9 @@ class ModelManager:
         """Download a file with optional progress reporting. Returns size in bytes."""
         logger.info("downloading %s -> %s", url, dest)
 
+        ctx = ssl.create_default_context(cafile=certifi.where())
         req = urllib.request.Request(url, headers={"User-Agent": "claude-env/1.0"})
-        with urllib.request.urlopen(req, timeout=300) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=300) as resp:
             total = int(resp.headers.get("Content-Length", 0))
             downloaded = 0
             with open(dest, "wb") as f:

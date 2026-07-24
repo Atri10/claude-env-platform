@@ -76,7 +76,7 @@ claude-env onboard /path/to/repo
 | Check | Command | Expected |
 |---|---|---|
 | macOS Apple Silicon (Linux also supported) | `uname -m` | `arm64` |
-| Python >= 3.13 | `python3 --version` | `3.13.x` or newer |
+| Python >= 3.12 | `python3 --version` | `3.12.x` or newer |
 | Git >= 2.40 | `git --version` | `2.40` or newer |
 | Claude Code | `claude --version` | any version |
 | pip | `pip --version` | any recent version |
@@ -336,7 +336,7 @@ Full walkthrough: [`docs/guide/memory-graph.md`](docs/guide/memory-graph.md).
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| `claude-env init` fails | Python < 3.13 or missing deps | Check prerequisites; `pip install -e .` from source |
+| `claude-env init` fails | Python < 3.12 or missing deps | Check prerequisites; `pip install -e .` from source |
 | Index returns empty | No model configured | `claude-env model ensure` |
 | MCP server won't start | Wrong venv or stale env | `claude-env onboard <repo>` then restart Claude Code |
 | `fatal: not a git repository` | `CLAUDE_ENV_REPO_ROOT` unset | `claude-env onboard <repo>` |
