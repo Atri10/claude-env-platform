@@ -13,12 +13,11 @@ from claudenv.ports.config.providers import (
     IRAGConfig,
     IRepoPolicyConfig,
 )
-from claudenv.ports.config.value_objects import EmbeddingConfig, RagConfig, RerankerConfig
+from claudenv.ports.config.value_objects import EmbeddingConfig, RerankerConfig
 
 __all__ = [
     "EmbeddingConfig",
     "RerankerConfig",
-    "RagConfig",
     "IConfigProvider",
     "IDatabaseConfig",
     "ILanceDBConfig",

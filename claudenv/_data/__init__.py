@@ -25,7 +25,7 @@ atexit.register(_RESOURCE_STACK.close)
 def data_path(*parts: str) -> Path:
     """Return a real filesystem Path to a packaged data resource.
 
-    ``data_path("sql", "001_schema.sql")`` -> path to that file inside
+    ``data_path("sql", "schema.sql")`` -> path to that file inside
     ``claudenv/_data/``. Works from a source tree and from an installed
     (possibly zipped) wheel.
     """

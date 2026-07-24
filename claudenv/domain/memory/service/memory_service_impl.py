@@ -3,23 +3,24 @@ claude-env :: Domain - Memory Service (Domain Layer) - MemoryServiceImpl
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from claudenv.ports import IConfigProvider
+import logging
+
+from claudenv.domain.memory.service.decay import MemoryDecay
+from claudenv.domain.memory.service.graph import MemoryGraph
 from claudenv.domain.memory.service.interfaces import (
-    IConfigProvider,
     IMemoryGraph,
     IMemoryRepository,
 )
 from claudenv.domain.memory.service.maintenance import MemoryConsolidator, MemoryPruner, MemorySync
-from claudenv.domain.memory.service.services import (
-    MemoryDecay,
-    MemoryGraph,
-    MemoryGraphTraversal,
-    MemoryReader,
-    MemoryWriter,
-)
+from claudenv.domain.memory.service.reader import MemoryReader
+from claudenv.domain.memory.service.traversal import MemoryGraphTraversal
+from claudenv.domain.memory.service.writer import MemoryWriter
 from claudenv.domain.value_objects import RepoSlug, Tier
-import logging
+
 logger = logging.getLogger(__name__)
 
 

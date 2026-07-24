@@ -6,7 +6,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any, Protocol
 
-from claudenv.domain.policy import CompiledPolicy, ContentScanResult, PolicyDecision
+from claudenv.domain.policy import ContentScanResult, PolicyDecision
 
 
 class IPolicyEngine(Protocol):
@@ -20,9 +20,6 @@ class IPolicyEngine(Protocol):
     def scan_content(self, text: str) -> ContentScanResult:
         ...
 
-    @abstractmethod
-    def compile(self, repo_policy: dict, global_policy: dict) -> CompiledPolicy:
-        ...
 
 
 class IPolicyRepository(Protocol):

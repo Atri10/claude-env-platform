@@ -8,7 +8,6 @@ IConfigProvider, IMemoryService.
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 from claudenv.domain.memory import MemoryEdge, MemoryNode, MemoryType, NamespaceConfig
@@ -196,22 +195,15 @@ class IEmbeddingProvider(Protocol):
         ...
 
 
-class IConfigProvider(Protocol):
-    """Configuration provider."""
 
-    @abstractmethod
-    def get_database_dsn(self) -> str:
-        ...
-
-
-@dataclass
-class IMemoryService:
+class IMemoryService(Protocol):
     """Port for memory service operations (consumer-owned interface).
 
     This is the interface that application-layer code depends on.
     The domain layer provides the implementation (MemoryServiceImpl).
     """
 
+    @abstractmethod
     def create_graph(
             self,
             namespace: str,
@@ -222,26 +214,32 @@ class IMemoryService:
         """Create a memory graph for the given namespace."""
         ...
 
+    @abstractmethod
     def get_project_graph(self, repo_slug: RepoSlug, tier: Tier) -> IMemoryGraph:
         """Get a project-scoped memory graph."""
         ...
 
+    @abstractmethod
     def get_agent_graph(self, agent_id: str) -> IMemoryGraph:
         """Get an agent-scoped memory graph."""
         ...
 
+    @abstractmethod
     def consolidate(self, namespace: str, dry_run: bool = False) -> dict[str, Any]:
         """Run memory consolidation."""
         ...
 
+    @abstractmethod
     def prune(self, namespace: str, dry_run: bool = True) -> dict[str, Any]:
         """Run memory pruning."""
         ...
 
+    @abstractmethod
     def sync_export(self, namespace: str) -> list[dict[str, Any]]:
         """Export memory namespace."""
         ...
 
+    @abstractmethod
     def sync_import(self, namespace: str, data: list[dict[str, Any]]) -> int:
         """Import memory namespace."""
         ...

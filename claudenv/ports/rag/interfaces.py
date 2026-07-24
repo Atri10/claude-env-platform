@@ -98,8 +98,9 @@ class IReranker(Protocol):
     def rerank(self, query: str, docs: list[str], top_k: int) -> list[int]:
         ...
 
+    @abstractmethod
     def status(self) -> dict[str, Any]:
-        return {"ok": True, "backend": self.__class__.__name__}
+        ...
 
 
 class IVectorStore(Protocol):

@@ -3,6 +3,7 @@ claude-env :: DI - Dependency Injection Container
 """
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -29,6 +30,7 @@ from claudenv.adapters.persistence import (
 from claudenv.adapters.services import FileServiceRegistry
 from claudenv.adapters.vector.lancedb import LanceDbRagRetriever, LanceDbVectorStore
 from claudenv.application.approval import ApprovalGate
+from claudenv.application.policy import PolicyService
 from claudenv.application.rag import RagIndexer, RagService
 from claudenv.di.event_bus import EventBus
 from claudenv.domain.memory.service import (
@@ -39,7 +41,6 @@ from claudenv.domain.memory.service import (
     MemoryServiceImpl,
     MemoryWriter,
 )
-from claudenv.domain.policy import PolicyService
 from claudenv.ports import (
     IAgentAuditLogger,
     IApprovalAuditLogger,
@@ -80,7 +81,8 @@ from claudenv.ports import (
     IVectorStore,
     IVerifiableLedger,
 )
-import logging
+from claudenv.ports.hooks.interfaces import ISessionHook
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -139,10 +141,15 @@ def get_container() -> Container:
 
 
 def reset_container() -> None:
-    """Reset the global container (for testing)."""
+    """Reset the global container and config singletons (for testing)."""
     global _container
+    from claudenv.adapters.config.providers import reset_config_providers
+    from claudenv.adapters.embedding.factory import reload_embedder, reload_reranker
     with _container_lock:
         _container = None
+    reset_config_providers()
+    reload_embedder()
+    reload_reranker()
 
 
 def _configure_container(c: Container) -> None:
@@ -364,3 +371,32 @@ def _configure_container(c: Container) -> None:
     c.register_factory(BudgetService, lambda: BudgetService(metrics_repo, budget_config))
     c.register_factory(FeedbackService, lambda: FeedbackService(feedback_repo))
     c.register_factory(DashboardService, lambda: DashboardService(metrics_repo, projection_repo))
+
+    # --- Session Hook (ISessionHook) ---
+    from claudenv.adapters.hooks.session_hook import SessionHook
+    def make_session_hook() -> ISessionHook:
+        from claudenv.adapters.incident import FileIncidentStore
+        from claudenv.ports import IAgentAuditLogger
+        audit = c.get(IAgentAuditLogger)
+        return SessionHook(audit=audit, incident_store=FileIncidentStore())
+    c.register_factory(ISessionHook, make_session_hook)
+
+    # --- Lazy Embedder / Reranker (avoid eager init without model config) ---
+    def get_lazy_embedder() -> IEmbeddingProvider:
+        return get_embedder()
+    def get_lazy_reranker() -> IReranker:
+        return get_reranker()
+    c.register_factory(IEmbeddingProvider, get_lazy_embedder)
+    c.register_factory(IReranker, get_lazy_reranker)
+
+    # --- Container Validation ---
+    def validate_container() -> list[str]:
+        """Check all registered services can be resolved. Returns list of errors."""
+        errors = []
+        for port in [IAuditLogger, IDatabase, IConfigProvider, IPolicyEngine, IEmbeddingProvider, IReranker]:
+            try:
+                c.get(port)
+            except Exception as e:
+                errors.append(f"{port.__name__}: {e}")
+        return errors
+    c.register_singleton("validate_container", lambda: validate_container)

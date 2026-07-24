@@ -3,15 +3,16 @@ claude-env :: Adapters - Embedding & Reranking - Factories & Caching
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
-import logging
 from pathlib import Path
 
 from claudenv.domain.rag import RAGConfig
 
 from .embedders import DummyEmbedder, EmbedderBackend, LlamaCppEmbedder
 from .rerankers import NoopReranker, OnnxCrossEncoderReranker, RerankerBackend
+
 logger = logging.getLogger(__name__)
 
 _EMBEDDER: EmbedderBackend | None = None

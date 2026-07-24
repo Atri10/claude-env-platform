@@ -28,7 +28,7 @@ from claudenv.ports import (
 from claudenv.ports.observability import ISessionMetricsRepository
 
 from .base import _ConfigBase
-from .models import EmbeddingConfig, RerankerConfig
+from .value_objects import EmbeddingConfig, RerankerConfig
 
 
 def _resolve_config_file(name: str) -> Path:
@@ -279,3 +279,19 @@ def get_claude_env_home_provider() -> _ConfigBase:
     if _claude_env_home_provider is None:
         _claude_env_home_provider = _ConfigBase()
     return _claude_env_home_provider
+
+
+def reset_config_providers() -> None:
+    """Clear all module-level config singletons (for test cleanup)."""
+    global _config_provider, _db_config_provider, _lancedb_config_provider
+    global _rag_config_provider, _global_policy_config_provider
+    global _repo_policy_config_provider, _mcp_config_provider
+    global _claude_env_home_provider
+    _config_provider = None
+    _db_config_provider = None
+    _lancedb_config_provider = None
+    _rag_config_provider = None
+    _global_policy_config_provider = None
+    _repo_policy_config_provider = None
+    _mcp_config_provider = None
+    _claude_env_home_provider = None

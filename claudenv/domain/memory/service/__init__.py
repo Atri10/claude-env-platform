@@ -9,8 +9,9 @@ The domain layer must not depend on the application layer or ports package.
 """
 from __future__ import annotations
 
+from claudenv.domain.memory.service.decay import MemoryDecay
+from claudenv.domain.memory.service.graph import MemoryGraph
 from claudenv.domain.memory.service.interfaces import (
-    IConfigProvider,
     IEmbeddingProvider,
     IMemoryDecay,
     IMemoryGraph,
@@ -22,13 +23,10 @@ from claudenv.domain.memory.service.interfaces import (
 )
 from claudenv.domain.memory.service.maintenance import MemoryConsolidator, MemoryPruner, MemorySync
 from claudenv.domain.memory.service.memory_service_impl import MemoryServiceImpl
-from claudenv.domain.memory.service.services import (
-    MemoryDecay,
-    MemoryGraph,
-    MemoryGraphTraversal,
-    MemoryReader,
-    MemoryWriter,
-)
+from claudenv.domain.memory.service.reader import MemoryReader
+from claudenv.domain.memory.service.traversal import MemoryGraphTraversal
+from claudenv.domain.memory.service.validator import MemoryValidator
+from claudenv.domain.memory.service.writer import MemoryWriter
 
 __all__ = [
     "IMemoryRepository",
@@ -38,7 +36,6 @@ __all__ = [
     "IMemoryGraphTraversal",
     "IMemoryGraph",
     "IEmbeddingProvider",
-    "IConfigProvider",
     "MemoryWriter",
     "MemoryReader",
     "MemoryDecay",
@@ -49,4 +46,5 @@ __all__ = [
     "MemoryConsolidator",
     "MemoryPruner",
     "MemorySync",
+    "MemoryValidator",
 ]

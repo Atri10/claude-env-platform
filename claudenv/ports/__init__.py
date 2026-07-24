@@ -25,7 +25,8 @@ from .config import (
 )
 from .database import IDatabase, ITransaction
 from .events import IEventBus
-from .hooks import HookInstaller, IPostToolUseHook, IPreToolUseHook
+from .hooks import HookInstaller, IPostToolUseHook, IPreToolUseHook, ISessionHook
+from .incident import IIncidentStore
 from .memory import (
     IEmbeddingProvider,
     IMemoryDecay,
@@ -78,6 +79,8 @@ __all__ = [
     "IEventBus",
     # Services
     "IServiceRegistry",
+    # Incident
+    "IIncidentStore",
     # Hooks
-    "IPreToolUseHook", "IPostToolUseHook", "HookInstaller",
+    "IPreToolUseHook", "IPostToolUseHook", "ISessionHook", "HookInstaller",
 ]

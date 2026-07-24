@@ -3,7 +3,6 @@ claude-env :: Adapters - Configuration Providers (Focused Interfaces)
 """
 from __future__ import annotations
 
-from .models import EmbeddingConfig, RerankerConfig
 from .providers import (
     ConfigProvider,
     DatabaseConfigProvider,
@@ -20,7 +19,9 @@ from .providers import (
     get_mcp_config,
     get_rag_config_provider,
     get_repo_policy_config,
+    reset_config_providers,
 )
+from .value_objects import EmbeddingConfig, RerankerConfig
 
 __all__ = [
     "EmbeddingConfig",
@@ -40,4 +41,5 @@ __all__ = [
     "get_repo_policy_config",
     "get_mcp_config",
     "get_claude_env_home_provider",
+    "reset_config_providers",
 ]

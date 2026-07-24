@@ -5,6 +5,7 @@ Groups: MemoryConsolidator, MemoryPruner, MemorySync.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from claudenv.domain.memory import EdgeRelation, MemoryEdge, MemoryNode, NodeKind
@@ -52,7 +53,7 @@ class MemoryConsolidator:
             }
 
             if not dry_run:
-                new_id = MemoryNode.create(
+                summary_node = MemoryNode.create(
                     namespace=self.namespace,
                     memory_type=candidates[0].memory_type,
                     node_kind=candidates[0].node_kind,
@@ -60,7 +61,12 @@ class MemoryConsolidator:
                     body=summary_body,
                     repo=candidates[0].repo,
                     confidence=0.5,
-                ).node_id
+                )
+                # Persist the summary node before linking, otherwise the
+                # CONSOLIDATES edges reference a node_id absent from
+                # memory_nodes and trip the FK constraint.
+                self.repo.insert_node(summary_node)
+                new_id = summary_node.node_id
                 # Link CONSOLIDATES
                 for c in candidates:
                     self.repo.insert_edge(MemoryEdge.create(
@@ -80,8 +86,20 @@ class MemoryPruner:
         self.repo = repo
         self.namespace = namespace
 
-    def run(self, dry_run: bool = True) -> dict[str, Any]:
-        """Prune low-confidence, superseded, or expired nodes."""
+    def run(self, dry_run: bool = True, archive: bool = False) -> dict[str, Any]:
+        """Prune low-confidence, superseded, or expired nodes.
+
+        When ``archive`` is False (default, preserves historic behavior) the
+        candidates are hard-deleted. When ``archive`` is True the candidates
+        are *soft-archived* instead: ``superseded_by`` is set to the node's own
+        id. The schema's ``superseded_by`` column carries a foreign key to
+        ``memory_nodes.node_id``, so a synthetic marker string would violate
+        the constraint; a self-reference is FK-valid and still makes
+        ``is_superseded()`` truthy, which ``list_nodes`` relies on to exclude
+        the row from active reads. The archive moment is recorded in the
+        node's ``updated_at`` (the only timestamp ``update_node`` persists).
+        The rows stay in the graph for audit but are excluded from active reads.
+        """
         nodes = self.repo.list_nodes(
             namespace=self.namespace,
             min_confidence=0.0,
@@ -102,13 +120,32 @@ class MemoryPruner:
                 to_prune.append(n)
 
         pruned = 0
+        archived = 0
         if not dry_run:
+            now = utc_now()
             for n in to_prune:
-                # In production, would archive first
-                self.repo.delete_node(n.node_id)
-                pruned += 1
+                if archive:
+                    # Self-supersede (FK-valid: the node exists) so
+                    # is_superseded() is truthy and list_nodes excludes the
+                    # row from active reads; updated_at stamps the archive
+                    # moment (the only timestamp update_node persists).
+                    self.repo.update_node(replace(
+                        n,
+                        superseded_by=str(n.node_id),
+                        updated_at=now,
+                    ))
+                    archived += 1
+                else:
+                    self.repo.delete_node(n.node_id)
+                    pruned += 1
 
-        return {"candidates": len(to_prune), "pruned": pruned, "dry_run": dry_run}
+        return {
+            "candidates": len(to_prune),
+            "pruned": pruned,
+            "archived": archived,
+            "dry_run": dry_run,
+            "archive": archive,
+        }
 
 
 class MemorySync:

@@ -6,8 +6,8 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any, Protocol
 
-from claudenv.domain.audit import ChainVerificationResult
-from claudenv.domain.value_objects import EventId, EventType, RepoSlug, SessionId, Tier
+from claudenv.domain.audit import ChainVerificationResult, EventType
+from claudenv.domain.value_objects import EventId, RepoSlug, SessionId, Tier
 
 
 class IAuditRepository(Protocol):

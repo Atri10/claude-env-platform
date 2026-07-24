@@ -1,5 +1,7 @@
 """
-claude-env :: Ports - Hook interfaces
+claude-env :: Ports - Hook Interfaces
+
+Consumer-owned interfaces for governance hooks.
 """
 from __future__ import annotations
 
@@ -41,6 +43,10 @@ class IPostToolUseHook(ABC):
         """Record approval/denial decision."""
         pass
 
+
+class ISessionHook(ABC):
+    """Hook for session lifecycle (start/end) and checkpoint restore."""
+
     def on_session_start(self, session_id: str) -> dict[str, Any]:
         """Called when session starts."""
         return {}
@@ -71,3 +77,11 @@ class HookInstaller(ABC):
     def validate(self) -> dict:
         """Validate installation."""
         pass
+
+
+__all__ = [
+    "IPreToolUseHook",
+    "IPostToolUseHook",
+    "ISessionHook",
+    "HookInstaller",
+]
