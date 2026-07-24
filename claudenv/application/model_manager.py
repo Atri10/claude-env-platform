@@ -58,23 +58,37 @@ class ModelManager:
         self.models_dir = self.home / "models"
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
-    def status(self) -> ModelStatus:
-        """Check if an embedding model is configured."""
+    def status(self, model_type: str = "embedding") -> ModelStatus:
+        """Check if a model is configured and present on disk."""
         rag_yaml = self.config_dir / "rag.yaml"
         if not rag_yaml.exists():
             return ModelStatus(configured=False)
 
         config = yaml.safe_load(rag_yaml.read_text()) or {}
-        emb = config.get("embedding", {})
-        model_path = emb.get("model_path", "")
-        if model_path and Path(os.path.expanduser(model_path)).exists():
-            return ModelStatus(
-                configured=True,
-                model_path=model_path,
-                backend=emb.get("backend", ""),
-                dim=emb.get("embedding_dim", 0),
-            )
-        return ModelStatus(configured=False)
+
+        if model_type == "embedding":
+            emb = config.get("embedding", {})
+            model_path = emb.get("model_path", "")
+            if model_path and Path(os.path.expanduser(model_path)).exists():
+                return ModelStatus(
+                    configured=True,
+                    model_path=model_path,
+                    backend=emb.get("backend", ""),
+                    dim=emb.get("embedding_dim", 0),
+                )
+            return ModelStatus(configured=False)
+        elif model_type == "reranker":
+            rer = config.get("reranker", {})
+            model_dir = rer.get("model_dir", "")
+            if model_dir and Path(os.path.expanduser(model_dir)).exists():
+                return ModelStatus(
+                    configured=True,
+                    model_path=model_dir,
+                    backend=rer.get("backend", ""),
+                )
+            return ModelStatus(configured=False)
+        else:
+            return ModelStatus(configured=False)
 
     def ensure_model(
         self,
@@ -83,15 +97,16 @@ class ModelManager:
     ) -> DownloadResult:
         """Ensure a model is configured, downloading if needed.
 
-        If a model is already configured and present on disk, returns success
-        immediately. Otherwise offers the recommended default.
+        Checks the specific model_type (embedding/reranker). If already
+        configured and the files exist on disk, returns immediately.
+        Otherwise downloads the recommended model and updates rag.yaml.
         """
-        status = self.status()
+        status = self.status(model_type)
         if status.configured:
             return DownloadResult(
                 success=True,
                 model_path=status.model_path,
-                message=f"Model already configured: {status.model_path}",
+                message=f"{model_type} model already configured: {status.model_path}",
             )
 
         catalog = _load_catalog()
@@ -205,6 +220,10 @@ class ModelManager:
             config["embedding"]["embedding_dim"] = model_info.get("dim", 768)
             config["embedding"]["pooling_type"] = model_info.get("pooling_type", "mean")
             config["embedding"]["model_name"] = model_info.get("name", "")
+        elif model_type == "reranker":
+            config.setdefault("reranker", {})
+            config["reranker"]["model_dir"] = model_path
+            config["reranker"]["backend"] = model_info.get("backend", "onnx_cross_encoder")
 
         rag_yaml.write_text(yaml.safe_dump(config, sort_keys=False, default_flow_style=False))
         logger.info("rag.yaml updated with %s model at %s", model_type, model_path)
