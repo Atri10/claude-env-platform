@@ -196,6 +196,7 @@ class OnnxEmbedder(EmbedderBackend):
         output_name = self._session.get_outputs()[0].name
         self._input_names = input_names
         self._output_name = output_name
+        self._max_length = self._infer_max_length(model_path)
 
         # Try loading the tokenizer; fall back to basic whitespace
         tokenizer_path = model_path / "tokenizer.json"
@@ -204,6 +205,8 @@ class OnnxEmbedder(EmbedderBackend):
             try:
                 from tokenizers import Tokenizer
                 self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
+                if self._max_length and self._tokenizer:
+                    self._tokenizer.enable_truncation(self._max_length)
             except ImportError:
                 logger.warning(
                     "ONNX tokenizer.json found but 'tokenizers' library not installed. "
@@ -213,10 +216,26 @@ class OnnxEmbedder(EmbedderBackend):
                 logger.warning("failed to load tokenizer.json", exc_info=True)
 
         logger.info(
-            "ONNX embedder loaded: %s dim=%d tokenizer=%s",
-            self._model_name, self._embedding_dim,
+            "ONNX embedder loaded: %s dim=%d max_len=%d tokenizer=%s",
+            self._model_name, self._embedding_dim, self._max_length or -1,
             "loaded" if self._tokenizer else "fallback-whitespace",
         )
+
+    @staticmethod
+    def _infer_max_length(model_dir: Path) -> int | None:
+        """Read the model's max sequence length from config.json or model metadata."""
+        config_path = model_dir / "config.json"
+        if config_path.exists():
+            try:
+                import json
+                cfg = json.loads(config_path.read_text())
+                for key in ("max_position_embeddings", "n_positions", "max_seq_len", "seq_length"):
+                    val = cfg.get(key)
+                    if val and isinstance(val, int) and val > 0:
+                        return val
+            except Exception:
+                pass
+        return None
 
     @property
     def dim(self) -> int:
@@ -246,13 +265,13 @@ class OnnxEmbedder(EmbedderBackend):
         return [float(x / norm) for x in vec]
 
     def _tokenize(self, text: str) -> dict:
-        max_len = 512
         if self._tokenizer is not None:
             encoded = self._tokenizer.encode(text)
-            ids = encoded.ids[:max_len]
-            mask = encoded.attention_mask[:max_len]
+            ids = encoded.ids
+            mask = encoded.attention_mask
         else:
-            ids = [min(ord(c), 30000) for c in text[:max_len]]
+            limit = self._max_length or 2048
+            ids = [min(ord(c), 30000) for c in text[:limit]]
             mask = [1] * len(ids)
 
         result: dict = {
