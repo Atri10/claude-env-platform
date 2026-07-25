@@ -30,7 +30,7 @@ from .policy_blocked import PolicyBlocked  # noqa: E402
 
 # Constants
 SCRATCH_PREFIX = "scratch://"
-MAX_READ_BYTES = int(os.environ.get("CLAUDE_ENV_MAX_READ_BYTES", "2000000"))
+MAX_READ_BYTES = int(os.environ.get("CLAUDE_ENV_MAX_READ_BYTES", str(500 * 1024 * 1024)))
 
 
 class FilesystemPolicyServer:

@@ -120,5 +120,5 @@ class OnboardingService:
             for line in policy.read_text().splitlines():
                 m = re.match(r"\s*tier\s*:\s*([0-3])\b", line)
                 if m:
-                    return Tier.parse(int(m.group(1)))
+                    return Tier(int(m.group(1)))
         return Tier.INTERNAL

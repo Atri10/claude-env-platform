@@ -51,7 +51,7 @@ _SKIP_DIRS = {
 # Files above this size, or that look binary (NUL byte in the first 8 KiB),
 # are skipped: embedding a decoded PNG/binary yields hundreds of meaningless
 # chunks that pollute RAG. Same threshold as RagService.index_repo.
-_MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MiB
+_MAX_FILE_BYTES = 500 * 1024 * 1024
 
 # Per-(repo, branch) lock directory. Tests monkeypatch this to a temp dir;
 # ``None`` defers to the configured claude-env home (see ``_home()``).

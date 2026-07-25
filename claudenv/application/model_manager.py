@@ -58,6 +58,19 @@ class ModelManager:
         self.models_dir = self.home / "models"
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _model_on_disk(model_path: str, backend: str) -> bool:
+        """Check that the actual model file(s) exist on disk, not just the parent dir."""
+        p = Path(os.path.expanduser(model_path)).resolve()
+        if not p.exists():
+            return False
+        if backend == "onnx":
+            # ONNX expects a directory containing model.onnx
+            return p.is_dir() and (p / "model.onnx").exists()
+        elif backend == "llama_cpp":
+            return p.is_file() and p.suffix in (".gguf", ".bin", ".ggml")
+        return True  # dummy or unknown — trust the path
+
     def status(self, model_type: str = "embedding") -> ModelStatus:
         """Check if a model is configured and present on disk."""
         rag_yaml = self.config_dir / "rag.yaml"
@@ -72,7 +85,7 @@ class ModelManager:
             backend = emb.get("backend", "")
             if backend not in ("llama_cpp", "onnx", "dummy"):
                 return ModelStatus(configured=False)
-            if model_path and Path(os.path.expanduser(model_path)).exists():
+            if model_path and self._model_on_disk(model_path, backend):
                 return ModelStatus(
                     configured=True,
                     model_path=model_path,
@@ -83,7 +96,7 @@ class ModelManager:
         elif model_type == "reranker":
             rer = config.get("reranker", {})
             model_dir = rer.get("model_dir", "")
-            if model_dir and Path(os.path.expanduser(model_dir)).exists():
+            if model_dir and self._model_on_disk(model_dir, "onnx"):
                 return ModelStatus(
                     configured=True,
                     model_path=model_dir,
@@ -139,6 +152,8 @@ class ModelManager:
         files_to_download = [(fname, url)]
         if "tokenizer_url" in model_info:
             files_to_download.append(("tokenizer.json", model_info["tokenizer_url"]))
+        if "config_url" in model_info:
+            files_to_download.append(("config.json", model_info["config_url"]))
 
         total_size = 0
         for fname, url in files_to_download:
@@ -163,7 +178,10 @@ class ModelManager:
             else:
                 logger.debug("model file %s already exists, skipping", fname)
 
-        model_path = str(model_dir / fname)
+        if model_info.get("backend", "").startswith("onnx"):
+            model_path = str(model_dir)
+        else:
+            model_path = str(model_dir / fname)
         self._update_rag_config(model_info, model_type, model_path)
         self._record_download(model_info, model_type, model_path, total_size)
 
@@ -221,10 +239,10 @@ class ModelManager:
         if model_type == "embedding":
             config.setdefault("embedding", {})
             config["embedding"]["model_path"] = model_path
-            config["embedding"]["backend"] = model_info.get("backend", "llama_cpp")
             config["embedding"]["embedding_dim"] = model_info.get("dim", 768)
             config["embedding"]["pooling_type"] = model_info.get("pooling_type", "mean")
             config["embedding"]["model_name"] = model_info.get("name", "")
+            config["embedding"]["backend"] = model_info.get("backend", "llama_cpp")
         elif model_type == "reranker":
             config.setdefault("reranker", {})
             config["reranker"]["model_dir"] = model_path

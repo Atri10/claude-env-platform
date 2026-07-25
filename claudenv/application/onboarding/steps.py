@@ -163,7 +163,7 @@ class MCPEnvStep(OnboardingStep):
                 updated.append(name)
             existing[name] = {
                 "type": "stdio",
-                "command": _resolve(srv["command"], subs),
+                "command": sys.executable,
                 "args": [_resolve(a, subs) for a in srv.get("args", [])],
                 "env": resolved_env,
             }
@@ -427,8 +427,13 @@ class IndexStep(OnboardingStep):
         # detection). Never fail onboarding if indexing errors.
         env = {**os.environ, "CLAUDE_ENV_REPO_NAME": str(ctx.slug), "CLAUDE_ENV_BRANCH": str(ctx.branch)}
         print(f"  indexing {ctx.repo_root} …")
+        cli = shutil.which("claude-env")
+        if not cli:
+            print("  'claude-env' not found on PATH — skipping automatic indexing")
+            ctx.add_step("index", skipped=True)
+            return False
         rc = subprocess.run(
-            [sys.executable, "-m", "claudenv.cli", "index", ctx.repo_root],
+            [cli, "index", ctx.repo_root],
             env=env,
         ).returncode
         print(f"  {'indexed' if rc == 0 else 'indexing reported errors (see above)'}")

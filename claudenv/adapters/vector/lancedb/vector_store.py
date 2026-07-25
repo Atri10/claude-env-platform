@@ -93,7 +93,12 @@ class LanceDbVectorStore:
         name = self._table_name(repo, branch)
         if name in self.db.list_tables():
             return self.db.open_table(name)
-        tbl = self.db.create_table(name, schema=self._schema())
+        try:
+            tbl = self.db.create_table(name, schema=self._schema())
+        except ValueError:
+            # Race: another connection created the table between list_tables
+            # and create_table. Use the existing one.
+            return self.db.open_table(name)
         try:
             tbl.create_fts_index("text", replace=True)
         except Exception:

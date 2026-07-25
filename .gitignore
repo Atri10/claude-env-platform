@@ -12,3 +12,4 @@ claudenv.egg-info/
 # Local developer configuration — not shipped.
 CLAUDE.md
 .claude/
+AGENTS.md

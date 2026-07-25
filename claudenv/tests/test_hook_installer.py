@@ -31,13 +31,13 @@ class TestHookInstaller:
         assert isinstance(hooks["PostToolUse"], list)
 
         pre = hooks["PreToolUse"][0]
-        assert "claudenv.adapters.hooks.policy_hook" in pre["command"]
+        assert "claudenv.adapters.hooks.policy_hook" in pre["hooks"][0]["command"]
         assert pre["matcher"] == PolicyHook.HOOK_MATCHER
-        assert pre["timeout"] == PolicyHook.HOOK_TIMEOUT
+        assert pre["hooks"][0]["timeout"] == PolicyHook.HOOK_TIMEOUT
 
         post = hooks["PostToolUse"][0]
-        assert "claudenv.adapters.hooks.audit_hook" in post["command"]
-        assert post["timeout"] == AuditHook.HOOK_TIMEOUT
+        assert "claudenv.adapters.hooks.audit_hook" in post["hooks"][0]["command"]
+        assert post["hooks"][0]["timeout"] == AuditHook.HOOK_TIMEOUT
 
     def test_register_custom_hook_drives_install(self, tmp_path):
         # A new hook is added by registration only -- no edit to install().
@@ -57,9 +57,9 @@ class TestHookInstaller:
         result = installer.install()
         pre = result["hooks"]["PreToolUse"][0]
         # The command is derived from the registered class's own module.
-        assert pre["command"].endswith(f"-m {MyPre.__module__}")
+        assert pre["hooks"][0]["command"].endswith(f"-m {MyPre.__module__}")
         assert pre["matcher"] == "Bash"
-        assert pre["timeout"] == 7
+        assert pre["hooks"][0]["timeout"] == 7
 
     def test_uninstall_removes_hooks(self, tmp_path):
         repo = tmp_path / "repo"

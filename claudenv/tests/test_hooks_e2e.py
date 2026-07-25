@@ -120,11 +120,11 @@ class TestInstallerWiring:
         result = HookInstaller(repo).install()
         hooks = result["hooks"]
         assert "SessionStart" in hooks and "SessionEnd" in hooks
-        session_start_cmds = [e["command"] for e in hooks["SessionStart"]]
+        session_start_cmds = [e["hooks"][0]["command"] for e in hooks["SessionStart"]]
         assert any("session_hook" in c for c in session_start_cmds)
         # Pre/Post hooks still wired exactly once.
-        pre_cmds = [e["command"] for e in hooks["PreToolUse"]]
-        post_cmds = [e["command"] for e in hooks["PostToolUse"]]
+        pre_cmds = [e["hooks"][0]["command"] for e in hooks["PreToolUse"]]
+        post_cmds = [e["hooks"][0]["command"] for e in hooks["PostToolUse"]]
         assert sum("policy_hook" in c for c in pre_cmds) == 1
         assert sum("audit_hook" in c for c in post_cmds) == 1
 
@@ -145,8 +145,8 @@ class TestInstallerWiring:
         installer.register_pre_hook(MyPre)
         installer.register_post_hook(MyPre)
         result = installer.install()
-        assert result["hooks"]["PreToolUse"][0]["command"].endswith(f"-m {MyPre.__module__}")
-        assert result["hooks"]["PostToolUse"][0]["command"].endswith(f"-m {MyPre.__module__}")
+        assert result["hooks"]["PreToolUse"][0]["hooks"][0]["command"].endswith(f"-m {MyPre.__module__}")
+        assert result["hooks"]["PostToolUse"][0]["hooks"][0]["command"].endswith(f"-m {MyPre.__module__}")
 
 
 class TestSessionHook:

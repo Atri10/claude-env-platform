@@ -127,8 +127,13 @@ class HookInstaller:
         for spec in self._specs:
             entry = {
                 "matcher": spec.matcher,
-                "command": f"{self.python} -m {spec.module}",
-                "timeout": spec.timeout,
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": f"{self.python} -m {spec.module}",
+                        "timeout": spec.timeout,
+                    }
+                ],
             }
             hooks_config.setdefault(spec.event, []).append(entry)
 

@@ -99,8 +99,7 @@ class TreeSitterChunker(IChunker):
             tree = parser.parse(text.encode("utf-8"))
             return self._extract_chunks(tree.root_node, text, file_path, repo, branch, commit, tier, ext)
         except Exception:
-            logger.warning("tree-sitter parse failed; using fallback chunker", exc_info=True)
-            # Fallback on any parsing error
+            logger.warning("tree-sitter parse failed for %s; using fallback chunker", file_path)
             return self._fallback.chunk(file_path, text, repo, branch, commit, tier)
 
     def _get_parser(self, lang: str):
@@ -113,18 +112,16 @@ class TreeSitterChunker(IChunker):
 
             from tree_sitter import Language, Parser
 
-            # Try to load language from common tree-sitter packages
             lang_module_name = f"tree_sitter_{lang.replace('-', '_')}"
             try:
                 lang_module = importlib.import_module(lang_module_name)
                 language = Language(lang_module.language())
             except ImportError:
-                # Try alternative naming
                 try:
                     lang_module = importlib.import_module(f"tree_sitter_{lang}")
                     language = Language(lang_module.language())
                 except ImportError:
-                    logger.warning(f"tree-sitter language '{lang}' unavailable; parser disabled", exc_info=True)
+                    logger.warning("tree-sitter language '%s' unavailable; parser disabled", lang)
                     self._parsers[lang] = None
                     return None
 
@@ -132,7 +129,7 @@ class TreeSitterChunker(IChunker):
             self._parsers[lang] = parser
             return parser
         except Exception:
-            logger.warning(f"failed to build parser for {lang}; disabled", exc_info=True)
+            logger.warning("failed to build parser for %s; disabled", lang)
             self._parsers[lang] = None
             return None
 

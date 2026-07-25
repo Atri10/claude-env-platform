@@ -485,8 +485,8 @@ class TerminalServer:
 
         self.audit.tool_call(tool=f"terminal.{kind}", args={"cmd": template},
                              result_kind=f"exit{last_exit}")
-        stdout_tail = "".join(stdout_parts)[-6000:]
-        stderr_tail = "\n".join(stderr_parts)[-2000:]
+        stdout_tail = "".join(stdout_parts)
+        stderr_tail = "\n".join(stderr_parts)
         tail = stdout_tail + (f"\n[stderr]\n{stderr_tail}" if stderr_tail else "")
         return f"exit={last_exit}\n{tail}"
 

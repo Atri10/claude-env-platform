@@ -29,7 +29,7 @@ from claudenv.ports import (
 logger = logging.getLogger(__name__)
 
 _SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", ".claude-env", "dist", "build"}
-_MAX_FILE_BYTES = 2_000_000
+_MAX_FILE_BYTES = 500 * 1024 * 1024
 
 
 @dataclass

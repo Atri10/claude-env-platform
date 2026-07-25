@@ -196,7 +196,8 @@ class OnnxEmbedder(EmbedderBackend):
         output_name = self._session.get_outputs()[0].name
         self._input_names = input_names
         self._output_name = output_name
-        self._max_length = self._infer_max_length(model_path)
+        inferred = self._infer_max_length(model_path)
+        self._max_length = inferred or 2048
 
         # Try loading the tokenizer; fall back to basic whitespace
         tokenizer_path = model_path / "tokenizer.json"
@@ -205,7 +206,7 @@ class OnnxEmbedder(EmbedderBackend):
             try:
                 from tokenizers import Tokenizer
                 self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
-                if self._max_length and self._tokenizer:
+                if self._max_length:
                     self._tokenizer.enable_truncation(self._max_length)
             except ImportError:
                 logger.warning(
@@ -267,11 +268,10 @@ class OnnxEmbedder(EmbedderBackend):
     def _tokenize(self, text: str) -> dict:
         if self._tokenizer is not None:
             encoded = self._tokenizer.encode(text)
-            ids = encoded.ids
-            mask = encoded.attention_mask
+            ids = encoded.ids[:self._max_length]
+            mask = encoded.attention_mask[:self._max_length]
         else:
-            limit = self._max_length or 2048
-            ids = [min(ord(c), 30000) for c in text[:limit]]
+            ids = [min(ord(c), 30000) for c in text[:self._max_length]]
             mask = [1] * len(ids)
 
         result: dict = {
