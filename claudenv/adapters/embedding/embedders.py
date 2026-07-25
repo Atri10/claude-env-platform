@@ -246,17 +246,19 @@ class OnnxEmbedder(EmbedderBackend):
         return [float(x / norm) for x in vec]
 
     def _tokenize(self, text: str) -> dict:
+        max_len = 512
         if self._tokenizer is not None:
             encoded = self._tokenizer.encode(text)
-            return {
-                "input_ids": [encoded.ids],
-                "attention_mask": [encoded.attention_mask],
-            }
+            ids = encoded.ids[:max_len]
+            mask = encoded.attention_mask[:max_len]
+        else:
+            ids = [min(ord(c), 30000) for c in text[:max_len]]
+            mask = [1] * len(ids)
 
-        # Fallback: character-level tokenization — works for basic use.
-        max_len = 512
-        ids = [min(ord(c), 30000) for c in text[:max_len]]
-        return {
+        result: dict = {
             "input_ids": [ids],
-            "attention_mask": [[1] * len(ids)],
+            "attention_mask": [mask],
         }
+        if "token_type_ids" in self._input_names:
+            result["token_type_ids"] = [[0] * len(ids)]
+        return result
