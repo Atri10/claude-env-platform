@@ -1,6 +1,6 @@
 {
   "$schema": "internal://claude-env/mcp-servers.schema.json",
-  "_comment": "Claude Code MCP topology for the local AI dev platform. Startup order is encoded by 'startup_order' (lower starts first). Every server runs locally over stdio; none binds a network port. Servers launch as installed modules: 'python -m claudenv.adapters.mcp.<module>.server'. The 'command' uses the platform venv Python (${CLAUDE_ENV_HOME}/venv/bin/python) where the claudenv package is installed, so all server deps are isolated. Register with: claude mcp add <name> -- ${CLAUDE_ENV_HOME}/venv/bin/python -m claudenv.adapters.mcp.<module>.server",
+  "_comment": "Claude Code MCP topology. Every server runs locally over stdio; none binds a network port. Servers launch as 'python -m claudenv.adapters.mcp.<module>.server'. The 'command' is resolved at onboarding to sys.executable so MCP servers share the same claudenv installation. Register manually with: claude mcp add <name> -- python3 -m claudenv.adapters.mcp.<module>.server",
   "version": 1,
   "defaults": {
     "transport": "stdio",
@@ -14,7 +14,7 @@
   "mcpServers": {
     "filesystem-policy": {
       "startup_order": 1,
-      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "command": "python3",
       "args": [
         "-m",
         "claudenv.adapters.mcp.filesystem.server"
@@ -41,7 +41,7 @@
     },
     "git": {
       "startup_order": 2,
-      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "command": "python3",
       "args": [
         "-m",
         "claudenv.adapters.mcp.git.server"
@@ -71,7 +71,7 @@
     },
     "lancedb-rag": {
       "startup_order": 3,
-      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "command": "python3",
       "args": [
         "-m",
         "claudenv.adapters.mcp.lancedb_rag.server"
@@ -95,7 +95,7 @@
     },
     "memory-graph": {
       "startup_order": 4,
-      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "command": "python3",
       "args": [
         "-m",
         "claudenv.adapters.mcp.memory_graph.server"
@@ -122,7 +122,7 @@
     },
     "terminal": {
       "startup_order": 5,
-      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "command": "python3",
       "args": [
         "-m",
         "claudenv.adapters.mcp.terminal.server"
@@ -148,7 +148,7 @@
     },
     "documentation": {
       "startup_order": 6,
-      "command": "${CLAUDE_ENV_HOME}/venv/bin/python",
+      "command": "python3",
       "args": [
         "-m",
         "claudenv.adapters.mcp.documentation.server"

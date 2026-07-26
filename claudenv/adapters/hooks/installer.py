@@ -58,7 +58,7 @@ class HookInstaller:
     ):
         self.repo_root = Path(repo_root) if repo_root else Path(os.getcwd())
         # Launch hooks with this interpreter. Defaults to the running process so
-        # the installed command is portable; override for a pinned venv via
+        # the installed command is portable; override for a pinned interpreter via
         # the CLAUDE_ENV_HOOK_PYTHON env var.
         self.python = python or os.environ.get("CLAUDE_ENV_HOOK_PYTHON", sys.executable)
         self._specs: list[HookSpec] = []

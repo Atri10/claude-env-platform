@@ -121,7 +121,7 @@ class ValidationSuite:
     def run_installation(self) -> list[ValidationResult]:
         return [
             self.check_python_version(),
-            self.check_venv(),
+            self.check_cli(),
             self.check_directories(),
             self.check_database_tables(),
             self.check_policy_files(),
@@ -136,26 +136,16 @@ class ValidationSuite:
         return self._ok("python >= 3.13", sys.version.split()[0]) if ok \
             else self._fail("python >= 3.13", sys.version.split()[0])
 
-    def check_venv(self) -> ValidationResult:
-        venv_dir = self.home / "venv"
-        venv_py = venv_dir / "bin" / "python"
-        venv_pip = venv_dir / "bin" / "pip"
-        if not venv_dir.is_dir():
-            return self._fail("venv exists at $CLAUDE_ENV_HOME/venv/")
-        if not (venv_py.exists() and os.access(venv_py, os.X_OK)):
-            return self._fail("venv/bin/python executable")
-        if not venv_pip.exists():
-            return self._fail("venv/bin/pip present")
+    def check_cli(self) -> ValidationResult:
         try:
             r = subprocess.run(
-                [str(venv_py), "--version"], capture_output=True, text=True,
+                [sys.executable, "-c", "import claudenv"], capture_output=True, text=True, timeout=10,
             )
-            ver = (r.stdout or r.stderr).strip()
-            if r.returncode != 0:
-                return self._fail(f"venv Python runs ({ver})")
-            return self._ok(f"venv Python runs ({ver})")
+            if r.returncode == 0:
+                return self._ok(f"claudenv importable ({sys.executable})")
+            return self._fail(f"claudenv importable ({r.stderr.strip()})")
         except Exception as exc:  # noqa: BLE001
-            return self._fail(f"venv Python runs ({exc})")
+            return self._fail(f"claudenv importable ({exc})")
 
     def check_directories(self) -> ValidationResult:
         missing = [
@@ -218,7 +208,7 @@ class ValidationSuite:
             importlib.import_module("yaml")
             return self._ok("import yaml")
         except Exception:  # noqa: BLE001
-            return self._fail("import yaml (REQUIRED: pip install pyyaml via venv)")
+            return self._fail("import yaml (REQUIRED: pip install pyyaml)")
 
     def check_optional_imports(self) -> ValidationResult:
         warnings: list[str] = []

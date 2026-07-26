@@ -115,12 +115,22 @@ class TreeSitterChunker(IChunker):
             lang_module_name = f"tree_sitter_{lang.replace('-', '_')}"
             try:
                 lang_module = importlib.import_module(lang_module_name)
-                language = Language(lang_module.language())
-            except ImportError:
+                language_func = getattr(lang_module, "language", None)
+                if language_func is None:
+                    language_func = getattr(lang_module, f"language_{lang}", None)
+                if language_func is None:
+                    raise ImportError(f"no language() or language_{lang}() in {lang_module_name}")
+                language = Language(language_func())
+            except (ImportError, AttributeError, TypeError):
                 try:
                     lang_module = importlib.import_module(f"tree_sitter_{lang}")
-                    language = Language(lang_module.language())
-                except ImportError:
+                    language_func = getattr(lang_module, "language", None)
+                    if language_func is None:
+                        language_func = getattr(lang_module, f"language_{lang}", None)
+                    if language_func is None:
+                        raise ImportError(f"no language() or language_{lang}() in tree_sitter_{lang}")
+                    language = Language(language_func())
+                except (ImportError, AttributeError, TypeError):
                     logger.warning("tree-sitter language '%s' unavailable; parser disabled", lang)
                     self._parsers[lang] = None
                     return None
